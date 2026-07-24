@@ -62,7 +62,19 @@ export function createHostRoutes(db: Db, config: Config) {
   const spotify = createSpotifyClient(db, config);
   const app = new Hono();
 
+  const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+
+  function assertHostSetupToken(c: import("hono").Context): boolean {
+    if (!config.hostSetupToken) return true;
+    const token =
+      c.req.query("token")?.trim() ?? c.req.header("X-Host-Setup-Token")?.trim();
+    return token === config.hostSetupToken;
+  }
+
   app.get("/host/spotify/login", (c) => {
+    if (!assertHostSetupToken(c)) {
+      return c.text("Forbidden", 403);
+    }
     const state = randomToken();
     db.run(`INSERT INTO oauth_states (state, created_at) VALUES (?, ?)`, [
       state,
@@ -85,9 +97,14 @@ export function createHostRoutes(db: Db, config: Config) {
       return c.text("Missing code or state", 400);
     }
     const stored = db
-      .query(`SELECT state FROM oauth_states WHERE state = ?`)
-      .get(state);
+      .query(`SELECT state, created_at FROM oauth_states WHERE state = ?`)
+      .get(state) as { state: string; created_at: string } | null;
     if (!stored) return c.text("Invalid state", 400);
+    const ageMs = Date.now() - new Date(stored.created_at).getTime();
+    if (ageMs > OAUTH_STATE_TTL_MS) {
+      db.run(`DELETE FROM oauth_states WHERE state = ?`, [state]);
+      return c.text("OAuth state expired", 400);
+    }
     db.run(`DELETE FROM oauth_states WHERE state = ?`, [state]);
 
     const res = await fetch("https://accounts.spotify.com/api/token", {
@@ -266,13 +283,13 @@ export function createHostRoutes(db: Db, config: Config) {
       }
     } catch (e) {
       deletePartyCascade(db, partyId);
+      console.error("Party create import failed:", e);
       return c.json(
         {
           error: importFrom
             ? "Failed to import party history"
             : "Failed to import playlist",
           code: importFrom ? "HISTORY_IMPORT_FAILED" : "PLAYLIST_IMPORT_FAILED",
-          detail: e instanceof Error ? e.message : String(e),
         },
         502,
       );

@@ -11,6 +11,7 @@ export interface Config {
   /** ISO 3166-1 alpha-2 — required for artist top-tracks API */
   spotifyMarket: string;
   encryptionKey: string;
+  hostSetupToken: string | null;
   isProduction: boolean;
 }
 
@@ -84,6 +85,15 @@ export function loadConfig(env: AppEnv): Config {
   if (isProduction && encryptionKey.startsWith("dev-only")) {
     throw new Error("Set a strong ENCRYPTION_KEY in .env.production");
   }
+  if (isProduction && encryptionKey.length < 32) {
+    throw new Error(
+      "ENCRYPTION_KEY must be at least 32 characters (use: openssl rand -hex 32)",
+    );
+  }
+
+  const hostSetupToken = isProduction
+    ? requireEnv("HOST_SETUP_TOKEN", env)
+    : (process.env.HOST_SETUP_TOKEN ?? null);
 
   return {
     env,
@@ -97,6 +107,7 @@ export function loadConfig(env: AppEnv): Config {
     spotifyRedirectUri,
     spotifyMarket: (process.env.SPOTIFY_MARKET ?? "US").toUpperCase(),
     encryptionKey,
+    hostSetupToken,
     isProduction,
   };
 }

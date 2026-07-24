@@ -40,6 +40,8 @@ import {
   type QueueItemStatus,
 } from "@/shared/types";
 
+const MAX_DISPLAY_NAME_LENGTH = 48;
+
 type GuestVars = {
   Variables: {
     guest?: {
@@ -113,7 +115,7 @@ export function createGuestRoutes(db: Db, config: Config) {
           id: existing.id,
           displayName: existing.display_name,
           boostUsed: existing.boost_used === 1,
-          sessionToken: existingToken,
+          sessionToken: config.isProduction ? undefined : existingToken,
         });
       }
     }
@@ -122,6 +124,7 @@ export function createGuestRoutes(db: Db, config: Config) {
       displayName?: string;
       sessionToken?: string;
     };
+    const displayName = body.displayName?.trim().slice(0, MAX_DISPLAY_NAME_LENGTH) || null;
 
     const resumeToken = body.sessionToken?.trim();
     if (resumeToken) {
@@ -145,7 +148,7 @@ export function createGuestRoutes(db: Db, config: Config) {
           id: resumed.id,
           displayName: resumed.display_name,
           boostUsed: resumed.boost_used === 1,
-          sessionToken: resumed.session_token,
+          sessionToken: config.isProduction ? undefined : resumed.session_token,
         });
       }
     }
@@ -160,7 +163,7 @@ export function createGuestRoutes(db: Db, config: Config) {
         guestId,
         party.id,
         token,
-        body.displayName?.trim() || null,
+        displayName,
         now,
         now,
         clientIp,
@@ -169,9 +172,9 @@ export function createGuestRoutes(db: Db, config: Config) {
     setGuestCookie(c, slug, token, config.isProduction);
     return c.json({
       id: guestId,
-      displayName: body.displayName?.trim() || null,
+      displayName,
       boostUsed: false,
-      sessionToken: token,
+      sessionToken: config.isProduction ? undefined : token,
     });
   });
 
@@ -187,7 +190,7 @@ export function createGuestRoutes(db: Db, config: Config) {
     if (!party) return c.json({ error: "Party not found", code: "NOT_FOUND" }, 404);
 
     const body = (await c.req.json()) as { displayName: string };
-    const name = body.displayName?.trim();
+    const name = body.displayName?.trim().slice(0, MAX_DISPLAY_NAME_LENGTH);
     if (!name) {
       return c.json(
         { error: "Display name required", code: "DISPLAY_NAME_REQUIRED" },

@@ -4,10 +4,12 @@ import { bootstrapEnv } from "./load-env";
 import { loadConfig } from "./config";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { secureHeaders } from "hono/secure-headers";
 import { serveStatic } from "hono/bun";
 import { initDb } from "./db/schema";
 import { createGuestRoutes } from "./routes/guest";
 import { createHostRoutes } from "./routes/host";
+import { probeGuardMiddleware } from "./middleware/probe-guard";
 import { createSpotifyClient } from "./services/spotify";
 import { startSyncWorker } from "./services/sync";
 
@@ -17,6 +19,22 @@ const db = initDb(config);
 const spotify = createSpotifyClient(db, config);
 
 const app = new Hono();
+
+app.use("*", probeGuardMiddleware());
+
+app.use(
+  "*",
+  secureHeaders({
+    contentSecurityPolicy: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "https:", "data:"],
+      connectSrc: ["'self'"],
+      frameAncestors: ["'none'"],
+    },
+  }),
+);
 
 app.use(
   "/api/*",

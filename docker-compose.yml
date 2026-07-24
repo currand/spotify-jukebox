@@ -17,7 +17,7 @@ services:
     restart: unless-stopped
     command: tunnel run
     env_file:
-      - .env.production
+      - .env.cloudflared
     depends_on:
       - jukebox
 

@@ -54,7 +54,10 @@ Jukebox is a self-hosted web application that lets party guests control the host
 ```bash
 # Setup
 cp .env.development.example .env.development   # local dev
-cp .env.production.example .env.production     # home server
+cp .env.production.example .env.production     # home server (jukebox app)
+cp .env.cloudflared.example .env.cloudflared # tunnel token only
+
+# Or: bun run setup:dev / bun run setup:prod
 
 # Development (loads .env.development, no Cloudflare)
 bun install
@@ -162,7 +165,7 @@ function compareQueueItems(a: QueueItem, b: QueueItem): number {
 - Any feature not listed in this spec.
 
 ### Never
-- Commit `.env.development`, `.env.production`, `.env.local`, Spotify client secrets, or refresh tokens.
+- Commit `.env.development`, `.env.production`, `.env.cloudflared`, `.env.local`, Spotify client secrets, or refresh tokens.
 - Expose host Spotify credentials to guests.
 - Build audio playback or stream Spotify content in the browser.
 - Synchronize or broadcast Spotify audio (Spotify Developer Policy).
@@ -335,7 +338,18 @@ Host actions bypass guest rate limits and ownership restrictions.
 | File | Use |
 |---|---|
 | `.env.development` | Local dev — separate Spotify dev app, `http://127.0.0.1` URLs |
-| `.env.production` | Docker home server — separate Spotify prod app, HTTPS URLs, `TUNNEL_TOKEN` |
+| `.env.production` | Docker **jukebox** service — Spotify prod app, HTTPS URLs, `ENCRYPTION_KEY`, `HOST_SETUP_TOKEN` |
+| `.env.cloudflared` | Docker **cloudflared** service only — `TUNNEL_TOKEN` |
+| `.env.local` | Optional overrides (gitignored), loaded after the env file above |
+
+**Production secrets to generate:**
+
+```bash
+openssl rand -hex 32   # ENCRYPTION_KEY (≥ 32 characters)
+openssl rand -hex 16   # HOST_SETUP_TOKEN — enter in Admin before Connect Spotify
+```
+
+`HOST_SETUP_TOKEN` is optional in development. Required in production.
 
 **Allowed URL patterns:**
 
@@ -525,30 +539,26 @@ Guests poll `GET /parties/:slug/queue` every **3 seconds** when party is on. `ET
 services:
   jukebox:
     build: .
-    ports:
-      - "3000:3000"
+    restart: unless-stopped
     volumes:
       - jukebox-data:/data        # SQLite + encrypted tokens
-    environment:
-      - SPOTIFY_CLIENT_ID
-      - SPOTIFY_CLIENT_SECRET
-      - SPOTIFY_REDIRECT_URI
-      - ENCRYPTION_KEY
-      - BASE_URL                  # Public HTTPS URL (tunnel) or http://127.0.0.1:5173 for local dev
-      - SPOTIFY_REDIRECT_URI      # Must match Spotify Dashboard exactly
-      - DATABASE_PATH=/data/jukebox.db
+    env_file:
+      - .env.production           # SPOTIFY_*, BASE_URL, ENCRYPTION_KEY, HOST_SETUP_TOKEN
 
   cloudflared:
     image: cloudflare/cloudflared:latest
+    restart: unless-stopped
     command: tunnel run
-    environment:
-      - TUNNEL_TOKEN
+    env_file:
+      - .env.cloudflared          # TUNNEL_TOKEN only
     depends_on:
       - jukebox
 
 volumes:
   jukebox-data:
 ```
+
+The jukebox service is **not** published to the host; only cloudflared exposes it.
 
 ---
 
@@ -566,6 +576,7 @@ Use **two Spotify apps** (recommended): one for development, one for production.
 1. Redirect URI: `https://{tunnel-hostname}/api/v1/host/spotify/callback`
 2. Credentials go in `.env.production`
 3. Set up Cloudflare Tunnel **before** registering this redirect URI
+4. Generate `ENCRYPTION_KEY` and `HOST_SETUP_TOKEN`; add `TUNNEL_TOKEN` to `.env.cloudflared` (not `.env.production`)
 
 Both apps:
 
@@ -573,7 +584,7 @@ Both apps:
 - Host must have **Spotify Premium**
 - Development mode; allowlist only the host account
 
-**Setup order (production):** Cloudflare Tunnel → `.env.production` → Spotify prod app → `docker compose up`
+**Setup order (production):** Cloudflare Tunnel → `.env.production` + `.env.cloudflared` → Spotify prod app → `docker compose up` → Admin (enter `HOST_SETUP_TOKEN`) → Connect Spotify
 
 **Policy note:** Jukebox is for personal, non-commercial home use. Spotify prohibits commercial use and broadcasting synchronized content.
 

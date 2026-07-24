@@ -8,7 +8,7 @@ Jukebox uses **separate env files** with **separate Spotify apps** for dev and p
 
 | | Development | Production |
 |---|---|---|
-| **Env file** | `.env.development` | `.env.production` |
+| **Env files** | `.env.development` | `.env.production` + `.env.cloudflared` |
 | **Spotify app** | Dev app (127.0.0.1 redirect) | Prod app (HTTPS redirect) |
 | **Cloudflare** | Not used | Required |
 | **Run** | `bun run dev` | `docker compose up -d` |
@@ -31,9 +31,12 @@ Create a **development** app in the [Spotify Developer Dashboard](https://develo
 ### 2. Env file
 
 ```bash
-cp .env.development.example .env.development
+bun run setup:dev
+# Or: cp .env.development.example .env.development
 # Fill in SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET from the dev app
 ```
+
+`HOST_SETUP_TOKEN` is optional in development.
 
 ### 3. Run
 
@@ -73,24 +76,42 @@ Create a **separate production** app in the Spotify Dashboard:
 - Redirect URI: `https://jukebox.yourdomain.com/api/v1/host/spotify/callback`
 - Use prod client ID/secret in `.env.production` (not the dev app credentials)
 
-### 3. Env file
+### 3. Env files
 
 ```bash
-cp .env.production.example .env.production
+bun run setup:prod
+# Or:
+#   cp .env.production.example .env.production
+#   cp .env.cloudflared.example .env.cloudflared
 ```
 
-Set at minimum:
+**`.env.production`** (jukebox app):
 
 ```env
 SPOTIFY_CLIENT_ID=...
 SPOTIFY_CLIENT_SECRET=...
 SPOTIFY_REDIRECT_URI=https://jukebox.yourdomain.com/api/v1/host/spotify/callback
+SPOTIFY_MARKET=US
 BASE_URL=https://jukebox.yourdomain.com
-ENCRYPTION_KEY=...   # openssl rand -hex 32
-TUNNEL_TOKEN=...
+ENCRYPTION_KEY=...      # openssl rand -hex 32  (≥ 32 characters)
+HOST_SETUP_TOKEN=...    # openssl rand -hex 16
 ```
 
-### 4. Deploy
+**`.env.cloudflared`** (tunnel only — do not put this in `.env.production`):
+
+```env
+TUNNEL_TOKEN=...        # from Cloudflare Zero Trust → Tunnels
+```
+
+### 4. Connect Spotify (first time)
+
+1. Deploy (step 5), then open `https://jukebox.yourdomain.com/admin`
+2. Enter your `HOST_SETUP_TOKEN` in **Host setup token**
+3. Click **Connect Spotify**
+
+The setup token gates host OAuth so random visitors cannot take over admin. Guests never need it.
+
+### 5. Deploy
 
 ```bash
 docker compose up --build -d
@@ -107,20 +128,34 @@ docker compose logs -f cloudflared
 
 ## How env loading works
 
-| Command | Env file loaded |
+| Command | Env files loaded |
 |---|---|
-| `bun run dev` | `.env.development` |
-| `bun run start` | `.env.production` |
-| `docker compose up` | `.env.production` (via `env_file`) |
+| `bun run dev` | `.env.development`, then `.env.local` |
+| `bun run start` | `.env.production`, then `.env.local` |
+| `docker compose up` | `jukebox` → `.env.production`; `cloudflared` → `.env.cloudflared` |
 
-Both files are gitignored. Examples live in `.env.development.example` and `.env.production.example`.
+All secret env files are gitignored. Templates: `.env.development.example`, `.env.production.example`, `.env.cloudflared.example`. Overview: `.env.example`.
 
-Optional overrides: `.env.local` (gitignored, loaded after the env file).
+### Variable reference
+
+| Variable | Dev | Prod | Notes |
+|---|---|---|---|
+| `SPOTIFY_CLIENT_ID` | required | required | Separate Spotify app per environment |
+| `SPOTIFY_CLIENT_SECRET` | required | required | |
+| `SPOTIFY_REDIRECT_URI` | required | required | Must use `127.0.0.1` (dev) or `https://` (prod) |
+| `BASE_URL` | optional | required | Dev default `http://127.0.0.1:5173` |
+| `ENCRYPTION_KEY` | required | required | Prod: ≥ 32 chars (`openssl rand -hex 32`) |
+| `HOST_SETUP_TOKEN` | optional | required | Prod: enter in Admin before Connect Spotify |
+| `SPOTIFY_MARKET` | optional | optional | Default `US` |
+| `TUNNEL_TOKEN` | — | `.env.cloudflared` only | Never in `.env.production` |
+| `DATABASE_PATH` | optional | optional | Defaults shown in examples |
+| `PORT` | optional | optional | Default `3000` |
 
 Config validation enforces:
 
 - **Dev:** `http://127.0.0.1` URLs only
 - **Prod:** `https://` URLs, same hostname for `BASE_URL` and `SPOTIFY_REDIRECT_URI`
+- **Prod:** `ENCRYPTION_KEY` length ≥ 32, `HOST_SETUP_TOKEN` must be set
 
 ---
 
@@ -131,3 +166,7 @@ bun test
 ```
 
 See [docs/SPEC.md](docs/SPEC.md) for the full specification.
+
+## Security
+
+See [docs/SECURITY.md](docs/SECURITY.md) for the pre-GitHub checklist, secret handling, and production hardening notes.

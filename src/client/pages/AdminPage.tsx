@@ -55,6 +55,33 @@ export function AdminPage() {
   const [useImportHistory, setUseImportHistory] = React.useState(false);
   const [showHistoryList, setShowHistoryList] = React.useState(false);
   const artistLoadRef = React.useRef(0);
+  const [hostSetupToken, setHostSetupToken] = React.useState(() => {
+    try {
+      return sessionStorage.getItem("jukebox_host_setup_token") ?? "";
+    } catch {
+      return "";
+    }
+  });
+
+  function spotifyLoginHref(): string {
+    const base = "/api/v1/host/spotify/login";
+    const token = hostSetupToken.trim();
+    if (!token) return base;
+    return `${base}?token=${encodeURIComponent(token)}`;
+  }
+
+  function saveHostSetupToken(value: string) {
+    setHostSetupToken(value);
+    try {
+      if (value.trim()) {
+        sessionStorage.setItem("jukebox_host_setup_token", value);
+      } else {
+        sessionStorage.removeItem("jukebox_host_setup_token");
+      }
+    } catch {
+      /* ignore */
+    }
+  }
 
   const load = React.useCallback(async () => {
     try {
@@ -316,14 +343,36 @@ export function AdminPage() {
           ) : status?.connected && !status.authenticated ? (
             <>
               <p>Spotify is linked, but your host session expired.</p>
-              <a href="/api/v1/host/spotify/login">
-                <button>Sign in again</button>
+              <label className="small">
+                Host setup token
+                <input
+                  type="password"
+                  value={hostSetupToken}
+                  onChange={(e) => saveHostSetupToken(e.target.value)}
+                  placeholder="From HOST_SETUP_TOKEN in .env.production"
+                  autoComplete="off"
+                />
+              </label>
+              <a href={spotifyLoginHref()}>
+                <button disabled={!hostSetupToken.trim()}>Sign in again</button>
               </a>
             </>
           ) : (
-            <a href="/api/v1/host/spotify/login">
-              <button>Connect Spotify</button>
-            </a>
+            <>
+              <label className="small">
+                Host setup token
+                <input
+                  type="password"
+                  value={hostSetupToken}
+                  onChange={(e) => saveHostSetupToken(e.target.value)}
+                  placeholder="From HOST_SETUP_TOKEN in .env.production"
+                  autoComplete="off"
+                />
+              </label>
+              <a href={spotifyLoginHref()}>
+                <button disabled={!hostSetupToken.trim()}>Connect Spotify</button>
+              </a>
+            </>
           )}
         </div>
 
