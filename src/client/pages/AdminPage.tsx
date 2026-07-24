@@ -209,20 +209,20 @@ export function AdminPage() {
 
     try {
       const fetchInit = { cache: "no-store" as RequestCache };
-      const tracks =
-        filter === "top-tracks"
-          ? (
-              await api<{ tracks: TrackInfo[] }>(
-                `/host/parties/${party.id}/artists/${id}/top-tracks`,
-                fetchInit,
-              )
-            ).tracks
-          : (
-              await api<SearchResult>(
-                `/host/parties/${party.id}/search?q=${encodeURIComponent(`artist:${name}`)}`,
-                fetchInit,
-              )
-            ).tracks;
+      let tracks: TrackInfo[] | undefined;
+      if (filter === "top-tracks") {
+        const data = await api<{ tracks: TrackInfo[] }>(
+          `/host/parties/${party.id}/artists/${id}/top-tracks?name=${encodeURIComponent(name)}`,
+          fetchInit,
+        );
+        tracks = data?.tracks;
+      } else {
+        const data = await api<SearchResult>(
+          `/host/parties/${party.id}/search?q=${encodeURIComponent(`artist:${name}`)}`,
+          fetchInit,
+        );
+        tracks = data?.tracks;
+      }
 
       if (loadId !== artistLoadRef.current) return;
       if (!tracks) throw new Error("Could not load tracks");

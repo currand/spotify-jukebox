@@ -288,7 +288,10 @@ export function createGuestRoutes(db: Db, config: Config) {
     const party = getPartyBySlug(db, c.req.param("slug"));
     if (!party) return c.json({ error: "Party not found", code: "NOT_FOUND" }, 404);
     try {
-      const tracks = await spotify.getArtistTopTracks(c.req.param("artistId"));
+      const tracks = await spotify.getArtistTopTracks(
+        c.req.param("artistId"),
+        c.req.query("name"),
+      );
       return c.json({
         tracks: tracks.map((t) => {
           const info = trackFromSpotify(t);

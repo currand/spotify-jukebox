@@ -18,7 +18,7 @@ export interface SpotifyClient {
   searchArtists(query: string, limit?: number): Promise<
     { id: string; name: string; imageUrl: string | null }[]
   >;
-  getArtistTopTracks(artistId: string): Promise<SpotifyTrack[]>;
+  getArtistTopTracks(artistId: string, artistName?: string): Promise<SpotifyTrack[]>;
   getPlaylistTracks(playlistId: string): Promise<SpotifyTrack[]>;
   getCurrentlyPlaying(): Promise<{
     uri: string | null;
@@ -51,6 +51,16 @@ function mapTrack(raw: {
     artists: raw.artists,
     album: raw.album,
   };
+}
+
+/** Prefer search hits credited to the requested artist. */
+export function pickArtistSearchTracks<
+  T extends { artists: { id: string }[] },
+>(items: T[], artistId: string, limit = 10): T[] {
+  const matching = items.filter((track) =>
+    track.artists.some((artist) => artist.id === artistId),
+  );
+  return (matching.length > 0 ? matching : items).slice(0, limit);
 }
 
 function isRestrictedDeviceType(type: string | undefined): boolean {
@@ -242,11 +252,42 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
       }));
     },
 
-    async getArtistTopTracks(artistId) {
-      const data = await api<{ tracks: SpotifyTrack[] }>(
-        `/artists/${encodeURIComponent(artistId)}/top-tracks?market=${encodeURIComponent(config.spotifyMarket)}`,
+    async getArtistTopTracks(artistId, artistName) {
+      try {
+        const data = await api<{ tracks: SpotifyTrack[] }>(
+          `/artists/${encodeURIComponent(artistId)}/top-tracks?market=${encodeURIComponent(config.spotifyMarket)}`,
+        );
+        if (Array.isArray(data.tracks) && data.tracks.length > 0) {
+          return data.tracks.slice(0, 10).map(mapTrack);
+        }
+      } catch {
+        // Spotify removed this endpoint for dev-mode apps (Feb 2026).
+      }
+
+      let name = artistName?.trim();
+      if (!name) {
+        const artist = await api<{ name: string }>(
+          `/artists/${encodeURIComponent(artistId)}`,
+        );
+        name = artist.name;
+      }
+
+      const data = await api<{
+        tracks: {
+          items: {
+            uri: string;
+            id: string;
+            name: string;
+            artists: { id: string; name: string }[];
+            album: { images: { url: string }[] };
+          }[];
+        };
+      }>(
+        `/search?q=${encodeURIComponent(name)}&type=track&limit=10`,
       );
-      return data.tracks.slice(0, 10).map(mapTrack);
+      return pickArtistSearchTracks(data.tracks?.items ?? [], artistId).map(
+        mapTrack,
+      );
     },
 
     async getPlaylistTracks(playlistId) {
