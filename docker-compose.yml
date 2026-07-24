@@ -1,0 +1,25 @@
+services:
+  jukebox:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - jukebox-data:/data
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      JUKEBOX_ENV: production
+      DATABASE_PATH: /data/jukebox.db
+      PORT: 3000
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel run
+    env_file:
+      - .env.production
+    depends_on:
+      - jukebox
+
+volumes:
+  jukebox-data:

@@ -1,0 +1,33 @@
+{
+  "name": "jukebox",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup:dev": "cp -n .env.development.example .env.development 2>/dev/null || true",
+    "setup:prod": "cp -n .env.production.example .env.production 2>/dev/null || true",
+    "dev": "concurrently -n api,web -c green,blue \"bun --env-file=.env.development --watch src/server/index.ts\" \"vite --mode development\"",
+    "build": "vite build && bun build src/server/index.ts --outdir dist/server --target bun",
+    "start": "NODE_ENV=production JUKEBOX_ENV=production bun --env-file=.env.production dist/server/index.js",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.7.4",
+    "qrcode": "^1.5.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.4.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "typescript": "^5.8.2",
+    "vite": "^6.2.2"
+  }
+}

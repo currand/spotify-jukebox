@@ -1,0 +1,35 @@
+import { Link, useLocation } from "react-router-dom";
+
+export function AdminNav({
+  guestCount,
+  partyActive,
+}: {
+  guestCount: number;
+  partyActive: boolean;
+}) {
+  const location = useLocation();
+  if (!partyActive) return null;
+
+  const onQueue = location.pathname === "/admin";
+  const onGuests = location.pathname === "/admin/guests";
+
+  return (
+    <nav className="admin-nav" aria-label="Admin sections">
+      <Link
+        to="/admin"
+        className={`admin-nav-link${onQueue ? " admin-nav-link--active" : ""}`}
+      >
+        Queue
+      </Link>
+      <Link
+        to="/admin/guests"
+        className={`admin-nav-link${onGuests ? " admin-nav-link--active" : ""}`}
+      >
+        Guests
+        {guestCount > 0 ? (
+          <span className="admin-nav-badge">{guestCount}</span>
+        ) : null}
+      </Link>
+    </nav>
+  );
+}
