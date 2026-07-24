@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useParams } from "react-router-dom";
 import type { QueueItemView, QueueResponse, SearchResult, TrackInfo } from "@/shared/types";
 import { isTrackInPartyQueue } from "@/shared/queue-match";
 import {
@@ -10,11 +11,12 @@ import {
   TrackTitle,
   UpNextLockedSection,
 } from "../components/QueueUi";
+import { GuestNav } from "../components/GuestNav";
 import { api, guestFetchHeaders, joinParty } from "../http";
 import { OpenInSafariHint } from "../components/OpenInSafariHint";
 
 export function GuestPage() {
-  const slug = window.location.pathname.split("/p/")[1]?.replace(/\/$/, "") ?? "";
+  const { slug = "" } = useParams<{ slug: string }>();
   return <GuestApp slug={slug} />;
 }
 
@@ -28,6 +30,7 @@ function GuestApp({ slug }: { slug: string }) {
     id: string;
     displayName: string | null;
     boostUsed: boolean;
+    activeSongCount?: number;
     quota?: { add: number; upvote: number; veto: number };
   } | null>(null);
   const [queue, setQueue] = React.useState<QueueResponse | null>(null);
@@ -70,10 +73,13 @@ function GuestApp({ slug }: { slug: string }) {
             etagRef.current ? { "If-None-Match": etagRef.current } : {},
           ),
         });
-        if (res.status === 304) return;
-        const data = (await res.json()) as QueueResponse;
-        etagRef.current = data.etag;
-        setQueue(data);
+        if (res.status !== 304) {
+          const data = (await res.json()) as QueueResponse;
+          etagRef.current = data.etag;
+          setQueue(data);
+        }
+        const profile = await api<typeof me>(`/parties/${slug}/me`);
+        setMe(profile);
       } catch {
         /* ignore transient */
       }
@@ -222,6 +228,11 @@ function GuestApp({ slug }: { slug: string }) {
       <h1>{queue?.party.name ?? "Jukebox"}</h1>
 
       <OpenInSafariHint joinUrl={window.location.href} />
+
+      <GuestNav
+        slug={slug}
+        activeSongCount={me?.activeSongCount ?? 0}
+      />
 
       {!me?.displayName && (
         <div className="card">

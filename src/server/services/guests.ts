@@ -1,5 +1,15 @@
 import type { Db } from "../db/schema";
-import type { GuestAdminView } from "@/shared/types";
+import type { GuestAdminView, GuestMySongView, QueueItemStatus } from "@/shared/types";
+import {
+  getNextUpcomingItem,
+  getQueueItems,
+  getUpcomingPlayOrder,
+  isGuestBoostBlocked,
+  type QueueItemRow,
+} from "./queue";
+
+const TERMINAL_STATUSES: QueueItemStatus[] = ["played", "skipped", "vetoed"];
+const ACTIVE_STATUSES: QueueItemStatus[] = ["pending", "queued", "playing"];
 
 interface GuestStatsRow {
   id: string;
@@ -18,6 +28,110 @@ interface GuestSongRow {
   artist_name: string;
   added_at: string;
   status: string;
+}
+
+export function countGuestActiveSongs(
+  db: Db,
+  partyId: string,
+  guestId: string,
+): number {
+  const row = db
+    .query(
+      `SELECT COUNT(*) AS count FROM queue_items
+       WHERE party_id = ? AND added_by_guest_id = ? AND from_seed = 0
+         AND status IN ('pending', 'queued', 'playing')`,
+    )
+    .get(partyId, guestId) as { count: number };
+  return row.count;
+}
+
+/** Label for where a guest's song sits in the virtual play order. */
+export function formatGuestQueuePosition(
+  itemId: string,
+  status: string,
+  upcoming: QueueItemRow[],
+  nextItemId: string | null,
+): string | null {
+  if (status === "playing") return "Now playing";
+  if (!ACTIVE_STATUSES.includes(status as QueueItemStatus)) return null;
+  const idx = upcoming.findIndex((item) => item.id === itemId);
+  if (idx < 0) return null;
+  if (idx === 0 || itemId === nextItemId) return "Up next";
+  return `#${idx + 1} in queue`;
+}
+
+export function getGuestMySongs(
+  db: Db,
+  partyId: string,
+  guestId: string,
+  boostUsed: boolean,
+): { active: GuestMySongView[]; history: GuestMySongView[] } {
+  const rows = db
+    .query(
+      `SELECT id, track_name, artist_name, album_art_url, upvote_count, veto_count,
+              status, is_boosted, added_at, finished_at
+       FROM queue_items
+       WHERE party_id = ? AND added_by_guest_id = ? AND from_seed = 0
+       ORDER BY added_at DESC`,
+    )
+    .all(partyId, guestId) as QueueItemRow[];
+
+  const partyActive = getQueueItems(db, partyId, ACTIVE_STATUSES);
+  const upcoming = getUpcomingPlayOrder(partyActive);
+  const nextItemId = getNextUpcomingItem(partyActive)?.id ?? null;
+
+  const active: GuestMySongView[] = [];
+  const history: GuestMySongView[] = [];
+
+  for (const row of rows) {
+    const view: GuestMySongView = {
+      id: row.id,
+      trackName: row.track_name,
+      artistName: row.artist_name,
+      albumArtUrl: row.album_art_url,
+      status: row.status,
+      isBoosted: row.is_boosted === 1,
+      upvoteCount: row.upvote_count,
+      vetoCount: row.veto_count,
+      addedAt: row.added_at,
+      finishedAt: row.finished_at,
+      queuePosition: formatGuestQueuePosition(
+        row.id,
+        row.status,
+        upcoming,
+        nextItemId,
+      ),
+      canBoost: false,
+      canUnboost: false,
+      canRemove: false,
+    };
+
+    if (ACTIVE_STATUSES.includes(row.status)) {
+      view.canBoost =
+        !boostUsed &&
+        row.is_boosted === 0 &&
+        !isGuestBoostBlocked(partyActive, row.id);
+      view.canUnboost =
+        row.is_boosted === 1 &&
+        row.status !== "playing" &&
+        boostUsed;
+      view.canRemove = row.status !== "playing";
+      active.push(view);
+    } else if (TERMINAL_STATUSES.includes(row.status)) {
+      history.push(view);
+    }
+  }
+
+  active.sort((a, b) => {
+    const idxA = upcoming.findIndex((item) => item.id === a.id);
+    const idxB = upcoming.findIndex((item) => item.id === b.id);
+    if (idxA < 0 && idxB < 0) return b.addedAt.localeCompare(a.addedAt);
+    if (idxA < 0) return 1;
+    if (idxB < 0) return -1;
+    return idxA - idxB;
+  });
+
+  return { active, history };
 }
 
 export function touchGuestLastSeen(

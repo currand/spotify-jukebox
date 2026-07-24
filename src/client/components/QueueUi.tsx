@@ -164,5 +164,11 @@ export function formatApiError(error: unknown): string {
   if (msg.includes("already queued in Spotify") || msg.includes("NEXT_LOCKED")) {
     return "That song is already queued in Spotify.";
   }
+  if (msg.includes("Not your song") || msg.includes("NOT_OWNER")) {
+    return "You can only change your own songs.";
+  }
+  if (msg.includes("Cannot remove now playing") || msg.includes("NOW_PLAYING")) {
+    return "That song is playing right now.";
+  }
   return msg;
 }

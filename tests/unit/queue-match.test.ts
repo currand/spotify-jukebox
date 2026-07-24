@@ -64,4 +64,19 @@ describe("isTrackInPartyQueue", () => {
       ),
     ).toBe(false);
   });
+
+  test("allows re-adding a song that was removed but not played", () => {
+    const queue = {
+      nowPlaying: null,
+      boostLane: [],
+      upcoming: [],
+      dedupTitles: [],
+    };
+    expect(
+      isTrackInPartyQueue(
+        { uri: "spotify:track:new", name: "Bohemian Rhapsody" },
+        queue,
+      ),
+    ).toBe(false);
+  });
 });

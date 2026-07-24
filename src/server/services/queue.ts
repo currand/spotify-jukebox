@@ -153,6 +153,16 @@ export function markFinished(
   itemId: string,
   status: QueueItemStatus,
 ): void {
+  const current = db
+    .query(`SELECT status FROM queue_items WHERE id = ?`)
+    .get(itemId) as { status: QueueItemStatus } | null;
+  if (
+    current &&
+    (current.status === "skipped" || current.status === "vetoed") &&
+    status === "played"
+  ) {
+    return;
+  }
   db.run(
     `UPDATE queue_items SET status = ?, finished_at = ? WHERE id = ?`,
     [status, new Date().toISOString(), itemId],
@@ -199,7 +209,7 @@ export function getDedupTitles(db: Db, partyId: string): string[] {
   const recent = db
     .query(
       `SELECT track_name FROM queue_items
-       WHERE party_id = ? AND status IN ('played', 'skipped', 'vetoed')
+       WHERE party_id = ? AND status IN ('played', 'vetoed')
        ORDER BY finished_at DESC LIMIT 20`,
     )
     .all(partyId) as { track_name: string }[];

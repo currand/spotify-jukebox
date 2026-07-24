@@ -73,6 +73,30 @@ export interface GuestMe {
   id: string;
   displayName: string | null;
   boostUsed: boolean;
+  activeSongCount?: number;
+}
+
+export interface GuestMySongView {
+  id: string;
+  trackName: string;
+  artistName: string;
+  albumArtUrl: string | null;
+  status: QueueItemStatus;
+  isBoosted: boolean;
+  upvoteCount: number;
+  vetoCount: number;
+  addedAt: string;
+  finishedAt: string | null;
+  queuePosition: string | null;
+  canBoost: boolean;
+  canUnboost: boolean;
+  canRemove: boolean;
+}
+
+export interface GuestMySongsResponse {
+  active: GuestMySongView[];
+  history: GuestMySongView[];
+  boostUsed: boolean;
 }
 
 export interface GuestSongAdded {

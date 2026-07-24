@@ -8,7 +8,7 @@ import {
   setGuestCookie,
 } from "../middleware/session";
 import { isDuplicateTitle } from "@/shared/dedup";
-import { touchGuestLastSeen } from "../services/guests";
+import { touchGuestLastSeen, countGuestActiveSongs, getGuestMySongs } from "../services/guests";
 import { getClientIp } from "../client-ip";
 import {
   bumpSyncGeneration,
@@ -546,6 +546,135 @@ export function createGuestRoutes(db: Db, config: Config) {
     return c.json({ ok: true });
   });
 
+  app.get("/parties/:slug/me/songs", (c) => {
+    let guest;
+    try {
+      guest = requireGuest(c);
+    } catch {
+      return c.json({ error: "No session", code: "NO_SESSION" }, 401);
+    }
+    const party = getPartyBySlug(db, c.req.param("slug"));
+    if (!party) return c.json({ error: "Party not found", code: "NOT_FOUND" }, 404);
+
+    const { active, history } = getGuestMySongs(
+      db,
+      party.id,
+      guest.id,
+      guest.boostUsed,
+    );
+    return c.json({
+      active,
+      history,
+      boostUsed: guest.boostUsed,
+    });
+  });
+
+  app.delete("/parties/:slug/me/songs/:itemId", async (c) => {
+    const slug = c.req.param("slug");
+    const itemId = c.req.param("itemId");
+    let guest;
+    try {
+      guest = requireGuest(c);
+    } catch {
+      return c.json({ error: "No session", code: "NO_SESSION" }, 403);
+    }
+    if (!guest.displayName) {
+      return c.json(
+        { error: "Display name required", code: "DISPLAY_NAME_REQUIRED" },
+        403,
+      );
+    }
+
+    const party = getPartyBySlug(db, slug);
+    if (!party || party.status !== "on") {
+      return c.json({ error: "Party is off", code: "PARTY_OFF" }, 403);
+    }
+
+    const item = db
+      .query(
+        `SELECT id, status, is_boosted, added_by_guest_id FROM queue_items WHERE id = ? AND party_id = ?`,
+      )
+      .get(itemId, party.id) as {
+      id: string;
+      status: string;
+      is_boosted: number;
+      added_by_guest_id: string | null;
+    } | null;
+    if (!item || item.added_by_guest_id !== guest.id) {
+      return c.json({ error: "Not your song", code: "NOT_OWNER" }, 403);
+    }
+    if (item.status === "playing") {
+      return c.json({ error: "Cannot remove now playing", code: "NOW_PLAYING" }, 400);
+    }
+    if (!["pending", "queued"].includes(item.status)) {
+      return c.json({ error: "Song already finished", code: "INVALID_ITEM" }, 400);
+    }
+
+    markFinished(db, itemId, "skipped");
+    if (item.is_boosted === 1 && guest.boostUsed) {
+      db.run(`UPDATE guests SET boost_used = 0 WHERE id = ?`, [guest.id]);
+    }
+    bumpSyncGeneration(db, party.id);
+    await syncPartyQueue(db, spotify, party.id);
+    return c.json({ ok: true });
+  });
+
+  app.post("/parties/:slug/me/songs/:itemId/unboost", async (c) => {
+    const slug = c.req.param("slug");
+    const itemId = c.req.param("itemId");
+    let guest;
+    try {
+      guest = requireGuest(c);
+    } catch {
+      return c.json({ error: "No session", code: "NO_SESSION" }, 403);
+    }
+    if (!guest.displayName) {
+      return c.json(
+        { error: "Display name required", code: "DISPLAY_NAME_REQUIRED" },
+        403,
+      );
+    }
+
+    const party = getPartyBySlug(db, slug);
+    if (!party || party.status !== "on") {
+      return c.json({ error: "Party is off", code: "PARTY_OFF" }, 403);
+    }
+
+    const item = db
+      .query(
+        `SELECT id, status, is_boosted, added_by_guest_id FROM queue_items WHERE id = ? AND party_id = ?`,
+      )
+      .get(itemId, party.id) as {
+      id: string;
+      status: string;
+      is_boosted: number;
+      added_by_guest_id: string | null;
+    } | null;
+    if (!item || item.added_by_guest_id !== guest.id) {
+      return c.json({ error: "Not your song", code: "NOT_OWNER" }, 403);
+    }
+    if (item.is_boosted !== 1) {
+      return c.json({ error: "Song is not boosted", code: "NOT_BOOSTED" }, 400);
+    }
+    if (item.status === "playing") {
+      return c.json({ error: "Cannot unboost now playing", code: "NOW_PLAYING" }, 400);
+    }
+    if (!["pending", "queued"].includes(item.status)) {
+      return c.json({ error: "Song already finished", code: "INVALID_ITEM" }, 400);
+    }
+
+    db.run(
+      `UPDATE queue_items SET is_boosted = 0, boost_position = NULL, status = 'pending' WHERE id = ?`,
+      [itemId],
+    );
+    if (guest.boostUsed) {
+      db.run(`UPDATE guests SET boost_used = 0 WHERE id = ?`, [guest.id]);
+    }
+    bumpSyncGeneration(db, party.id);
+    await syncPartyQueue(db, spotify, party.id);
+    return c.json({ ok: true });
+  });
+
   app.get("/parties/:slug/me", (c) => {
     const guest = getGuest(c);
     if (!guest) return c.json({ error: "No session", code: "NO_SESSION" }, 401);
@@ -560,6 +689,7 @@ export function createGuestRoutes(db: Db, config: Config) {
       id: guest.id,
       displayName: guest.displayName,
       boostUsed: guest.boostUsed,
+      activeSongCount: countGuestActiveSongs(db, party.id, guest.id),
       quota,
     });
   });
