@@ -137,7 +137,7 @@ export function createHostRoutes(db: Db, config: Config) {
       data.expires_in,
     );
     const session = createHostSession(db);
-    setHostCookie(c, session, config.isProduction);
+    setHostCookie(c, session, config.secureCookies);
     return c.redirect(`${config.baseUrl}/admin`);
   });
 

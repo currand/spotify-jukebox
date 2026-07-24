@@ -143,7 +143,7 @@ export function createGuestRoutes(db: Db, config: Config) {
         | null;
       if (resumed) {
         touchGuestLastSeen(db, resumed.id, clientIp);
-        setGuestCookie(c, slug, resumed.session_token, config.isProduction);
+        setGuestCookie(c, slug, resumed.session_token, config.secureCookies);
         return c.json({
           id: resumed.id,
           displayName: resumed.display_name,
@@ -169,7 +169,7 @@ export function createGuestRoutes(db: Db, config: Config) {
         clientIp,
       ],
     );
-    setGuestCookie(c, slug, token, config.isProduction);
+    setGuestCookie(c, slug, token, config.secureCookies);
     return c.json({
       id: guestId,
       displayName,

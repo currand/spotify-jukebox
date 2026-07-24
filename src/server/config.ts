@@ -13,6 +13,8 @@ export interface Config {
   encryptionKey: string;
   hostSetupToken: string | null;
   isProduction: boolean;
+  /** false when BASE_URL uses http:// (e.g. LAN or TLS terminated elsewhere) */
+  secureCookies: boolean;
 }
 
 function requireEnv(name: string, env: AppEnv): string {
@@ -29,6 +31,7 @@ function assertUrlPolicy(
   env: AppEnv,
   baseUrl: string,
   redirectUri: string,
+  allowInsecureHttp: boolean,
 ): void {
   if (baseUrl.includes("localhost") || redirectUri.includes("localhost")) {
     throw new Error(
@@ -50,14 +53,21 @@ function assertUrlPolicy(
   }
 
   if (env === "production") {
-    if (!baseUrl.startsWith("https://")) {
+    const baseHttps = baseUrl.startsWith("https://");
+    const redirectHttps = redirectUri.startsWith("https://");
+    if (!allowInsecureHttp && !baseHttps) {
       throw new Error(
-        "Production BASE_URL must be https:// (your Cloudflare Tunnel URL)",
+        "Production BASE_URL must be https:// (your public URL), or set ALLOW_INSECURE_HTTP=1 for http:// LAN/proxy setups",
       );
     }
-    if (!redirectUri.startsWith("https://")) {
+    if (!allowInsecureHttp && !redirectHttps) {
       throw new Error(
-        "Production SPOTIFY_REDIRECT_URI must be https:// (same host as BASE_URL)",
+        "Production SPOTIFY_REDIRECT_URI must be https:// (same host as BASE_URL), or set ALLOW_INSECURE_HTTP=1",
+      );
+    }
+    if (allowInsecureHttp && baseHttps !== redirectHttps) {
+      throw new Error(
+        "BASE_URL and SPOTIFY_REDIRECT_URI must both use http:// or both use https://",
       );
     }
     const baseHost = new URL(baseUrl).host;
@@ -78,8 +88,11 @@ export function loadConfig(env: AppEnv): Config {
     ? requireEnv("BASE_URL", env)
     : (process.env.BASE_URL ?? "http://127.0.0.1:5173");
   const spotifyRedirectUri = requireEnv("SPOTIFY_REDIRECT_URI", env);
+  const allowInsecureHttp =
+    process.env.ALLOW_INSECURE_HTTP === "1" ||
+    process.env.ALLOW_INSECURE_HTTP === "true";
 
-  assertUrlPolicy(env, baseUrl, spotifyRedirectUri);
+  assertUrlPolicy(env, baseUrl, spotifyRedirectUri, allowInsecureHttp);
 
   const encryptionKey = requireEnv("ENCRYPTION_KEY", env);
   if (isProduction && encryptionKey.startsWith("dev-only")) {
@@ -109,6 +122,7 @@ export function loadConfig(env: AppEnv): Config {
     encryptionKey,
     hostSetupToken,
     isProduction,
+    secureCookies: baseUrl.startsWith("https://"),
   };
 }
 

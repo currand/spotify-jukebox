@@ -6,14 +6,13 @@ Self-hosted party queue control for Spotify Premium.
 
 Jukebox uses **separate env files** with **separate Spotify apps** for dev and prod:
 
-| | Development | Production |
+| | Development | Production (Docker) |
 |---|---|---|
-| **Env files** | `.env.development` | `.env.production` + `.env.cloudflared` |
-| **Spotify app** | Dev app (127.0.0.1 redirect) | Prod app (HTTPS redirect) |
-| **Cloudflare** | Not used | Required |
-| **Run** | `bun run dev` | `docker compose up -d` |
-| **Admin UI** | http://127.0.0.1:5173/admin | https://jukebox.yourdomain.com/admin |
-| **API (dev only)** | http://127.0.0.1:3000/api/v1 | (same as UI in prod) |
+| **Env files** | `.env.development` | `.env.production` (+ `.env.cloudflared` if using tunnel overlay) |
+| **Spotify app** | Dev app (127.0.0.1 redirect) | Prod app (your public URL) |
+| **Cloudflare** | Not used | Optional — `docker-compose.cloudflare.yml` |
+| **Run** | `bun run dev` | `bun run docker:up` |
+| **Admin UI** | http://127.0.0.1:5173/admin | `{BASE_URL}/admin` |
 
 Spotify rejects `http://localhost`. Always use **`127.0.0.1`** in dev.
 
@@ -60,68 +59,74 @@ No Cloudflare tunnel needed for local dev.
 
 ---
 
-## Production setup
+## Production setup (Docker)
 
-### 1. Cloudflare Tunnel
+Docker runs the built app on port **3000** by default. Put your own reverse proxy (nginx, Caddy, Traefik) in front, or use the optional Cloudflare Tunnel overlay.
 
-1. [Cloudflare Zero Trust](https://one.dash.cloudflare.com/) → **Networks** → **Tunnels** → create tunnel
-2. Public hostname → `http://jukebox:3000` (Docker service name; jukebox is not published to the host)
-3. Note your URL, e.g. `https://jukebox.yourdomain.com`
-4. Copy the tunnel token
+### 1. Spotify app
 
-### 2. Spotify prod app
+Create a **production** app in the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard):
 
-Create a **separate production** app in the Spotify Dashboard:
+- Redirect URI: `https://your-public-hostname/api/v1/host/spotify/callback`
+- Must match `BASE_URL` and `SPOTIFY_REDIRECT_URI` in `.env.production`
+- Use prod client ID/secret (not the dev app credentials)
 
-- Redirect URI: `https://jukebox.yourdomain.com/api/v1/host/spotify/callback`
-- Use prod client ID/secret in `.env.production` (not the dev app credentials)
-
-### 3. Env files
+### 2. Env file
 
 ```bash
 bun run setup:prod
-# Or:
-#   cp .env.production.example .env.production
-#   cp .env.cloudflared.example .env.cloudflared
+# Or: cp .env.production.example .env.production
 ```
 
-**`.env.production`** (jukebox app):
+**`.env.production`** (required):
 
 ```env
 SPOTIFY_CLIENT_ID=...
 SPOTIFY_CLIENT_SECRET=...
-SPOTIFY_REDIRECT_URI=https://jukebox.yourdomain.com/api/v1/host/spotify/callback
+SPOTIFY_REDIRECT_URI=https://jukebox.example.com/api/v1/host/spotify/callback
 SPOTIFY_MARKET=US
-BASE_URL=https://jukebox.yourdomain.com
+BASE_URL=https://jukebox.example.com
 ENCRYPTION_KEY=...      # openssl rand -hex 32  (≥ 32 characters)
 HOST_SETUP_TOKEN=...    # openssl rand -hex 16
 ```
 
-**`.env.cloudflared`** (tunnel only — do not put this in `.env.production`):
+Set `BASE_URL` and `SPOTIFY_REDIRECT_URI` to however guests reach the app — your proxy hostname, LAN IP, or Cloudflare tunnel URL. Prefer **https://**; for http:// LAN-only setups set `ALLOW_INSECURE_HTTP=1`.
 
-```env
-TUNNEL_TOKEN=...        # from Cloudflare Zero Trust → Tunnels
+### 3. Deploy
+
+**Self-hosted** (port exposed — use your own proxy or LAN):
+
+```bash
+bun run docker:up
+# Or: docker compose up --build -d
 ```
+
+Jukebox listens on **`http://localhost:3000`** (override host port with `JUKEBOX_PORT=8080 bun run docker:up`).
+
+**With Cloudflare Tunnel** (optional overlay — tunnel only, no host port):
+
+```bash
+cp .env.cloudflared.example .env.cloudflared
+# Add TUNNEL_TOKEN from Cloudflare Zero Trust → Tunnels
+
+bun run docker:up:cloudflare
+# Or: docker compose -f docker-compose.yml -f docker-compose.cloudflare.yml up --build -d
+```
+
+Configure the tunnel public hostname → `http://jukebox:3000` (Docker service name).
 
 ### 4. Connect Spotify (first time)
 
-1. Deploy (step 5), then open `https://jukebox.yourdomain.com/admin`
+1. Open `{BASE_URL}/admin`
 2. Enter your `HOST_SETUP_TOKEN` in **Host setup token**
 3. Click **Connect Spotify**
 
-The setup token gates host OAuth so random visitors cannot take over admin. Guests never need it.
-
-### 5. Deploy
-
-```bash
-docker compose up --build -d
-```
-
-Open https://jukebox.yourdomain.com/admin
+### 5. Logs
 
 ```bash
 docker compose logs -f jukebox
-docker compose logs -f cloudflared
+# With Cloudflare overlay:
+docker compose -f docker-compose.yml -f docker-compose.cloudflare.yml logs -f
 ```
 
 ---
@@ -132,7 +137,8 @@ docker compose logs -f cloudflared
 |---|---|
 | `bun run dev` | `.env.development`, then `.env.local` |
 | `bun run start` | `.env.production`, then `.env.local` |
-| `docker compose up` | `jukebox` → `.env.production`; `cloudflared` → `.env.cloudflared` |
+| `bun run docker:up` | `jukebox` → `.env.production` |
+| `bun run docker:up:cloudflare` | `jukebox` → `.env.production`; `cloudflared` → `.env.cloudflared` |
 
 All secret env files are gitignored. Templates: `.env.development.example`, `.env.production.example`, `.env.cloudflared.example`. Overview: `.env.example`.
 
@@ -142,19 +148,21 @@ All secret env files are gitignored. Templates: `.env.development.example`, `.en
 |---|---|---|---|
 | `SPOTIFY_CLIENT_ID` | required | required | Separate Spotify app per environment |
 | `SPOTIFY_CLIENT_SECRET` | required | required | |
-| `SPOTIFY_REDIRECT_URI` | required | required | Must use `127.0.0.1` (dev) or `https://` (prod) |
+| `SPOTIFY_REDIRECT_URI` | required | required | Must match `BASE_URL` hostname |
 | `BASE_URL` | optional | required | Dev default `http://127.0.0.1:5173` |
+| `ALLOW_INSECURE_HTTP` | — | optional | Set `1` for http:// production URLs (LAN) |
 | `ENCRYPTION_KEY` | required | required | Prod: ≥ 32 chars (`openssl rand -hex 32`) |
 | `HOST_SETUP_TOKEN` | optional | required | Prod: enter in Admin before Connect Spotify |
 | `SPOTIFY_MARKET` | optional | optional | Default `US` |
-| `TUNNEL_TOKEN` | — | `.env.cloudflared` only | Never in `.env.production` |
+| `TUNNEL_TOKEN` | — | `.env.cloudflared` only | Only with `docker-compose.cloudflare.yml` |
+| `JUKEBOX_PORT` | — | optional | Host port for default Docker compose (default `3000`) |
 | `DATABASE_PATH` | optional | optional | Defaults shown in examples |
 | `PORT` | optional | optional | Default `3000` |
 
 Config validation enforces:
 
 - **Dev:** `http://127.0.0.1` URLs only
-- **Prod:** `https://` URLs, same hostname for `BASE_URL` and `SPOTIFY_REDIRECT_URI`
+- **Prod:** `BASE_URL` and `SPOTIFY_REDIRECT_URI` must share the same hostname; **https://** unless `ALLOW_INSECURE_HTTP=1`
 - **Prod:** `ENCRYPTION_KEY` length ≥ 32, `HOST_SETUP_TOKEN` must be set
 
 ---

@@ -80,12 +80,12 @@ export function setGuestCookie(
   c: Context,
   slug: string,
   token: string,
-  isProduction: boolean,
+  secure: boolean,
 ): void {
   setCookie(c, `guest_session_${slug}`, token, {
     httpOnly: true,
     sameSite: "Lax",
-    secure: isProduction,
+    secure,
     path: "/",
     maxAge: 60 * 60 * 24,
   });
@@ -94,12 +94,12 @@ export function setGuestCookie(
 export function setHostCookie(
   c: Context,
   token: string,
-  isProduction: boolean,
+  secure: boolean,
 ): void {
   setCookie(c, "host_session", token, {
     httpOnly: true,
     sameSite: "Lax",
-    secure: isProduction,
+    secure,
     path: "/",
     maxAge: 60 * 60 * 24 * 7,
   });

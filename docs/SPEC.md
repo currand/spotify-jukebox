@@ -68,8 +68,9 @@ bun run lint
 bun run typecheck
 bun test
 
-# Production (Docker loads .env.production + cloudflared)
-docker compose up --build -d
+# Production (Docker loads .env.production; optional cloudflared overlay)
+bun run docker:up
+bun run docker:up:cloudflare   # adds docker-compose.cloudflare.yml
 
 # Logs
 docker compose logs -f jukebox
@@ -328,9 +329,10 @@ Host actions bypass guest rate limits and ownership restrictions.
 
 ### Cloudflare
 
-- **Production only.** Development runs on `127.0.0.1` without a tunnel.
-- **cloudflared** provides the public **HTTPS** URL required for production Spotify OAuth and guest QR links.
-- Set up the tunnel before registering the **production** Spotify app redirect URI.
+- **Optional.** Use `docker-compose.cloudflare.yml` overlay with `bun run docker:up:cloudflare`.
+- Default `docker compose up` exposes port 3000 for your own reverse proxy or LAN access.
+- **cloudflared** provides public HTTPS when using the overlay; set tunnel hostname → `http://jukebox:3000`.
+- Set up the tunnel (if used) before registering the **production** Spotify app redirect URI.
 - No Cloudflare Access, Workers, or other Cloudflare features in v1.
 
 **Environment files:**
@@ -338,8 +340,8 @@ Host actions bypass guest rate limits and ownership restrictions.
 | File | Use |
 |---|---|
 | `.env.development` | Local dev — separate Spotify dev app, `http://127.0.0.1` URLs |
-| `.env.production` | Docker **jukebox** service — Spotify prod app, HTTPS URLs, `ENCRYPTION_KEY`, `HOST_SETUP_TOKEN` |
-| `.env.cloudflared` | Docker **cloudflared** service only — `TUNNEL_TOKEN` |
+| `.env.production` | Docker **jukebox** service — Spotify prod app, public `BASE_URL`, secrets |
+| `.env.cloudflared` | Optional — Docker **cloudflared** overlay only (`TUNNEL_TOKEN`) |
 | `.env.local` | Optional overrides (gitignored), loaded after the env file above |
 
 **Production secrets to generate:**
@@ -535,30 +537,29 @@ Guests poll `GET /parties/:slug/queue` every **3 seconds** when party is on. `ET
 
 ## Docker Compose
 
+**Base** (`docker-compose.yml`) — jukebox only, port `${JUKEBOX_PORT:-3000}` published:
+
 ```yaml
 services:
   jukebox:
     build: .
     restart: unless-stopped
+    ports:
+      - "${JUKEBOX_PORT:-3000}:3000"
     volumes:
-      - jukebox-data:/data        # SQLite + encrypted tokens
+      - jukebox-data:/data
     env_file:
-      - .env.production           # SPOTIFY_*, BASE_URL, ENCRYPTION_KEY, HOST_SETUP_TOKEN
-
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    restart: unless-stopped
-    command: tunnel run
-    env_file:
-      - .env.cloudflared          # TUNNEL_TOKEN only
-    depends_on:
-      - jukebox
+      - .env.production
 
 volumes:
   jukebox-data:
 ```
 
-The jukebox service is **not** published to the host; only cloudflared exposes it.
+**Optional Cloudflare overlay** (`docker-compose.cloudflare.yml`) — removes host port, adds cloudflared:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.cloudflare.yml up -d
+```
 
 ---
 
@@ -584,7 +585,7 @@ Both apps:
 - Host must have **Spotify Premium**
 - Development mode; allowlist only the host account
 
-**Setup order (production):** Cloudflare Tunnel → `.env.production` + `.env.cloudflared` → Spotify prod app → `docker compose up` → Admin (enter `HOST_SETUP_TOKEN`) → Connect Spotify
+**Setup order (production):** Spotify prod app → `.env.production` → `bun run docker:up` (or `docker:up:cloudflare` + `.env.cloudflared`) → Admin (enter `HOST_SETUP_TOKEN`) → Connect Spotify
 
 **Policy note:** Jukebox is for personal, non-commercial home use. Spotify prohibits commercial use and broadcasting synchronized content.
 

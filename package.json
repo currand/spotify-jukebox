@@ -6,6 +6,10 @@
   "scripts": {
     "setup:dev": "cp -n .env.development.example .env.development 2>/dev/null || true",
     "setup:prod": "cp -n .env.production.example .env.production 2>/dev/null || true; cp -n .env.cloudflared.example .env.cloudflared 2>/dev/null || true",
+    "docker:up": "docker compose up --build -d",
+    "docker:up:cloudflare": "docker compose -f docker-compose.yml -f docker-compose.cloudflare.yml up --build -d",
+    "docker:down": "docker compose down",
+    "docker:down:cloudflare": "docker compose -f docker-compose.yml -f docker-compose.cloudflare.yml down",
     "dev": "concurrently -n api,web -c green,blue \"bun --env-file=.env.development --watch src/server/index.ts\" \"vite --mode development\"",
     "build": "vite build && bun build src/server/index.ts --outdir dist/server --target bun",
     "start": "NODE_ENV=production JUKEBOX_ENV=production bun --env-file=.env.production dist/server/index.js",

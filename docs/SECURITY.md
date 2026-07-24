@@ -32,8 +32,9 @@ If any secret file was ever committed, **rotate all credentials** before making 
 - The client bundle has **no secrets** — it calls `/api/v1` with relative paths.
 - Docker builds use `.dockerignore` so local env files are not copied into image layers.
 - Split env files in production:
-  - `.env.production` → `jukebox` container only
-  - `.env.cloudflared` → `cloudflared` container only (tunnel token never reaches the app)
+  - `.env.production` → `jukebox` container
+  - `.env.cloudflared` → optional cloudflared overlay only
+- Default Docker exposes port 3000; Cloudflare overlay removes the host port
 
 Generate strong values:
 
