@@ -1,4 +1,5 @@
 import type { Db } from "../db/schema";
+import { getActiveParty, hasActiveParty } from "./party";
 import {
   adoptSpotifyTrack,
   bumpSyncGeneration,
@@ -22,6 +23,7 @@ import {
 
 const SYNC_INTERVAL_ACTIVE_MS = 5000;
 const SYNC_INTERVAL_IDLE_MS = 20000;
+const SYNC_INTERVAL_NO_PARTY_MS = 60_000;
 
 const RESTRICTED_DEVICE_HINT =
   "This device doesn't support Spotify's queue API — use the Spotify app on your phone or computer.";
@@ -69,11 +71,13 @@ export function partyHasPendingBufferWork(db: Db, partyId: string): boolean {
   return getQueueItems(db, partyId).some((item) => item.status === "pending");
 }
 
+export { hasActiveParty };
+
 export function getSyncIntervalMs(
   db: Db,
   party: { id: string; sync_generation: number } | null,
 ): number {
-  if (!party) return SYNC_INTERVAL_IDLE_MS;
+  if (!party) return SYNC_INTERVAL_NO_PARTY_MS;
   if (partyNeedsSpotifyQueueSync(db, party.id, party.sync_generation)) {
     return SYNC_INTERVAL_ACTIVE_MS;
   }
@@ -159,6 +163,22 @@ export function reconcileSpotifyBufferStatuses(
     if (item.status === "queued") {
       db.run(`UPDATE queue_items SET status = 'pending' WHERE id = ?`, [item.id]);
     }
+  }
+}
+
+/** Adopt tracks waiting deeper in Spotify's queue as locked pending rows. */
+export function reconcileSpotifyQueueTail(
+  db: Db,
+  partyId: string,
+  queueData: SpotifyQueueSnapshot,
+): void {
+  for (let i = 1; i < queueData.queue.length; i++) {
+    adoptSpotifyTrack(
+      db,
+      partyId,
+      trackFromSpotify(queueData.queue[i]!),
+      "pending",
+    );
   }
 }
 
@@ -349,9 +369,7 @@ function handleQueueSyncError(e: unknown): void {
 export function startSyncWorker(db: Db, spotify: SpotifyClient): void {
   const tick = async () => {
     await runSyncTick(db, spotify);
-    const party = db
-      .query(`SELECT id, sync_generation FROM parties WHERE status = 'on' LIMIT 1`)
-      .get() as { id: string; sync_generation: number } | null;
+    const party = getActiveParty(db);
     syncWorkerTimer = setTimeout(() => void tick(), getSyncIntervalMs(db, party));
   };
   void tick();
@@ -360,6 +378,135 @@ export function startSyncWorker(db: Db, spotify: SpotifyClient): void {
 /** Queue a Spotify sync on the background worker — avoids duplicate API calls per mutation. */
 export function requestPartySync(db: Db, partyId: string): void {
   bumpSyncGeneration(db, partyId);
+}
+
+export class PartySyncError extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "PartySyncError";
+  }
+}
+
+/** Force an immediate Spotify refresh for the active party (admin manual sync). */
+export async function forcePartySync(
+  db: Db,
+  spotify: SpotifyClient,
+  partyId: string,
+): Promise<void> {
+  const party = db
+    .query(`SELECT * FROM parties WHERE id = ?`)
+    .get(partyId) as { id: string; sync_generation: number; status: string } | null;
+
+  if (!party) {
+    throw new PartySyncError("Party not found", "NOT_FOUND", 404);
+  }
+  if (party.status !== "on") {
+    throw new PartySyncError("Party is off", "PARTY_OFF", 403);
+  }
+  if (isRateLimited()) {
+    const remainingMs = (syncState.rateLimitedUntil ?? 0) - Date.now();
+    throw new PartySyncError(
+      rateLimitMessage(remainingMs),
+      "RATE_LIMITED",
+      429,
+    );
+  }
+
+  const token = await spotify.getAccessToken();
+  if (!token) {
+    throw new PartySyncError("Spotify not connected", "SPOTIFY_DISCONNECTED", 503);
+  }
+
+  let snapshot: PlayerSnapshot;
+  try {
+    snapshot = await spotify.getPlayerSnapshot();
+    applyPlayerSnapshot(snapshot);
+  } catch (e) {
+    handlePlayerError(e);
+    throw new PartySyncError(
+      syncState.lastError ?? "Spotify unreachable",
+      "SPOTIFY_ERROR",
+      503,
+    );
+  }
+
+  if (isRateLimited()) {
+    const remainingMs = (syncState.rateLimitedUntil ?? 0) - Date.now();
+    throw new PartySyncError(
+      rateLimitMessage(remainingMs),
+      "RATE_LIMITED",
+      429,
+    );
+  }
+
+  if (!snapshot.deviceActive) {
+    throw new PartySyncError(
+      "No active Spotify device",
+      "NO_ACTIVE_DEVICE",
+      503,
+    );
+  }
+
+  bumpSyncGeneration(db, partyId);
+  const refreshedParty = db
+    .query(`SELECT id, sync_generation FROM parties WHERE id = ?`)
+    .get(partyId) as { id: string; sync_generation: number };
+
+  await withPartySyncLock(partyId, async () => {
+    const items = getQueueItems(db, partyId);
+    let queueData: SpotifyQueueSnapshot = { currentlyPlaying: null, queue: [] };
+    try {
+      queueData = await spotify.getQueue();
+    } catch (e) {
+      if (isSpotifyRateLimitError(e)) {
+        markRateLimited(e);
+        throw new PartySyncError(
+          syncState.lastError ?? "Spotify rate limited",
+          "RATE_LIMITED",
+          429,
+        );
+      }
+      if (isQueueControlError(e)) {
+        markDeviceRestricted(snapshot.deviceName);
+        throw new PartySyncError(
+          syncState.lastError ?? "Device restricted",
+          "DEVICE_RESTRICTED",
+          503,
+        );
+      }
+      throw e;
+    }
+
+    const effective = buildEffectiveQueueSnapshot(queueData, snapshot, items);
+    await reconcilePlayingState(
+      db,
+      partyId,
+      items,
+      effective,
+      snapshot.isPlaying,
+      spotify,
+      snapshot.deviceName,
+    );
+
+    const afterPlaying = getQueueItems(db, partyId);
+    reconcileSpotifyBufferStatuses(db, partyId, afterPlaying, queueData);
+    reconcileSpotifyQueueTail(db, partyId, queueData);
+
+    const refreshed = getQueueItems(db, partyId);
+    await fillSpotifyBufferIfEmpty(
+      db,
+      partyId,
+      refreshed,
+      spotify,
+      queueData,
+      snapshot.deviceName,
+    );
+    partyLastSyncedGeneration.set(partyId, refreshedParty.sync_generation);
+  });
 }
 
 async function withPartySyncLock(
@@ -381,9 +528,10 @@ async function withPartySyncLock(
 async function runSyncTick(db: Db, spotify: SpotifyClient): Promise<void> {
   clearRateLimitIfExpired();
 
-  const party = db
-    .query(`SELECT * FROM parties WHERE status = 'on' LIMIT 1`)
-    .get() as { id: string; sync_generation: number } | null;
+  const party = getActiveParty(db);
+  if (!party) {
+    return;
+  }
 
   try {
     const token = await spotify.getAccessToken();
@@ -430,7 +578,7 @@ async function runSyncTick(db: Db, spotify: SpotifyClient): Promise<void> {
       return;
     }
 
-    if (!party || !snapshot.deviceActive) return;
+    if (!snapshot.deviceActive) return;
 
     try {
       await withPartySyncLock(party.id, () =>
@@ -503,6 +651,7 @@ async function runPartySync(
 
   const afterPlaying = getQueueItems(db, party.id);
   reconcileSpotifyBufferStatuses(db, party.id, afterPlaying, queueData);
+  reconcileSpotifyQueueTail(db, party.id, queueData);
 
   const refreshed = getQueueItems(db, party.id);
   await fillSpotifyBufferIfEmpty(

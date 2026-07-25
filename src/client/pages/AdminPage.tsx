@@ -6,7 +6,6 @@ import type {
   PartyView,
   QueueItemView,
   QueueSnapshot,
-  RateLimitConfig,
   SearchResult,
   TrackInfo,
 } from "@/shared/types";
@@ -16,12 +15,17 @@ import { api, apiOptional } from "../http";
 import { AdminNav } from "../components/AdminNav";
 import { SpotifyAttribution } from "../components/SpotifyAttribution";
 import {
+  GuestLimitsFields,
+  GuestLimitsPanel,
+} from "../components/GuestLimitsFields";
+import {
+  AdminQueueRow,
   formatApiError,
   NowPlayingBanner,
   SearchFilterChips,
   SearchNav,
   SearchTrackRow,
-  TrackTitle,
+  UpNextLockedSection,
 } from "../components/QueueUi";
 
 interface PartyFull extends PartyView {
@@ -41,6 +45,8 @@ export function AdminPage() {
     seedPlaylistId: "",
     vetoThreshold: 3,
   });
+  const [createRateLimits, setCreateRateLimits] =
+    React.useState<PartyRateLimits>(DEFAULT_RATE_LIMITS);
   const [query, setQuery] = React.useState("");
   const [results, setResults] = React.useState<SearchResult | null>(null);
   const [showSearchResults, setShowSearchResults] = React.useState(false);
@@ -54,6 +60,7 @@ export function AdminPage() {
   const [notice, setNotice] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [hostSearching, setHostSearching] = React.useState(false);
+  const [syncing, setSyncing] = React.useState(false);
   const [endedExport, setEndedExport] = React.useState<EndedPartyExport | null>(
     null,
   );
@@ -131,11 +138,13 @@ export function AdminPage() {
       const body: {
         name: string;
         vetoThreshold: number;
+        rateLimits: PartyRateLimits;
         seedPlaylistId?: string;
         importFromPartyId?: string;
       } = {
         name: form.name.trim(),
         vetoThreshold: form.vetoThreshold,
+        rateLimits: createRateLimits,
       };
       if (useImportHistory && endedExport?.trackCount) {
         body.importFromPartyId = endedExport.partyId;
@@ -152,6 +161,7 @@ export function AdminPage() {
       setEndedExport(null);
       setUseImportHistory(false);
       setForm({ name: "", seedPlaylistId: "", vetoThreshold: 3 });
+      setCreateRateLimits(DEFAULT_RATE_LIMITS);
       setNotice(null);
       await load();
     } catch (e) {
@@ -180,6 +190,7 @@ export function AdminPage() {
       setQueue(null);
       setHistory([]);
       setForm({ name: "", seedPlaylistId: "", vetoThreshold: 3 });
+      setCreateRateLimits(DEFAULT_RATE_LIMITS);
       setNotice(
         result.trackCount > 0
           ? `Party ended. ${result.trackCount} tracks saved from "${result.partyName}".`
@@ -213,13 +224,14 @@ export function AdminPage() {
     await load();
   }
 
-  async function hostSearch() {
+  async function hostSearch(searchQuery?: string) {
     if (!party) return;
-    const trimmed = query.trim();
+    const trimmed = (searchQuery ?? query).trim();
     if (trimmed.length < 3) {
       setError("Enter at least 3 characters to search.");
       return;
     }
+    if (searchQuery) setQuery(searchQuery);
     if (hostSearching) return;
     setHostSearching(true);
     setError(null);
@@ -294,6 +306,25 @@ export function AdminPage() {
     }
   }
 
+  async function hostSync() {
+    if (!party) return;
+    setSyncing(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const q = await api<QueueSnapshot>(`/host/parties/${party.id}/sync`, {
+        method: "POST",
+        body: "{}",
+      });
+      setQueue(q);
+      setNotice("Synced with Spotify.");
+    } catch (e) {
+      setError(formatApiError(e));
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   async function hostAction(path: string, method = "POST", body?: unknown) {
     await api(path, {
       method,
@@ -303,9 +334,15 @@ export function AdminPage() {
   }
 
   const joinUrl = party ? `${window.location.origin}/p/${party.slug}` : "";
+  const upcomingOrdered = queue?.upcomingOrder ?? [
+    ...(queue?.boostLane ?? []),
+    ...(queue?.upcoming ?? []),
+  ];
+  const upNext = upcomingOrdered[0] ?? null;
+  const laterQueue = upcomingOrdered.slice(1);
 
   return (
-    <div className="app">
+    <div className="app admin-page">
       <h1>Jukebox Admin</h1>
       <AdminNav
         guestCount={party?.guestCount ?? 0}
@@ -396,13 +433,13 @@ export function AdminPage() {
             <h2>Create party</h2>
             {notice && <p className="toast-ok">{notice}</p>}
             {endedExport && endedExport.trackCount > 0 && (
-              <div className="banner playing" style={{ marginBottom: "1rem" }}>
+              <div className="banner playing admin-ended-banner">
                 <strong>Last party: {endedExport.partyName}</strong>
-                <p className="small" style={{ margin: "0.35rem 0 0" }}>
+                <p className="small admin-ended-banner-meta">
                   {endedExport.trackCount} tracks saved in playback order.
                 </p>
-                <div className="row" style={{ marginTop: "0.5rem" }}>
-                  <label className="row" style={{ cursor: "pointer" }}>
+                <div className="row party-controls">
+                  <label className="row admin-checkbox-label">
                     <input
                       type="checkbox"
                       checked={useImportHistory}
@@ -427,10 +464,7 @@ export function AdminPage() {
                   </button>
                 </div>
                 {showHistoryList && (
-                  <div
-                    className="history-list small"
-                    style={{ marginTop: "0.5rem", maxHeight: 160, overflow: "auto" }}
-                  >
+                  <div className="history-list small admin-history-list">
                     {endedExport.tracks.map((t) => (
                       <div key={t.uri}>
                         {t.name} — {t.artistName}
@@ -440,25 +474,25 @@ export function AdminPage() {
                 )}
               </div>
             )}
-            <input
-              placeholder="Party name"
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-            />
-            <input
-              style={{ marginTop: "0.5rem" }}
-              placeholder="Seed playlist URL or ID (optional if using history)"
-              value={form.seedPlaylistId}
-              disabled={useImportHistory}
-              onChange={(e) => {
-                setForm({ ...form, seedPlaylistId: e.target.value });
-                if (e.target.value.trim()) setUseImportHistory(false);
-              }}
-            />
-            <label style={{ display: "block", marginTop: "0.5rem" }}>
+            <div className="form-grid">
+              <input
+                placeholder="Party name"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+              />
+              <input
+                placeholder="Seed playlist URL or ID (optional if using history)"
+                value={form.seedPlaylistId}
+                disabled={useImportHistory}
+                onChange={(e) => {
+                  setForm({ ...form, seedPlaylistId: e.target.value });
+                  if (e.target.value.trim()) setUseImportHistory(false);
+                }}
+              />
+            </div>
+            <label className="form-field">
               <span>Vetoes to skip a song</span>
               <input
-                style={{ display: "block", marginTop: "0.25rem", width: "100%" }}
                 type="number"
                 min={1}
                 max={20}
@@ -472,7 +506,19 @@ export function AdminPage() {
                 How many guests must veto before a track is skipped.
               </span>
             </label>
-            <div style={{ marginTop: "0.75rem" }}>
+            <details className="admin-advanced">
+              <summary>Advanced guest limits</summary>
+              <GuestLimitsFields
+                vetoThreshold={form.vetoThreshold}
+                rateLimits={createRateLimits}
+                onVetoThresholdChange={(value) =>
+                  setForm((current) => ({ ...current, vetoThreshold: value }))
+                }
+                onRateLimitsChange={setCreateRateLimits}
+                showIntro={false}
+              />
+            </details>
+            <div className="party-controls">
               <button onClick={() => void createParty()} disabled={!canCreate}>
                 Create party
               </button>
@@ -481,10 +527,10 @@ export function AdminPage() {
         )}
 
         {party && (
-          <div className="card">
+          <div className="card admin-section">
             <h2>{party.name}</h2>
             <p className="small">/{party.slug}</p>
-            <div className="row" style={{ marginBottom: "0.75rem" }}>
+            <div className="row party-controls">
               <button onClick={() => void toggleParty(true)} disabled={party.status === "on"}>
                 Turn ON
               </button>
@@ -510,15 +556,21 @@ export function AdminPage() {
             <img
               src={`/api/v1/host/parties/${party.id}/qr`}
               alt="QR code"
-              style={{ width: 180, background: "#fff", padding: 8, borderRadius: 8 }}
+              className="party-qr"
             />
+            <p className="small">
+              <a href="/admin/display" target="_blank" rel="noreferrer">
+                Open display view
+              </a>{" "}
+              for a TV-friendly queue + QR screen.
+            </p>
             <GuestLimitsPanel
               partyId={party.id}
               vetoThreshold={party.vetoThreshold}
               rateLimits={party.rateLimits}
               onSaved={() => void load()}
             />
-            <div style={{ marginTop: "1rem" }}>
+            <div className="party-controls">
               <button type="button" className="danger" onClick={() => void endParty()}>
                 End party
               </button>
@@ -529,9 +581,16 @@ export function AdminPage() {
 
       {party && (
         <div>
-          <div className="card">
+          <div className="card admin-section">
             <h2>Queue controls</h2>
             <div className="actions">
+              <button
+                className="secondary"
+                onClick={() => void hostSync()}
+                disabled={syncing || party.status !== "on"}
+              >
+                {syncing ? "Syncing…" : "Sync with Spotify"}
+              </button>
               <button onClick={() => void hostAction(`/host/parties/${party.id}/queue/shuffle`)}>
                 Shuffle
               </button>
@@ -545,7 +604,7 @@ export function AdminPage() {
                 Skip now playing
               </button>
             </div>
-            <div className="row" style={{ marginTop: "0.75rem" }}>
+            <div className="row admin-search-row">
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -577,11 +636,17 @@ export function AdminPage() {
               <>
                 {notice && <p className="toast-ok">{notice}</p>}
                 {!selectedArtist && results.artists.length > 0 && (
-                  <div style={{ marginBottom: "1rem" }}>
+                  <div className="admin-artist-results">
                     <strong>Artists</strong>
                     {results.artists.map((a) => (
                       <div key={a.id} className="artist-row">
-                        <span className="artist-row-name">{a.name}</span>
+                        <button
+                          type="button"
+                          className="linkish artist-row-name"
+                          onClick={() => void hostSearch(a.name)}
+                        >
+                          {a.name}
+                        </button>
                         <SearchFilterChips
                           filters={[
                             {
@@ -653,82 +718,19 @@ export function AdminPage() {
 
           {queue?.nowPlaying && <NowPlayingBanner item={queue.nowPlaying} />}
 
-          {!showSearchResults &&
-            (queue?.upcomingOrder ?? [
-              ...(queue?.boostLane ?? []),
-              ...(queue?.upcoming ?? []),
-            ]).map((item) => (
-            <div key={item.id} className={`track card${item.isBoosted ? " track--boosted" : ""}`}>
-              {item.albumArtUrl && <img src={item.albumArtUrl} alt="" />}
-              <div className="track-meta">
-                <TrackTitle name={item.trackName} boosted={item.isBoosted} />
-                <p>
-                  {item.artistName} · {item.addedBy} · ↑{item.upvoteCount}
-                </p>
-              </div>
-              <div className="actions">
-                <button
-                  className="secondary"
-                  onClick={() =>
-                    void hostAction(
-                      `/host/parties/${party.id}/queue/${item.id}`,
-                      "PATCH",
-                      { action: "force_next" },
-                    )
-                  }
-                >
-                  Force next
-                </button>
-                <button
-                  className="secondary"
-                  onClick={() =>
-                    void hostAction(
-                      `/host/parties/${party.id}/queue/${item.id}`,
-                      "PATCH",
-                      { action: "move_up" },
-                    )
-                  }
-                >
-                  ↑
-                </button>
-                <button
-                  className="secondary"
-                  onClick={() =>
-                    void hostAction(
-                      `/host/parties/${party.id}/queue/${item.id}`,
-                      "PATCH",
-                      { action: "move_down" },
-                    )
-                  }
-                >
-                  ↓
-                </button>
-                <button
-                  className="secondary"
-                  onClick={() =>
-                    void hostAction(
-                      `/host/parties/${party.id}/queue/start-from/${item.id}`,
-                    )
-                  }
-                >
-                  Start here
-                </button>
-                <button
-                  className="secondary"
-                  onClick={() =>
-                    void hostAction(
-                      `/host/parties/${party.id}/queue/${item.id}`,
-                      "DELETE",
-                    )
-                  }
-                >
-                  Remove
-                </button>
-              </div>
-            </div>
-          ))}
+          {!showSearchResults && upNext && <UpNextLockedSection item={upNext} />}
 
-          <div className="card">
+          {!showSearchResults &&
+            laterQueue.map((item) => (
+              <AdminQueueRow
+                key={item.id}
+                item={item}
+                partyId={party.id}
+                onAction={hostAction}
+              />
+            ))}
+
+          <div className="card admin-section">
             <h2>History</h2>
             {history.slice(0, 20).map((item) => (
               <div key={item.id} className="small">
@@ -740,183 +742,6 @@ export function AdminPage() {
       )}
       </div>
       <SpotifyAttribution />
-    </div>
-  );
-}
-
-function LimitRow({
-  label,
-  hint,
-  value,
-  windowUnit,
-  onChange,
-}: {
-  label: string;
-  hint: string;
-  value: RateLimitConfig;
-  windowUnit: "min" | "sec";
-  onChange: (next: RateLimitConfig) => void;
-}) {
-  const windowValue =
-    windowUnit === "sec"
-      ? Math.round(value.windowMs / 1000)
-      : Math.round(value.windowMs / 60_000);
-
-  return (
-    <div style={{ marginTop: "0.75rem" }}>
-      <div style={{ fontWeight: 600 }}>{label}</div>
-      <div className="small">{hint}</div>
-      <div className="row" style={{ marginTop: "0.35rem", flexWrap: "wrap" }}>
-        <label className="small">
-          Max{" "}
-          <input
-            type="number"
-            min={1}
-            max={999}
-            style={{ width: 72, marginInline: "0.25rem" }}
-            value={value.count}
-            onChange={(e) =>
-              onChange({ ...value, count: Number(e.target.value) })
-            }
-          />
-        </label>
-        <label className="small">
-          per{" "}
-          <input
-            type="number"
-            min={1}
-            max={windowUnit === "sec" ? 300 : 240}
-            style={{ width: 72, marginInline: "0.25rem" }}
-            value={windowValue}
-            onChange={(e) => {
-              const amount = Number(e.target.value);
-              onChange({
-                ...value,
-                windowMs:
-                  windowUnit === "sec" ? amount * 1000 : amount * 60_000,
-              });
-            }}
-          />{" "}
-          {windowUnit === "sec" ? "seconds" : "minutes"}
-        </label>
-      </div>
-    </div>
-  );
-}
-
-function GuestLimitsPanel({
-  partyId,
-  vetoThreshold,
-  rateLimits,
-  onSaved,
-}: {
-  partyId: string;
-  vetoThreshold: number;
-  rateLimits: PartyRateLimits;
-  onSaved: () => void;
-}) {
-  const [limits, setLimits] = React.useState<PartyRateLimits>(rateLimits);
-  const [vetoes, setVetoes] = React.useState(vetoThreshold);
-  const [saving, setSaving] = React.useState(false);
-  const [notice, setNotice] = React.useState<string | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
-
-  React.useEffect(() => {
-    setLimits(rateLimits);
-    setVetoes(vetoThreshold);
-  }, [partyId, rateLimits, vetoThreshold]);
-
-  async function save() {
-    setSaving(true);
-    setError(null);
-    setNotice(null);
-    try {
-      await api(`/host/parties/${partyId}`, {
-        method: "PATCH",
-        body: JSON.stringify({ rateLimits: limits, vetoThreshold: vetoes }),
-      });
-      setNotice("Guest limits saved.");
-      onSaved();
-    } catch (e) {
-      setError(formatApiError(e));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function resetDefaults() {
-    setLimits(DEFAULT_RATE_LIMITS);
-    setVetoes(3);
-  }
-
-  function patchLimit(key: keyof PartyRateLimits, next: RateLimitConfig) {
-    setLimits((current) => ({ ...current, [key]: next }));
-  }
-
-  return (
-    <div className="card" style={{ marginTop: "1rem" }}>
-      <h3>Guest limits</h3>
-      <p className="small">
-        Per-guest action budgets reset after each time window. Boost is one use
-        per guest for the whole party — reset individual guests from the Guests
-        page.
-      </p>
-      <label style={{ display: "block", marginTop: "0.5rem" }}>
-        <span>Vetoes to skip a song</span>
-        <input
-          style={{ display: "block", marginTop: "0.25rem", width: "100%" }}
-          type="number"
-          min={1}
-          max={20}
-          value={vetoes}
-          onChange={(e) => setVetoes(Number(e.target.value))}
-        />
-      </label>
-      <LimitRow
-        label="Add songs"
-        hint="How many tracks a guest can queue in the window."
-        value={limits.add}
-        windowUnit="min"
-        onChange={(next) => patchLimit("add", next)}
-      />
-      <LimitRow
-        label="Upvotes"
-        hint="How many upvotes a guest can spend in the window."
-        value={limits.upvote}
-        windowUnit="min"
-        onChange={(next) => patchLimit("upvote", next)}
-      />
-      <LimitRow
-        label="Vetoes"
-        hint="How many vetoes a guest can cast in the window."
-        value={limits.veto}
-        windowUnit="min"
-        onChange={(next) => patchLimit("veto", next)}
-      />
-      <LimitRow
-        label="Search (per guest)"
-        hint="Spotify searches one guest can trigger in the window."
-        value={limits.search}
-        windowUnit="min"
-        onChange={(next) => patchLimit("search", next)}
-      />
-      <LimitRow
-        label="Search (party-wide)"
-        hint="Total Spotify searches across all guests in the window."
-        value={limits.partySearch}
-        windowUnit="sec"
-        onChange={(next) => patchLimit("partySearch", next)}
-      />
-      {error && <p className="error">{error}</p>}
-      {notice && <p className="small">{notice}</p>}
-      <div className="row" style={{ marginTop: "0.75rem" }}>
-        <button type="button" onClick={() => void save()} disabled={saving}>
-          {saving ? "Saving…" : "Save limits"}
-        </button>
-        <button type="button" className="secondary" onClick={resetDefaults}>
-          Reset defaults
-        </button>
-      </div>
     </div>
   );
 }

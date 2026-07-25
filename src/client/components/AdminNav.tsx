@@ -12,6 +12,7 @@ export function AdminNav({
 
   const onQueue = location.pathname === "/admin";
   const onGuests = location.pathname === "/admin/guests";
+  const onDisplay = location.pathname === "/admin/display";
   const onDiagnostics = location.pathname === "/admin/diagnostics";
 
   return (
@@ -32,6 +33,12 @@ export function AdminNav({
             {guestCount > 0 ? (
               <span className="admin-nav-badge">{guestCount}</span>
             ) : null}
+          </Link>
+          <Link
+            to="/admin/display"
+            className={`admin-nav-link${onDisplay ? " admin-nav-link--active" : ""}`}
+          >
+            Display
           </Link>
         </>
       ) : null}

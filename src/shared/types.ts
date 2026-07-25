@@ -69,6 +69,8 @@ export interface QueueItemView {
   guestBoostBlocked?: boolean;
   /** Guest UI: veto blocked — already in Spotify buffer */
   guestVetoBlocked?: boolean;
+  /** Track is canonical in Spotify's queue and cannot be reordered by guests */
+  spotifyLocked?: boolean;
 }
 
 export interface PartyView {

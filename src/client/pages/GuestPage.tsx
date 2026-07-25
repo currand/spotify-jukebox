@@ -67,6 +67,8 @@ function GuestApp({ slug }: { slug: string }) {
 
   React.useEffect(() => {
     if (!joined) return;
+    const pollIntervalMs =
+      queue != null && queue.party.status !== "on" ? 15_000 : 3_000;
     const poll = async () => {
       try {
         const res = await fetch(`/api/v1/parties/${slug}/queue`, {
@@ -80,16 +82,18 @@ function GuestApp({ slug }: { slug: string }) {
           etagRef.current = data.etag;
           setQueue(data);
         }
-        const profile = await api<typeof me>(`/parties/${slug}/me`);
-        setMe(profile);
+        if (queue?.party.status === "on") {
+          const profile = await api<typeof me>(`/parties/${slug}/me`);
+          setMe(profile);
+        }
       } catch {
         /* ignore transient */
       }
     };
     void poll();
-    const id = setInterval(poll, 3000);
+    const id = setInterval(poll, pollIntervalMs);
     return () => clearInterval(id);
-  }, [joined, slug]);
+  }, [joined, slug, queue?.party.status]);
 
   async function saveName() {
     await api(`/parties/${slug}/me`, {
@@ -109,12 +113,13 @@ function GuestApp({ slug }: { slug: string }) {
     setNotice(null);
   }
 
-  async function search() {
-    const trimmed = query.trim();
+  async function search(searchQuery?: string) {
+    const trimmed = (searchQuery ?? query).trim();
     if (trimmed.length < 3) {
       setError("Enter at least 3 characters to search.");
       return;
     }
+    if (searchQuery) setQuery(searchQuery);
     if (searching) return;
     setSearching(true);
     setError(null);
@@ -309,7 +314,13 @@ function GuestApp({ slug }: { slug: string }) {
                 <strong>Artists</strong>
                 {results.artists.map((a) => (
                   <div key={a.id} className="artist-row">
-                    <span className="artist-row-name">{a.name}</span>
+                    <button
+                      type="button"
+                      className="linkish artist-row-name"
+                      onClick={() => void search(a.name)}
+                    >
+                      {a.name}
+                    </button>
                     <SearchFilterChips
                       filters={[
                         {

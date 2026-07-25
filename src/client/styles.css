@@ -56,6 +56,24 @@ input {
   padding: 1rem;
 }
 
+@media (min-width: 768px) {
+  .app,
+  .guest-my-songs-page,
+  .admin-guests-page,
+  .admin-display-page {
+    max-width: 960px;
+  }
+}
+
+@media (min-width: 1200px) {
+  .app,
+  .guest-my-songs-page,
+  .admin-guests-page,
+  .admin-display-page {
+    max-width: 1100px;
+  }
+}
+
 .text-break {
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -175,6 +193,12 @@ input {
 .track.card.track--boosted {
   border-color: #5c4a14;
   box-shadow: inset 3px 0 0 #ffc857;
+}
+
+.track.card.track--spotify-locked {
+  border-color: #2f3a44;
+  box-shadow: inset 3px 0 0 #5a7a8a;
+  opacity: 0.92;
 }
 
 .track-meta p {
@@ -605,7 +629,6 @@ button.danger:hover {
 }
 
 .admin-guests-page {
-  max-width: 900px;
   width: 100%;
 }
 
@@ -773,7 +796,6 @@ button.danger:hover {
 }
 
 .guest-my-songs-page {
-  max-width: 720px;
   width: 100%;
 }
 
@@ -830,4 +852,146 @@ button.danger:hover {
   .admin-grid {
     grid-template-columns: 1fr 1fr;
   }
+
+  .track.card > .actions,
+  .up-next-locked-track > .actions {
+    flex: 0 1 auto;
+    margin-left: auto;
+  }
+}
+
+.admin-page h1 {
+  margin-top: 0;
+}
+
+.admin-section {
+  margin-top: 1rem;
+}
+
+.admin-section:first-child {
+  margin-top: 0;
+}
+
+.admin-limits-panel {
+  padding-top: 1rem;
+  border-top: 1px solid #2a2a32;
+}
+
+.form-field {
+  display: block;
+  margin-top: 0.75rem;
+}
+
+.form-field > span {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.form-grid {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.party-controls {
+  margin-top: 0.75rem;
+}
+
+.admin-search-row {
+  margin-top: 0.75rem;
+}
+
+.admin-artist-results {
+  margin-bottom: 1rem;
+}
+
+.admin-advanced {
+  margin-top: 0.75rem;
+}
+
+.admin-advanced > summary {
+  cursor: pointer;
+  color: #1db954;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.admin-ended-banner {
+  margin-bottom: 1rem;
+}
+
+.admin-ended-banner-meta {
+  margin: 0.35rem 0 0;
+}
+
+.admin-checkbox-label {
+  cursor: pointer;
+}
+
+.admin-history-list {
+  margin-top: 0.5rem;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.party-qr {
+  width: 180px;
+  background: #fff;
+  padding: 8px;
+  border-radius: 8px;
+  margin-top: 0.5rem;
+}
+
+.limit-row {
+  margin-top: 0.75rem;
+}
+
+.limit-row-label {
+  font-weight: 600;
+}
+
+.limit-row-inputs {
+  margin-top: 0.35rem;
+}
+
+.limit-row-number {
+  width: 72px;
+  margin-inline: 0.25rem;
+}
+
+.guest-limits-intro {
+  margin: 0 0 0.75rem;
+}
+
+.admin-display-page {
+  padding-top: 1.5rem;
+  padding-bottom: 2rem;
+}
+
+.admin-display-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+
+.admin-display-header h1 {
+  margin: 0 0 0.35rem;
+  font-size: clamp(1.75rem, 4vw, 2.5rem);
+}
+
+.admin-display-qr {
+  width: min(280px, 40vw);
+  min-width: 200px;
+  background: #fff;
+  padding: 12px;
+  border-radius: 12px;
+}
+
+.admin-display-page section h2 {
+  margin: 1rem 0 0.75rem;
+  font-size: 1.1rem;
+  color: #8a8a96;
 }

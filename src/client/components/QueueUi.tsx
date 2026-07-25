@@ -115,6 +115,117 @@ export function SearchNav({
   );
 }
 
+export function ReadOnlyQueueRow({ item }: { item: QueueItemView }) {
+  return (
+    <div
+      className={`track card${item.isBoosted ? " track--boosted" : ""}${item.spotifyLocked ? " track--spotify-locked" : ""}`}
+    >
+      {item.albumArtUrl && <img src={item.albumArtUrl} alt="" />}
+      <div className="track-meta">
+        <TrackTitle name={item.trackName} boosted={item.isBoosted} />
+        <p>
+          {item.artistName} · {item.addedBy}
+          {item.spotifyLocked ? " · Locked in Spotify" : ""}
+          {!item.spotifyLocked && (
+            <>
+              {" "}
+              · ↑{item.upvoteCount} · ✕{item.vetoCount}
+            </>
+          )}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+export function AdminQueueRow({
+  item,
+  onAction,
+  partyId,
+}: {
+  item: QueueItemView;
+  partyId: string;
+  onAction: (path: string, method?: string, body?: unknown) => Promise<void>;
+}) {
+  const locked = item.spotifyLocked || item.status === "queued";
+
+  return (
+    <div
+      className={`track card${item.isBoosted ? " track--boosted" : ""}${locked ? " track--spotify-locked" : ""}`}
+    >
+      {item.albumArtUrl && <img src={item.albumArtUrl} alt="" />}
+      <div className="track-meta">
+        <TrackTitle name={item.trackName} boosted={item.isBoosted} />
+        <p>
+          {item.artistName} · {item.addedBy} · ↑{item.upvoteCount}
+          {locked ? " · Locked in Spotify" : ""}
+        </p>
+      </div>
+      {!locked && (
+        <div className="actions">
+          <button
+            className="secondary"
+            onClick={() =>
+              void onAction(
+                `/host/parties/${partyId}/queue/${item.id}`,
+                "PATCH",
+                { action: "force_next" },
+              )
+            }
+          >
+            Force next
+          </button>
+          <button
+            className="secondary"
+            onClick={() =>
+              void onAction(
+                `/host/parties/${partyId}/queue/${item.id}`,
+                "PATCH",
+                { action: "move_up" },
+              )
+            }
+          >
+            ↑
+          </button>
+          <button
+            className="secondary"
+            onClick={() =>
+              void onAction(
+                `/host/parties/${partyId}/queue/${item.id}`,
+                "PATCH",
+                { action: "move_down" },
+              )
+            }
+          >
+            ↓
+          </button>
+          <button
+            className="secondary"
+            onClick={() =>
+              void onAction(
+                `/host/parties/${partyId}/queue/start-from/${item.id}`,
+              )
+            }
+          >
+            Start here
+          </button>
+          <button
+            className="secondary"
+            onClick={() =>
+              void onAction(
+                `/host/parties/${partyId}/queue/${item.id}`,
+                "DELETE",
+              )
+            }
+          >
+            Remove
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function SearchFilterChips({
   filters,
 }: {

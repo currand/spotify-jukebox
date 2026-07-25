@@ -81,21 +81,11 @@ function parseArtistTrackFilter(value: string | undefined): ArtistTrackFilter {
   return value === "credited" ? "credited" : "all";
 }
 
-function getPartyBySlug(db: Db, slug: string) {
-  return db
-    .query(`SELECT * FROM parties WHERE slug = ? AND status != 'archived'`)
-    .get(slug) as
-    | {
-        id: string;
-        slug: string;
-        name: string;
-        status: string;
-        veto_threshold: number;
-        rate_limits: string;
-        updated_at: string;
-      }
-    | null;
-}
+import {
+  getPartyBySlug,
+  isPartyOn,
+  PARTY_OFF_RESPONSE,
+} from "../services/party";
 
 export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient) {
   const app = new Hono<GuestVars>();
@@ -274,6 +264,9 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
   app.get("/parties/:slug/search", async (c) => {
     const party = getPartyBySlug(db, c.req.param("slug"));
     if (!party) return c.json({ error: "Party not found", code: "NOT_FOUND" }, 404);
+    if (!isPartyOn(party)) {
+      return c.json(PARTY_OFF_RESPONSE, 403);
+    }
     const q = c.req.query("q")?.trim();
     if (!q) return c.json({ tracks: [], artists: [] });
 
@@ -306,6 +299,9 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
   app.get("/parties/:slug/artists/:artistId/tracks", async (c) => {
     const party = getPartyBySlug(db, c.req.param("slug"));
     if (!party) return c.json({ error: "Party not found", code: "NOT_FOUND" }, 404);
+    if (!isPartyOn(party)) {
+      return c.json(PARTY_OFF_RESPONSE, 403);
+    }
     const guest = getGuest(c);
     const filter = parseArtistTrackFilter(c.req.query("filter"));
     try {

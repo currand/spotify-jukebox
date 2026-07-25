@@ -150,14 +150,23 @@ export function isGuestNextUpPendingLocked(
   return buffer?.id === itemId;
 }
 
-/** Guest cannot veto a track already sent to Spotify's queue buffer. */
+/** Guest cannot reorder or veto tracks already in Spotify's queue. */
 export function isGuestSpotifyBufferLocked(
   items: QueueItemRow[],
   itemId: string,
 ): boolean {
   const item = items.find((i) => i.id === itemId);
   if (!item || !["pending", "queued"].includes(item.status)) return true;
-  return item.status === "queued";
+  if (item.status === "queued") return true;
+  if (item.from_spotify === 1) return true;
+  return false;
+}
+
+export function isSpotifyLockedItem(row: QueueItemRow): boolean {
+  return (
+    row.from_spotify === 1 &&
+    (row.status === "queued" || row.status === "pending")
+  );
 }
 
 function isGuestBufferSlotLocked(
@@ -198,7 +207,7 @@ export function adoptSpotifyTrack(
   db: Db,
   partyId: string,
   track: TrackInfo,
-  status: Extract<QueueItemStatus, "playing" | "queued">,
+  status: Extract<QueueItemStatus, "playing" | "queued" | "pending">,
 ): string {
   const existing = db
     .query(
@@ -336,6 +345,7 @@ export function toQueueItemView(row: QueueItemRow) {
     addedBy,
     addedByGuestId: row.added_by_guest_id,
     addedAt: row.added_at,
+    spotifyLocked: isSpotifyLockedItem(row),
   };
 }
 

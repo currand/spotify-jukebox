@@ -36,7 +36,12 @@ import {
   listMetricsSessions,
   listMetricsSnapshots,
 } from "../services/metrics-recorder";
-import { getSyncState, requestPartySync } from "../services/sync";
+import { getSyncState, requestPartySync, forcePartySync, PartySyncError } from "../services/sync";
+import {
+  getPartyById,
+  isPartyOn,
+  PARTY_OFF_RESPONSE,
+} from "../services/party";
 import {
   cacheSpotifyTracksMetadata,
   getPartyArtistTracks,
@@ -466,8 +471,34 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     });
   });
 
+  authed.post("/parties/:id/sync", async (c) => {
+    const partyId = c.req.param("id");
+    try {
+      await forcePartySync(db, spotify, partyId);
+    } catch (e) {
+      if (e instanceof PartySyncError) {
+        return c.json({ error: e.message, code: e.code }, e.status);
+      }
+      throw e;
+    }
+    const items = getQueueItems(db, partyId, ["pending", "queued", "playing"]);
+    const nowPlaying = items.find((i) => i.status === "playing");
+    return c.json({
+      nowPlaying: nowPlaying ? toQueueItemView(nowPlaying) : null,
+      upcomingOrder: getUpcomingPlayOrder(items).map(toQueueItemView),
+      boostLane: getBoostLane(items).map(toQueueItemView),
+      upcoming: getNormalUpcoming(items).map(toQueueItemView),
+      dedupTitles: getDedupTitles(db, partyId),
+    });
+  });
+
   authed.post("/parties/:id/queue", async (c) => {
     const partyId = c.req.param("id");
+    const party = getPartyById(db, partyId);
+    if (!party) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404);
+    if (!isPartyOn(party)) {
+      return c.json(PARTY_OFF_RESPONSE, 403);
+    }
     const body = (await c.req.json()) as {
       uri: string;
       name?: string;
@@ -720,9 +751,14 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
   });
 
   authed.get("/parties/:id/search", async (c) => {
+    const partyId = c.req.param("id");
+    const party = getPartyById(db, partyId);
+    if (!party) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404);
+    if (!isPartyOn(party)) {
+      return c.json(PARTY_OFF_RESPONSE, 403);
+    }
     const q = c.req.query("q")?.trim();
     if (!q) return c.json({ tracks: [], artists: [] });
-    const partyId = c.req.param("id");
     try {
       const data = await searchPartyCatalog(
         spotify,
@@ -757,6 +793,11 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
 
   authed.get("/parties/:id/artists/:artistId/tracks", async (c) => {
     const partyId = c.req.param("id");
+    const party = getPartyById(db, partyId);
+    if (!party) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404);
+    if (!isPartyOn(party)) {
+      return c.json(PARTY_OFF_RESPONSE, 403);
+    }
     const filter = parseArtistTrackFilter(c.req.query("filter"));
     try {
       const tracks = await getPartyArtistTracks(

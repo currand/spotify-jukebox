@@ -9,6 +9,7 @@ import {
   partyHasPendingBufferWork,
   partyNeedsSpotifyQueueSync,
   reconcileSpotifyBufferStatuses,
+  reconcileSpotifyQueueTail,
   shouldSkipTerminalPlayback,
 } from "../../src/server/services/sync";
 import { getUpcomingPlayOrder, type QueueItemRow } from "../../src/server/services/queue";
@@ -186,6 +187,43 @@ describe("reconcileSpotifyBufferStatuses", () => {
     expect(row.artist_name).toBe("DJ");
     expect(row.from_spotify).toBe(1);
   });
+
+  test("imports Spotify queue tail tracks as locked pending rows", () => {
+    const db = testDb();
+    reconcileSpotifyQueueTail(db, "p", {
+      currentlyPlaying: null,
+      queue: [
+        {
+          uri: "spotify:track:buffer",
+          id: "buf",
+          name: "Buffer",
+          artists: [{ name: "A" }],
+          album: { images: [] },
+        },
+        {
+          uri: "spotify:track:tail",
+          id: "tail",
+          name: "Tail Song",
+          artists: [{ name: "B" }],
+          album: { images: [] },
+        },
+      ],
+    });
+
+    const row = db
+      .query(
+        `SELECT status, track_name, from_spotify FROM queue_items WHERE spotify_uri = ?`,
+      )
+      .get("spotify:track:tail") as {
+      status: string;
+      track_name: string;
+      from_spotify: number;
+    };
+
+    expect(row.status).toBe("pending");
+    expect(row.track_name).toBe("Tail Song");
+    expect(row.from_spotify).toBe(1);
+  });
 });
 
 describe("getVirtualNextToBuffer", () => {
@@ -280,7 +318,7 @@ describe("sync pacing helpers", () => {
     expect(partyNeedsSpotifyQueueSync({} as Db, "party-a", 2)).toBe(true);
   });
 
-  test("uses idle interval when party is null", () => {
-    expect(getSyncIntervalMs({} as Db, null)).toBe(20_000);
+  test("uses long interval when party is null", () => {
+    expect(getSyncIntervalMs({} as Db, null)).toBe(60_000);
   });
 });

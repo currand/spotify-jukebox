@@ -54,9 +54,11 @@ export function GuestMySongsPage() {
 
   React.useEffect(() => {
     if (!joined) return;
-    const id = setInterval(() => void load(), 5000);
+    const pollIntervalMs =
+      party != null && party.status !== "on" ? 15_000 : 5_000;
+    const id = setInterval(() => void load(), pollIntervalMs);
     return () => clearInterval(id);
-  }, [joined, load]);
+  }, [joined, load, party?.status]);
 
   async function boost(itemId: string) {
     try {

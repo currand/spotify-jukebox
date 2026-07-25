@@ -6,6 +6,7 @@ import {
   getUpcomingPlayOrder,
   isGuestBoostBlocked,
   isGuestUpvoteBlocked,
+  isGuestVetoBlocked,
   type QueueItemRow,
 } from "../../src/server/services/queue";
 
@@ -125,5 +126,24 @@ describe("guest buffer locks", () => {
     expect(isGuestUpvoteBlocked(items, "queued")).toBe(true);
     expect(isGuestBoostBlocked(items, "boost")).toBe(true);
     expect(isGuestUpvoteBlocked(items, "boost")).toBe(false);
+  });
+
+  test("locks Spotify tail tracks adopted as pending", () => {
+    const tail = base({
+      id: "tail",
+      status: "pending",
+      from_spotify: 1,
+      spotify_uri: "spotify:track:tail",
+    });
+    const normal = base({
+      id: "normal",
+      added_at: "2026-01-02T00:00:00.000Z",
+    });
+    const items = [tail, normal];
+
+    expect(isGuestUpvoteBlocked(items, "tail")).toBe(true);
+    expect(isGuestBoostBlocked(items, "tail")).toBe(true);
+    expect(isGuestVetoBlocked(items, "tail")).toBe(true);
+    expect(isGuestUpvoteBlocked(items, "normal")).toBe(false);
   });
 });
