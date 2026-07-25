@@ -1,0 +1,17 @@
+---
+description: Spotify Web API conventions for Jukebox (auth, rate limits, endpoints)
+globs: src/server/services/spotify*.ts,src/server/services/sync.ts,src/server/routes/host.ts,src/server/config.ts
+alwaysApply: false
+---
+
+# Spotify Web API
+
+- **OpenAPI**: Use https://developer.spotify.com/reference/web-api/open-api-schema.yaml for paths, params, and response fields. Do not guess.
+- **Auth**: Authorization Code flow on the server (secure backend). Never Implicit Grant. Never expose Client Secret client-side.
+- **Redirect URIs**: HTTPS in production; `http://127.0.0.1` only for local dev. Never `localhost` or wildcards.
+- **Scopes**: Request minimum scopes only (`user-modify-playback-state`, `user-read-playback-state`, `playlist-read-private`).
+- **Tokens**: Encrypt at rest; refresh access tokens; on refresh failure (`invalid_grant`) require re-authorization.
+- **Rate limits**: On 429, honor `Retry-After` header and JSON `retryAfter`; use exponential backoff on repeated 429s; never retry in tight loops.
+- **Endpoints**: Use `/playlists/{id}/items` not `/tracks`. Avoid deprecated endpoints.
+- **Errors**: Parse Spotify error JSON and surface meaningful messages to the host.
+- **Terms**: Attribute playback to Spotify; cache only what sync needs; do not use API data for ML training.

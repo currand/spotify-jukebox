@@ -11,6 +11,7 @@ import type {
 import { isTrackInPartyQueue } from "@/shared/queue-match";
 import { api, apiOptional } from "../http";
 import { AdminNav } from "../components/AdminNav";
+import { SpotifyAttribution } from "../components/SpotifyAttribution";
 import {
   formatApiError,
   NowPlayingBanner,
@@ -711,6 +712,7 @@ export function AdminPage() {
         </div>
       )}
       </div>
+      <SpotifyAttribution />
     </div>
   );
 }

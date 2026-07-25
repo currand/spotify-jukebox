@@ -181,12 +181,13 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
       }),
     });
     if (!res.ok) {
-      debugLog(
-        "spotify",
-        "token refresh failed",
-        res.status,
-        await res.text().catch(() => ""),
-      );
+      const body = await res.text();
+      if (res.status === 400 && body.includes("invalid_grant")) {
+        db.run(`DELETE FROM host_credentials WHERE id = 1`);
+        debugLog("spotify", "refresh token revoked — re-auth required");
+        throw new Error("SPOTIFY_REAUTH_REQUIRED");
+      }
+      debugLog("spotify", "token refresh failed", res.status, body);
       return null;
     }
     const data = await readJsonBody<{

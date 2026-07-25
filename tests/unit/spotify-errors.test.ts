@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
+  computeRateLimitBackoffMs,
+  formatSpotifyErrorForUser,
   getSpotifyRetryAfterMs,
   isSpotifyRateLimitError,
   parseRetryAfterFromBody,
@@ -97,6 +99,38 @@ describe("isSpotifyRateLimitError", () => {
         new Error('SPOTIFY_429:{"error":{"status":429,"message":"API rate limit"}}'),
       ),
     ).toBe(true);
+  });
+});
+
+describe("computeRateLimitBackoffMs", () => {
+  test("uses Spotify retry-after when longer than exponential", () => {
+    expect(computeRateLimitBackoffMs(15000, 2)).toBe(15000);
+  });
+
+  test("uses exponential backoff when longer than Spotify hint", () => {
+    expect(computeRateLimitBackoffMs(1000, 3)).toBe(4000);
+  });
+
+  test("caps exponential backoff at 60s", () => {
+    expect(computeRateLimitBackoffMs(1000, 10)).toBe(60_000);
+  });
+});
+
+describe("formatSpotifyErrorForUser", () => {
+  test("returns re-auth message for revoked refresh token", () => {
+    expect(formatSpotifyErrorForUser(new Error("SPOTIFY_REAUTH_REQUIRED"))).toBe(
+      "Spotify authorization expired — connect Spotify again in admin.",
+    );
+  });
+
+  test("returns Spotify API error message when present", () => {
+    expect(
+      formatSpotifyErrorForUser(
+        new Error(
+          'SPOTIFY_403:{"error":{"status":403,"message":"Restricted device"}}',
+        ),
+      ),
+    ).toBe("Restricted device");
   });
 });
 

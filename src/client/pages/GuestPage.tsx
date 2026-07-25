@@ -14,6 +14,7 @@ import {
 import { GuestNav } from "../components/GuestNav";
 import { api, guestFetchHeaders, joinParty } from "../http";
 import { OpenInSafariHint } from "../components/OpenInSafariHint";
+import { SpotifyAttribution } from "../components/SpotifyAttribution";
 
 export function GuestPage() {
   const { slug = "" } = useParams<{ slug: string }>();
@@ -383,6 +384,7 @@ function GuestApp({ slug }: { slug: string }) {
           ))}
         </section>
       )}
+      <SpotifyAttribution />
     </div>
   );
 }

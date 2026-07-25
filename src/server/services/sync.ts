@@ -10,10 +10,13 @@ import { trackFromSpotify, type PlayerSnapshot, type SpotifyClient } from "./spo
 import type { SpotifyTrack } from "@/shared/types";
 import { debugLog } from "../debug";
 import {
+  computeRateLimitBackoffMs,
+  formatSpotifyErrorForUser,
   getSpotifyRetryAfterMs,
   isNoActiveDeviceError,
   isRestrictedDeviceError,
   isSpotifyRateLimitError,
+  isSpotifyReauthRequired,
 } from "./spotify-errors";
 
 const SYNC_INTERVAL_MS = 5000;
@@ -45,6 +48,7 @@ let syncState: SyncState = {
 };
 
 const partySyncInFlight = new Map<string, Promise<void>>();
+let consecutiveRateLimitHits = 0;
 
 export function isUriBufferedInSpotify(
   uri: string,
@@ -190,7 +194,11 @@ function rateLimitMessage(retryAfterMs: number): string {
 }
 
 function markRateLimited(error: unknown): void {
-  const retryAfterMs = getSpotifyRetryAfterMs(error);
+  consecutiveRateLimitHits++;
+  const retryAfterMs = computeRateLimitBackoffMs(
+    getSpotifyRetryAfterMs(error),
+    consecutiveRateLimitHits,
+  );
   const until = Date.now() + retryAfterMs;
   const rateLimitedUntil = Math.max(syncState.rateLimitedUntil ?? 0, until);
   const remainingMs = rateLimitedUntil - Date.now();
@@ -210,6 +218,7 @@ export function applySpotifyRateLimit(error: unknown): void {
 
 function clearRateLimitIfExpired(): void {
   if (syncState.rateLimitedUntil && Date.now() >= syncState.rateLimitedUntil) {
+    consecutiveRateLimitHits = 0;
     syncState = {
       ...syncState,
       rateLimitedUntil: null,
@@ -225,6 +234,9 @@ function isRateLimited(): boolean {
 }
 
 function applyPlayerSnapshot(snapshot: PlayerSnapshot): void {
+  if (!isRateLimited()) {
+    consecutiveRateLimitHits = 0;
+  }
   syncState = {
     ...syncState,
     deviceActive: snapshot.deviceActive,
@@ -257,12 +269,25 @@ function handlePlayerError(e: unknown): void {
     markRateLimited(e);
     return;
   }
+  if (isSpotifyReauthRequired(e)) {
+    syncState = {
+      deviceActive: false,
+      spotifyReachable: false,
+      deviceRestricted: false,
+      deviceName: null,
+      lastError:
+        formatSpotifyErrorForUser(e) ??
+        "Spotify authorization expired — connect Spotify again in admin.",
+      rateLimitedUntil: null,
+    };
+    return;
+  }
   syncState = {
     deviceActive: false,
     spotifyReachable: false,
     deviceRestricted: false,
     deviceName: syncState.deviceName,
-    lastError: e instanceof Error ? e.message : String(e),
+    lastError: formatSpotifyErrorForUser(e) ?? (e instanceof Error ? e.message : String(e)),
     rateLimitedUntil: null,
   };
 }
@@ -280,7 +305,8 @@ function handleQueueSyncError(e: unknown): void {
   syncState = {
     ...syncState,
     spotifyReachable: false,
-    lastError: e instanceof Error ? e.message : String(e),
+    lastError:
+      formatSpotifyErrorForUser(e) ?? (e instanceof Error ? e.message : String(e)),
   };
 }
 

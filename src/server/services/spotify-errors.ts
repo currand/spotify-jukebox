@@ -134,6 +134,47 @@ export function getSpotifyRetryAfterMs(error: unknown): number {
   return 5000;
 }
 
+/** Combine Spotify Retry-After with exponential backoff on repeated 429s. */
+export function computeRateLimitBackoffMs(
+  spotifyRetryAfterMs: number,
+  consecutiveHits: number,
+): number {
+  const exponentialMs = Math.min(
+    60_000,
+    1000 * 2 ** Math.max(0, consecutiveHits - 1),
+  );
+  return Math.max(spotifyRetryAfterMs, exponentialMs);
+}
+
+export function formatSpotifyErrorForUser(error: unknown): string | null {
+  if (error instanceof Error && error.message === "SPOTIFY_REAUTH_REQUIRED") {
+    return "Spotify authorization expired — connect Spotify again in admin.";
+  }
+  if (error instanceof Error && error.message === "NOT_CONNECTED") {
+    return "Spotify not connected.";
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  const { status, spotifyMessage } = parseSpotifyError(message);
+  if (spotifyMessage) return spotifyMessage;
+
+  if (status === 429) {
+    return "Spotify rate limit exceeded — slowing down requests.";
+  }
+  if (status === 401) {
+    return "Spotify authorization expired — connect Spotify again in admin.";
+  }
+  if (status === 403) {
+    return "Spotify denied this action — check device and permissions.";
+  }
+  return null;
+}
+
+export function isSpotifyReauthRequired(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message === "SPOTIFY_REAUTH_REQUIRED";
+}
+
 export function isRestrictedDeviceError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   const { status, spotifyMessage } = parseSpotifyError(message);
