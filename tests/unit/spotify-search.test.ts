@@ -1,11 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import {
   clearSpotifySearchCacheForTests,
+  getCachedTrackMetadata,
+  getPartyArtistTopTracks,
   normalizeRateLimits,
+  prefetchArtistCatalogsForTests,
   searchPartyCatalog,
   SpotifySearchRateLimitedError,
 } from "../../src/server/services/spotify-search";
 import { DEFAULT_RATE_LIMITS } from "@/shared/types";
+
+const mockTrack = (id: string, name: string, artist = "Artist") => ({
+  uri: `spotify:track:${id}`,
+  id,
+  name,
+  artists: [{ name: artist }],
+  album: { images: [{ url: `https://i.scdn.co/image/${id}` }] },
+});
 
 describe("normalizeRateLimits", () => {
   test("fills search defaults for legacy party config", () => {
@@ -32,6 +43,7 @@ describe("searchPartyCatalog", () => {
         calls += 1;
         return [];
       },
+      getArtistTopTracks: async () => [],
     };
 
     const db = {
@@ -70,6 +82,7 @@ describe("searchPartyCatalog", () => {
         calls += 1;
         return [];
       },
+      getArtistTopTracks: async () => [],
     };
     const db = { query: () => ({ get: () => null }), run: () => {} } as never;
     const result = await searchPartyCatalog(
@@ -89,6 +102,7 @@ describe("searchPartyCatalog", () => {
     const spotify = {
       searchTracks: async () => [],
       searchArtists: async () => [],
+      getArtistTopTracks: async () => [],
     };
     const db = { query: () => ({ get: () => null }), run: () => {} } as never;
     const tight = {
@@ -100,5 +114,63 @@ describe("searchPartyCatalog", () => {
     await expect(
       searchPartyCatalog(spotify as never, db, "party-2", "jazz", null, tight),
     ).rejects.toBeInstanceOf(SpotifySearchRateLimitedError);
+  });
+
+  test("caches track metadata including album art from search hits", async () => {
+    clearSpotifySearchCacheForTests();
+    const spotify = {
+      searchTracks: async () => [mockTrack("t1", "Dancing Queen")],
+      searchArtists: async () => [],
+      getArtistTopTracks: async () => [],
+    };
+    const db = { query: () => ({ get: () => null }), run: () => {} } as never;
+
+    await searchPartyCatalog(
+      spotify as never,
+      db,
+      "party-1",
+      "abba",
+      null,
+      DEFAULT_RATE_LIMITS,
+    );
+
+    const cached = getCachedTrackMetadata("spotify:track:t1");
+    expect(cached?.name).toBe("Dancing Queen");
+    expect(cached?.albumArtUrl).toBe("https://i.scdn.co/image/t1");
+  });
+});
+
+describe("artist catalog prefetch", () => {
+  test("prefetch warms top-tracks cache for later guest requests", async () => {
+    clearSpotifySearchCacheForTests();
+    let topTrackCalls = 0;
+    const spotify = {
+      getArtistTopTracks: async () => {
+        topTrackCalls += 1;
+        return [mockTrack("hit", "Waterloo", "ABBA")];
+      },
+      searchTracks: async () => [mockTrack("song", "Mamma Mia", "ABBA")],
+    };
+
+    await prefetchArtistCatalogsForTests(spotify as never, "party-1", [
+      { id: "artist-1", name: "ABBA" },
+    ]);
+
+    expect(topTrackCalls).toBe(1);
+
+    const db = { query: () => ({ get: () => null }), run: () => {} } as never;
+    const tracks = await getPartyArtistTopTracks(
+      spotify as never,
+      db,
+      "party-1",
+      "artist-1",
+      "ABBA",
+      null,
+      DEFAULT_RATE_LIMITS,
+    );
+
+    expect(tracks).toHaveLength(1);
+    expect(tracks[0]?.name).toBe("Waterloo");
+    expect(topTrackCalls).toBe(1);
   });
 });

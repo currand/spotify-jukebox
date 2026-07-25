@@ -36,6 +36,7 @@ import {
 } from "../services/spotify";
 import { requestPartySync } from "../services/sync";
 import {
+  getCachedTrackMetadata,
   getPartyArtistTopTracks,
   normalizeRateLimits,
   searchPartyCatalog,
@@ -769,24 +770,29 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
         albumArtUrl: body.albumArtUrl ?? null,
       };
     } else {
-      try {
-        const trackId = body.uri.replace("spotify:track:", "");
-        const tracks = await spotifyClient.searchTracks(`track:${trackId}`, 1);
-        trackInfo = tracks[0]
-          ? trackFromSpotify(tracks[0])
-          : {
-              uri: body.uri,
-              name: "Unknown",
-              artistName: "Unknown",
-              albumArtUrl: null,
-            };
-      } catch {
-        trackInfo = {
-          uri: body.uri,
-          name: "Unknown",
-          artistName: "Unknown",
-          albumArtUrl: null,
-        };
+      const cached = getCachedTrackMetadata(body.uri);
+      if (cached) {
+        trackInfo = cached;
+      } else {
+        try {
+          const trackId = body.uri.replace("spotify:track:", "");
+          const tracks = await spotifyClient.searchTracks(`track:${trackId}`, 1);
+          trackInfo = tracks[0]
+            ? trackFromSpotify(tracks[0])
+            : {
+                uri: body.uri,
+                name: "Unknown",
+                artistName: "Unknown",
+                albumArtUrl: null,
+              };
+        } catch {
+          trackInfo = {
+            uri: body.uri,
+            name: "Unknown",
+            artistName: "Unknown",
+            albumArtUrl: null,
+          };
+        }
       }
     }
 

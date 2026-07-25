@@ -1,4 +1,4 @@
-import type { PartyRateLimits, SearchResult, TrackInfo } from "@/shared/types";
+import type { PartyRateLimits, SearchResult, SpotifyTrack, TrackInfo } from "@/shared/types";
 import { DEFAULT_PARTY_SEARCH_LIMIT, DEFAULT_RATE_LIMITS } from "@/shared/types";
 import type { Db } from "../db/schema";
 import {
@@ -10,16 +10,23 @@ import type { SpotifyClient } from "./spotify";
 import { trackFromSpotify } from "./spotify";
 
 export const MIN_SEARCH_QUERY_LENGTH = 3;
-/** Same query at a party rarely changes — reuse results to spare Spotify search quota. */
-export const SEARCH_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
+/** Search query results — guests repeat queries within a party but not for hours. */
+export const SEARCH_CACHE_TTL_MS = 30 * 60 * 1000;
+/** Artist top-tracks and artist:songs drill-down views. */
+export const ARTIST_CATALOG_CACHE_TTL_MS = 60 * 60 * 1000;
+/** Track metadata (name, artist, album art) — stable and safe to reuse widely. */
+export const TRACK_METADATA_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+/** Prefetch top tracks (+ song search) for the first N artists on each fresh search. */
+export const ARTIST_PREFETCH_COUNT = 3;
 
 const searchCache = new Map<string, { expiresAt: number; data: SearchResult }>();
 const searchInFlight = new Map<string, Promise<SearchResult>>();
-const artistCache = new Map<
+const artistTopTracksCache = new Map<
   string,
   { expiresAt: number; tracks: TrackInfo[] }
 >();
-const artistInFlight = new Map<string, Promise<TrackInfo[]>>();
+const artistTopTracksInFlight = new Map<string, Promise<TrackInfo[]>>();
+const trackMetadataCache = new Map<string, { expiresAt: number; track: TrackInfo }>();
 const partySearchBuckets = new Map<string, { count: number; resetAt: number }>();
 
 export class SpotifySearchRateLimitedError extends Error {
@@ -48,6 +55,43 @@ function normalizeQuery(query: string): string {
 
 function searchCacheKey(partyId: string, query: string): string {
   return `${partyId}:${normalizeQuery(query)}`;
+}
+
+function artistTopTracksCacheKey(partyId: string, artistId: string): string {
+  return `${partyId}:artist-top:${artistId}`;
+}
+
+function mapSpotifyTrackToInfo(track: SpotifyTrack): TrackInfo {
+  const info = trackFromSpotify(track);
+  const mapped: TrackInfo = {
+    uri: info.uri,
+    id: track.id,
+    name: info.name,
+    artistName: info.artistName,
+    albumArtUrl: info.albumArtUrl,
+  };
+  cacheTrackMetadata(mapped);
+  return mapped;
+}
+
+function cacheTrackMetadata(track: TrackInfo): void {
+  const expiresAt = Date.now() + TRACK_METADATA_CACHE_TTL_MS;
+  trackMetadataCache.set(track.uri, { expiresAt, track });
+  if (track.id) {
+    trackMetadataCache.set(`id:${track.id}`, { expiresAt, track });
+  }
+}
+
+export function getCachedTrackMetadata(uriOrId: string): TrackInfo | null {
+  const direct = trackMetadataCache.get(uriOrId);
+  if (direct && direct.expiresAt > Date.now()) {
+    return direct.track;
+  }
+  const byId = trackMetadataCache.get(`id:${uriOrId.replace(/^spotify:track:/, "")}`);
+  if (byId && byId.expiresAt > Date.now()) {
+    return byId.track;
+  }
+  return null;
 }
 
 function checkPartySearchLimit(
@@ -98,6 +142,116 @@ function recordSearch(db: Db, guestId: string | null): void {
   }
 }
 
+function isArtistTopTracksCached(partyId: string, artistId: string): boolean {
+  const cached = artistTopTracksCache.get(artistTopTracksCacheKey(partyId, artistId));
+  return Boolean(cached && cached.expiresAt > Date.now());
+}
+
+function isArtistSongSearchCached(partyId: string, artistName: string): boolean {
+  const cached = searchCache.get(searchCacheKey(partyId, `artist:${artistName}`));
+  return Boolean(cached && cached.expiresAt > Date.now());
+}
+
+async function loadArtistTopTracks(
+  spotify: SpotifyClient,
+  partyId: string,
+  artistId: string,
+  artistName: string,
+): Promise<TrackInfo[]> {
+  const key = artistTopTracksCacheKey(partyId, artistId);
+  const cached = artistTopTracksCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.tracks;
+  }
+
+  const inFlight = artistTopTracksInFlight.get(key);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const run = (async () => {
+    const tracks = await spotify.getArtistTopTracks(artistId, artistName);
+    const mapped = tracks.map(mapSpotifyTrackToInfo);
+    artistTopTracksCache.set(key, {
+      expiresAt: Date.now() + ARTIST_CATALOG_CACHE_TTL_MS,
+      tracks: mapped,
+    });
+    return mapped;
+  })();
+
+  artistTopTracksInFlight.set(key, run);
+  try {
+    return await run;
+  } finally {
+    if (artistTopTracksInFlight.get(key) === run) {
+      artistTopTracksInFlight.delete(key);
+    }
+  }
+}
+
+async function loadArtistSongSearch(
+  spotify: SpotifyClient,
+  partyId: string,
+  artistName: string,
+): Promise<TrackInfo[]> {
+  const query = `artist:${artistName}`;
+  const key = searchCacheKey(partyId, query);
+  const cached = searchCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data.tracks;
+  }
+
+  const inFlight = searchInFlight.get(key);
+  if (inFlight) {
+    return (await inFlight).tracks;
+  }
+
+  const run = (async () => {
+    const tracks = await spotify.searchTracks(query, 10);
+    const mapped = tracks.map(mapSpotifyTrackToInfo);
+    const data: SearchResult = { tracks: mapped, artists: [] };
+    searchCache.set(key, {
+      expiresAt: Date.now() + SEARCH_CACHE_TTL_MS,
+      data,
+    });
+    return data;
+  })();
+
+  searchInFlight.set(key, run);
+  try {
+    return (await run).tracks;
+  } finally {
+    if (searchInFlight.get(key) === run) {
+      searchInFlight.delete(key);
+    }
+  }
+}
+
+/** Warm artist drill-down caches after a fresh search — does not consume guest rate limits. */
+function prefetchArtistCatalogs(
+  spotify: SpotifyClient,
+  partyId: string,
+  artists: { id: string; name: string }[],
+): void {
+  const targets = artists.slice(0, ARTIST_PREFETCH_COUNT);
+  if (targets.length === 0) return;
+
+  void (async () => {
+    for (const artist of targets) {
+      try {
+        if (!isArtistTopTracksCached(partyId, artist.id)) {
+          await loadArtistTopTracks(spotify, partyId, artist.id, artist.name);
+        }
+        if (!isArtistSongSearchCached(partyId, artist.name)) {
+          await loadArtistSongSearch(spotify, partyId, artist.name);
+        }
+      } catch {
+        /* prefetch is best-effort */
+      }
+    }
+  })();
+}
+
 export async function searchPartyCatalog(
   spotify: SpotifyClient,
   db: Db,
@@ -133,19 +287,11 @@ export async function searchPartyCatalog(
     ]);
     recordSearch(db, guestId);
     const data: SearchResult = {
-      tracks: tracks.map((t) => {
-        const info = trackFromSpotify(t);
-        return {
-          uri: info.uri,
-          id: t.id,
-          name: info.name,
-          artistName: info.artistName,
-          albumArtUrl: info.albumArtUrl,
-        };
-      }),
+      tracks: tracks.map(mapSpotifyTrackToInfo),
       artists,
     };
     searchCache.set(key, { expiresAt: Date.now() + SEARCH_CACHE_TTL_MS, data });
+    prefetchArtistCatalogs(spotify, partyId, artists);
     return data;
   })();
 
@@ -168,53 +314,40 @@ export async function getPartyArtistTopTracks(
   guestId: string | null,
   limits: PartyRateLimits,
 ): Promise<TrackInfo[]> {
-  const key = `${partyId}:artist:${artistId}:${normalizeQuery(artistName ?? "")}`;
-  const cached = artistCache.get(key);
+  const key = artistTopTracksCacheKey(partyId, artistId);
+  const cached = artistTopTracksCache.get(key);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.tracks;
   }
 
-  const inFlight = artistInFlight.get(key);
+  const inFlight = artistTopTracksInFlight.get(key);
   if (inFlight) {
     return inFlight;
   }
 
-  const run = (async () => {
-    assertSearchAllowed(db, partyId, guestId, limits);
-    const tracks = await spotify.getArtistTopTracks(artistId, artistName);
-    recordSearch(db, guestId);
-    const mapped = tracks.map((t) => {
-      const info = trackFromSpotify(t);
-      return {
-        uri: info.uri,
-        id: t.id,
-        name: info.name,
-        artistName: info.artistName,
-        albumArtUrl: info.albumArtUrl,
-      };
-    });
-    artistCache.set(key, {
-      expiresAt: Date.now() + SEARCH_CACHE_TTL_MS,
-      tracks: mapped,
-    });
-    return mapped;
-  })();
-
-  artistInFlight.set(key, run);
-  try {
-    return await run;
-  } finally {
-    if (artistInFlight.get(key) === run) {
-      artistInFlight.delete(key);
-    }
-  }
+  assertSearchAllowed(db, partyId, guestId, limits);
+  recordSearch(db, guestId);
+  return loadArtistTopTracks(spotify, partyId, artistId, artistName ?? "");
 }
 
 /** @internal test helper */
 export function clearSpotifySearchCacheForTests(): void {
   searchCache.clear();
-  artistCache.clear();
+  artistTopTracksCache.clear();
+  trackMetadataCache.clear();
   searchInFlight.clear();
-  artistInFlight.clear();
+  artistTopTracksInFlight.clear();
   partySearchBuckets.clear();
+}
+
+/** @internal test helper */
+export async function prefetchArtistCatalogsForTests(
+  spotify: SpotifyClient,
+  partyId: string,
+  artists: { id: string; name: string }[],
+): Promise<void> {
+  for (const artist of artists.slice(0, ARTIST_PREFETCH_COUNT)) {
+    await loadArtistTopTracks(spotify, partyId, artist.id, artist.name);
+    await loadArtistSongSearch(spotify, partyId, artist.name);
+  }
 }
