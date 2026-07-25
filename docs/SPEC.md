@@ -27,7 +27,7 @@ Jukebox is a self-hosted web application that lets party guests control the host
 | Host | After a server restart or network blip, music keeps playing and the virtual queue/history are intact. |
 | Guest | I scan a QR code and enter a display name before I can add, vote, veto, or boost. |
 | Guest | I see the current queue, who added each song, and live upvote counts. |
-| Guest | I search for tracks or browse an artist's top tracks and add one to the queue. |
+| Guest | I search for tracks or browse an artist's songs and add one to the queue. |
 | Guest | I upvote songs I want to hear sooner (not my own). |
 | Guest | I veto a song; if enough guests agree, it is removed/skipped. |
 | Guest | I boost one song per party (mine or anyone else's) into a FIFO priority lane. |
@@ -483,6 +483,9 @@ Base path: `/api/v1`
 | POST | `/host/parties/:id/skip` | Skip currently playing track |
 | PATCH | `/host/parties/:id/guests/:guestId` | `{ disabled: boolean }` ban/unban |
 | GET | `/host/parties/:id/history` | Terminal history (`played` / `skipped` / `vetoed`) |
+| GET | `/host/parties/:id/search?q=` | Track search + artist matches |
+| GET | `/host/parties/:id/artists/:id/tracks?name=&filter=all\|credited` | Artist track search (same as guest) |
+| GET | `/host/diagnostics` | Live API/search/cache metrics (host session) |
 
 ### Guest
 
@@ -494,7 +497,7 @@ Base path: `/api/v1`
 | GET | `/parties/:slug/queue` | Active virtual queue + attribution |
 | GET | `/parties/:slug/now-playing` | Current track |
 | GET | `/parties/:slug/search?q=` | Track search (max 10) + artist matches for browse |
-| GET | `/parties/:slug/artists/:id/top-tracks` | Artist top tracks |
+| GET | `/parties/:slug/artists/:id/tracks?name=&filter=all\|credited` | Artist track search (`artist:{name}`; `credited` filters to that artist) |
 | POST | `/parties/:slug/queue` | Add track `{ uri }` |
 | POST | `/parties/:slug/queue/:itemId/upvote` | Upvote |
 | POST | `/parties/:slug/queue/:itemId/veto` | Veto |
@@ -516,7 +519,7 @@ Guests poll `GET /parties/:slug/queue` every **3 seconds** when party is on. `ET
 - Now playing banner
 - Empty upcoming queue: show “Add something!”
 - Queue list: art, title, artist, upvotes, added-by name, veto count
-- Search bar with results; tap artist → top tracks view
+- Search bar with results; tap artist → songs or credited “top tracks” view (both use Spotify track search, not `/artists/{id}/top-tracks`)
 - Actions per song: upvote (hidden/disabled on own songs), veto (disabled on now-playing; confirm warning if vetoing own song), boost (disabled if used or already boosted)
 - Show remaining rate-limit quota subtly (e.g. "2 adds left")
 
@@ -624,7 +627,7 @@ Both apps:
 4. **Guest sessions** — Join flow, display name gate
 5. **Virtual queue** — Add, upvote, veto, boost, dedup, rate limits
 6. **Host overrides** — Add/remove/shuffle/force-next/reorder/clear/skip/ban/reset-votes/start-from-here + history view
-7. **Search** — Track search + artist top tracks proxy
+7. **Search** — Track + artist search via Spotify `/search` (dev-mode apps cannot use `/artists/{id}/top-tracks`)
 8. **Sync worker** — Buffer 3–5, skip logic, inactive-device warning, restart soft-reconcile (rebuild buffer, never skip current)
 9. **Guest UI** — Mobile queue view, search, actions, polling
 10. **Host UI** — Admin, QR, config, device warning, full queue/history tools

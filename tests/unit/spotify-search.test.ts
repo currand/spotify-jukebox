@@ -3,7 +3,7 @@ import {
   cacheSpotifyTracksMetadata,
   clearSpotifySearchCacheForTests,
   getCachedTrackMetadata,
-  getPartyArtistTopTracks,
+  getPartyArtistTracks,
   normalizeRateLimits,
   prefetchArtistCatalogsForTests,
   searchPartyCatalog,
@@ -11,11 +11,11 @@ import {
 } from "../../src/server/services/spotify-search";
 import { DEFAULT_RATE_LIMITS } from "@/shared/types";
 
-const mockTrack = (id: string, name: string, artist = "Artist") => ({
+const mockTrack = (id: string, name: string, artist = "Artist", artistId = "artist-1") => ({
   uri: `spotify:track:${id}`,
   id,
   name,
-  artists: [{ name: artist }],
+  artists: [{ id: artistId, name: artist }],
   album: { images: [{ url: `https://i.scdn.co/image/${id}` }] },
 });
 
@@ -44,7 +44,7 @@ describe("searchPartyCatalog", () => {
         calls += 1;
         return [];
       },
-      getArtistTopTracks: async () => [],
+      searchArtistTracks: async () => [],
     };
 
     const db = {
@@ -83,7 +83,7 @@ describe("searchPartyCatalog", () => {
         calls += 1;
         return [];
       },
-      getArtistTopTracks: async () => [],
+      searchArtistTracks: async () => [],
     };
     const db = { query: () => ({ get: () => null }), run: () => {} } as never;
     const result = await searchPartyCatalog(
@@ -103,7 +103,7 @@ describe("searchPartyCatalog", () => {
     const spotify = {
       searchTracks: async () => [],
       searchArtists: async () => [],
-      getArtistTopTracks: async () => [],
+      searchArtistTracks: async () => [],
     };
     const db = { query: () => ({ get: () => null }), run: () => {} } as never;
     const tight = {
@@ -122,7 +122,7 @@ describe("searchPartyCatalog", () => {
     const spotify = {
       searchTracks: async () => [mockTrack("t1", "Dancing Queen")],
       searchArtists: async () => [],
-      getArtistTopTracks: async () => [],
+      searchArtistTracks: async () => [],
     };
     const db = { query: () => ({ get: () => null }), run: () => {} } as never;
 
@@ -151,36 +151,60 @@ describe("searchPartyCatalog", () => {
 });
 
 describe("artist catalog prefetch", () => {
-  test("prefetch warms top-tracks cache for later guest requests", async () => {
+  test("prefetch warms artist tracks cache for later guest requests", async () => {
     clearSpotifySearchCacheForTests();
-    let topTrackCalls = 0;
+    let searchCalls = 0;
     const spotify = {
-      getArtistTopTracks: async () => {
-        topTrackCalls += 1;
-        return [mockTrack("hit", "Waterloo", "ABBA")];
+      searchArtistTracks: async () => {
+        searchCalls += 1;
+        return [mockTrack("song", "Mamma Mia", "ABBA", "artist-1")];
       },
-      searchTracks: async () => [mockTrack("song", "Mamma Mia", "ABBA")],
     };
 
     await prefetchArtistCatalogsForTests(spotify as never, "party-1", [
       { id: "artist-1", name: "ABBA" },
     ]);
 
-    expect(topTrackCalls).toBe(1);
+    expect(searchCalls).toBe(1);
 
     const db = { query: () => ({ get: () => null }), run: () => {} } as never;
-    const tracks = await getPartyArtistTopTracks(
+    const tracks = await getPartyArtistTracks(
       spotify as never,
       db,
       "party-1",
       "artist-1",
       "ABBA",
+      "all",
       null,
       DEFAULT_RATE_LIMITS,
     );
 
     expect(tracks).toHaveLength(1);
-    expect(tracks[0]?.name).toBe("Waterloo");
-    expect(topTrackCalls).toBe(1);
+    expect(tracks[0]?.name).toBe("Mamma Mia");
+    expect(searchCalls).toBe(1);
+  });
+
+  test("credited filter prefers tracks by artist id", async () => {
+    clearSpotifySearchCacheForTests();
+    const spotify = {
+      searchArtistTracks: async () => [
+        mockTrack("a", "Real Hit", "ABBA", "artist-1"),
+        mockTrack("b", "Feat", "Other", "other-artist"),
+      ],
+    };
+    const db = { query: () => ({ get: () => null }), run: () => {} } as never;
+
+    const credited = await getPartyArtistTracks(
+      spotify as never,
+      db,
+      "party-1",
+      "artist-1",
+      "ABBA",
+      "credited",
+      null,
+      DEFAULT_RATE_LIMITS,
+    );
+
+    expect(credited.map((t) => t.id)).toEqual(["a"]);
   });
 });

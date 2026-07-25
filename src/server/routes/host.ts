@@ -30,22 +30,28 @@ import {
   trackFromSpotify,
   type SpotifyClient,
 } from "../services/spotify";
+import { buildHostDiagnostics } from "../services/diagnostics";
 import { getSyncState, requestPartySync } from "../services/sync";
 import {
   cacheSpotifyTracksMetadata,
-  getPartyArtistTopTracks,
+  getPartyArtistTracks,
   normalizeRateLimits,
   searchPartyCatalog,
   SpotifySearchRateLimitedError,
+  type ArtistTrackFilter,
 } from "../services/spotify-search";
 import { addTrackToParty } from "./guest";
 import { clearPartyGuests, countNamedPartyGuests, getPartyGuestAdminViews, resetGuestRateLimits } from "../services/guests";
-import { DEFAULT_RATE_LIMITS, type PartyRateLimits } from "@/shared/types";
+import { DEFAULT_PARTY_SEARCH_LIMIT, DEFAULT_RATE_LIMITS, type PartyRateLimits } from "@/shared/types";
 import { deleteCookie, getCookie } from "hono/cookie";
 import { SPOTIFY_SCOPES } from "../config";
 
 function parseRateLimits(json: string): PartyRateLimits {
   return normalizeRateLimits(JSON.parse(json) as PartyRateLimits);
+}
+
+function parseArtistTrackFilter(value: string | undefined): ArtistTrackFilter {
+  return value === "credited" ? "credited" : "all";
 }
 
 function slugify(name: string): string {
@@ -286,6 +292,18 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     }
 
     return c.json({ id: partyId, slug }, 201);
+  });
+
+  authed.get("/diagnostics", (c) => {
+    const party = db
+      .query(
+        `SELECT id, rate_limits FROM parties WHERE status IN ('on', 'off') ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get() as { id: string; rate_limits: string } | null;
+    const partySearchLimit = party
+      ? normalizeRateLimits(JSON.parse(party.rate_limits) as PartyRateLimits).partySearch.count
+      : DEFAULT_PARTY_SEARCH_LIMIT.count;
+    return c.json(buildHostDiagnostics(party?.id ?? null, partySearchLimit));
   });
 
   authed.get("/parties/last-ended", (c) => {
@@ -684,6 +702,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
               | null
           )?.rate_limits ?? JSON.stringify(DEFAULT_RATE_LIMITS),
         ),
+        "host",
       );
       return c.json(data);
     } catch (e) {
@@ -701,15 +720,17 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     }
   });
 
-  authed.get("/parties/:id/artists/:artistId/top-tracks", async (c) => {
+  authed.get("/parties/:id/artists/:artistId/tracks", async (c) => {
     const partyId = c.req.param("id");
+    const filter = parseArtistTrackFilter(c.req.query("filter"));
     try {
-      const tracks = await getPartyArtistTopTracks(
+      const tracks = await getPartyArtistTracks(
         spotify,
         db,
         partyId,
         c.req.param("artistId"),
         c.req.query("name"),
+        filter,
         null,
         parseRateLimits(
           (
@@ -718,8 +739,9 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
               | null
           )?.rate_limits ?? JSON.stringify(DEFAULT_RATE_LIMITS),
         ),
+        "host",
       );
-      return c.json({ tracks });
+      return c.json({ tracks, filter });
     } catch (e) {
       if (e instanceof SpotifySearchRateLimitedError) {
         return c.json(

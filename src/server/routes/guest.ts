@@ -37,10 +37,11 @@ import {
 import { requestPartySync } from "../services/sync";
 import {
   getCachedTrackMetadata,
-  getPartyArtistTopTracks,
+  getPartyArtistTracks,
   normalizeRateLimits,
   searchPartyCatalog,
   SpotifySearchRateLimitedError,
+  type ArtistTrackFilter,
 } from "../services/spotify-search";
 import {
   type PartyRateLimits,
@@ -74,6 +75,10 @@ function requireGuest(c: import("hono").Context<GuestVars>) {
 
 function parseRateLimits(json: string): PartyRateLimits {
   return normalizeRateLimits(JSON.parse(json) as PartyRateLimits);
+}
+
+function parseArtistTrackFilter(value: string | undefined): ArtistTrackFilter {
+  return value === "credited" ? "credited" : "all";
 }
 
 function getPartyBySlug(db: Db, slug: string) {
@@ -298,21 +303,23 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
     }
   });
 
-  app.get("/parties/:slug/artists/:artistId/top-tracks", async (c) => {
+  app.get("/parties/:slug/artists/:artistId/tracks", async (c) => {
     const party = getPartyBySlug(db, c.req.param("slug"));
     if (!party) return c.json({ error: "Party not found", code: "NOT_FOUND" }, 404);
     const guest = getGuest(c);
+    const filter = parseArtistTrackFilter(c.req.query("filter"));
     try {
-      const tracks = await getPartyArtistTopTracks(
+      const tracks = await getPartyArtistTracks(
         spotify,
         db,
         party.id,
         c.req.param("artistId"),
         c.req.query("name"),
+        filter,
         guest?.id ?? null,
         parseRateLimits(party.rate_limits),
       );
-      return c.json({ tracks });
+      return c.json({ tracks, filter });
     } catch (e) {
       if (e instanceof SpotifySearchRateLimitedError) {
         return c.json(

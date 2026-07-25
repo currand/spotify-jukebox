@@ -147,21 +147,12 @@ function GuestApp({ slug }: { slug: string }) {
     setSearchView("artist");
 
     try {
-      const fetchInit = { cache: "no-store" as RequestCache };
-      let tracks: TrackInfo[] | undefined;
-      if (filter === "top-tracks") {
-        const data = await api<{ tracks: TrackInfo[] }>(
-          `/parties/${slug}/artists/${id}/top-tracks?name=${encodeURIComponent(name)}`,
-          fetchInit,
-        );
-        tracks = data?.tracks;
-      } else {
-        const data = await api<SearchResult>(
-          `/parties/${slug}/search?q=${encodeURIComponent(`artist:${name}`)}`,
-          fetchInit,
-        );
-        tracks = data?.tracks;
-      }
+      const trackFilter = filter === "top-tracks" ? "credited" : "all";
+      const data = await api<{ tracks: TrackInfo[] }>(
+        `/parties/${slug}/artists/${id}/tracks?name=${encodeURIComponent(name)}&filter=${trackFilter}`,
+        { cache: "no-store" },
+      );
+      const tracks = data?.tracks;
 
       if (loadId !== artistLoadRef.current) return;
       if (!tracks) throw new Error("Could not load tracks");

@@ -1,5 +1,6 @@
 import type { Config } from "../config";
 import { debugLog } from "../debug";
+import { recordSpotifyApiCall } from "./spotify-metrics";
 import { decrypt, encrypt } from "../crypto";
 import type { Db } from "../db/schema";
 import type { SpotifyTrack } from "@/shared/types";
@@ -20,7 +21,19 @@ export interface SpotifyClient {
   searchArtists(query: string, limit?: number): Promise<
     { id: string; name: string; imageUrl: string | null }[]
   >;
-  getArtistTopTracks(artistId: string, artistName?: string): Promise<SpotifyTrack[]>;
+  /** Raw track search hits for `artist:{name}` (filter credited/all in spotify-search). */
+  searchArtistTracks(
+    artistId: string,
+    artistName?: string,
+  ): Promise<
+    {
+      uri: string;
+      id: string;
+      name: string;
+      artists: { id: string; name: string }[];
+      album: { images: { url: string }[] };
+    }[]
+  >;
   getPlaylistTracks(playlistId: string): Promise<SpotifyTrack[]>;
   getCurrentlyPlaying(): Promise<{
     uri: string | null;
@@ -238,6 +251,7 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
       `${elapsedMs}ms`,
       retryAfter ? { retryAfter } : undefined,
     );
+    recordSpotifyApiCall({ path, status: res.status, elapsedMs });
     return res;
   }
 
@@ -394,18 +408,7 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
       }));
     },
 
-    async getArtistTopTracks(artistId, artistName) {
-      try {
-        const data = await api<{ tracks: SpotifyTrack[] }>(
-          `/artists/${encodeURIComponent(artistId)}/top-tracks?market=${encodeURIComponent(config.spotifyMarket)}`,
-        );
-        if (Array.isArray(data.tracks) && data.tracks.length > 0) {
-          return data.tracks.slice(0, 10).map(mapTrack);
-        }
-      } catch {
-        // Spotify removed this endpoint for dev-mode apps (Feb 2026).
-      }
-
+    async searchArtistTracks(artistId, artistName) {
       let name = artistName?.trim();
       if (!name) {
         const artist = await api<{ name: string }>(
@@ -425,11 +428,9 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
           }[];
         };
       }>(
-        `/search?q=${encodeURIComponent(name)}&type=track&limit=10`,
+        `/search?q=${encodeURIComponent(`artist:${name}`)}&type=track&limit=10`,
       );
-      return pickArtistSearchTracks(data.tracks?.items ?? [], artistId).map(
-        mapTrack,
-      );
+      return data.tracks?.items ?? [];
     },
 
     async getPlaylistTracks(playlistId) {

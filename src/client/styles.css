@@ -622,6 +622,54 @@ button.danger:hover {
   font-weight: 600;
 }
 
+.diagnostics-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.diagnostics-card h2 {
+  margin-top: 0;
+}
+
+.diagnostics-subhead {
+  margin: 1rem 0 0.35rem;
+  font-size: 0.95rem;
+}
+
+.diagnostics-stat-line {
+  margin: 0.35rem 0;
+}
+
+.diagnostics-list {
+  margin: 0.75rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.diagnostics-search-list li {
+  margin-bottom: 0.45rem;
+}
+
+.diagnostics-search-query {
+  display: block;
+  font-weight: 600;
+}
+
+.diagnostics-search-meta {
+  display: block;
+  color: #8a8a96;
+  font-size: 0.85rem;
+}
+
+.diagnostics-error {
+  color: #ff6b6b;
+}
+
+@media (min-width: 900px) {
+  .diagnostics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .guest-nav {
   display: flex;
   flex-wrap: wrap;

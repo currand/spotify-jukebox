@@ -84,7 +84,6 @@ bun run setup:prod
 SPOTIFY_CLIENT_ID=...
 SPOTIFY_CLIENT_SECRET=...
 SPOTIFY_REDIRECT_URI=https://jukebox.example.com/api/v1/host/spotify/callback
-SPOTIFY_MARKET=US
 BASE_URL=https://jukebox.example.com
 ENCRYPTION_KEY=...      # openssl rand -hex 32  (≥ 32 characters)
 HOST_SETUP_TOKEN=...    # openssl rand -hex 16
@@ -176,7 +175,6 @@ All secret env files are gitignored. Templates: `.env.development.example`, `.en
 | `ALLOW_INSECURE_HTTP` | — | optional | Set `1` for http:// production URLs (LAN) |
 | `ENCRYPTION_KEY` | required | required | Prod: ≥ 32 chars (`openssl rand -hex 32`) |
 | `HOST_SETUP_TOKEN` | optional | required | Prod: enter in Admin before Connect Spotify |
-| `SPOTIFY_MARKET` | optional | optional | Default `US` |
 | `TUNNEL_TOKEN` | — | `.env.cloudflared` only | Only with `docker-compose.cloudflare.yml` |
 | `JUKEBOX_IMAGE` | — | `.env.docker` only | Compose interpolation; default `jukebox:local` |
 | `JUKEBOX_PORT` | — | `.env.docker` or shell | Host port for default Docker compose (default `3000`) |

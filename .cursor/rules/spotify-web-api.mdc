@@ -12,6 +12,6 @@ alwaysApply: false
 - **Scopes**: Request minimum scopes only (`user-modify-playback-state`, `user-read-playback-state`, `playlist-read-private`).
 - **Tokens**: Encrypt at rest; refresh access tokens; on refresh failure (`invalid_grant`) require re-authorization.
 - **Rate limits**: On 429, honor `Retry-After` header and JSON `retryAfter`; use exponential backoff on repeated 429s; never retry in tight loops.
-- **Endpoints**: Use `/playlists/{id}/items` not `/tracks`. Avoid deprecated endpoints.
+- **Endpoints**: Use `/playlists/{id}/items` not `/tracks`. Do not call `/artists/{id}/top-tracks` (403 in dev mode) — use `/search?q=artist:{name}&type=track` instead.
 - **Errors**: Parse Spotify error JSON and surface meaningful messages to the host.
 - **Terms**: Attribute playback to Spotify; cache only what sync needs; do not use API data for ML training.

@@ -192,3 +192,71 @@ export interface SpotifyTrack {
   artists: { name: string }[];
   album: { images: { url: string }[] };
 }
+
+export interface HostDiagnosticsSearchEvent {
+  at: number;
+  partyId: string;
+  query: string;
+  source: "guest" | "host" | "prefetch";
+  cacheHit: boolean;
+  kind: "catalog" | "artist-tracks";
+}
+
+export interface HostDiagnosticsCacheSnapshot {
+  searchQueries: {
+    count: number;
+    samples: Array<{
+      query: string;
+      trackCount: number;
+      artistCount: number;
+      expiresInMs: number;
+    }>;
+  };
+  artistTracks: {
+    count: number;
+    samples: Array<{
+      artistId: string;
+      trackCount: number;
+      expiresInMs: number;
+    }>;
+  };
+  trackMetadata: {
+    count: number;
+  };
+}
+
+export interface HostDiagnostics {
+  uptimeMs: number;
+  spotifyApi: {
+    total: number;
+    last1m: number;
+    last5m: number;
+    byEndpoint: Record<string, number>;
+    byEndpointLast5m: Record<string, number>;
+    rateLimitCount: number;
+    last429At: number | null;
+  };
+  search: {
+    total: number;
+    cacheHits: number;
+    cacheMisses: number;
+    prefetchCount: number;
+    hitRate: number;
+    recent: HostDiagnosticsSearchEvent[];
+  };
+  cache: HostDiagnosticsCacheSnapshot;
+  sync: {
+    deviceActive: boolean;
+    spotifyReachable: boolean;
+    deviceRestricted: boolean;
+    deviceName: string | null;
+    lastError: string | null;
+    retryAfterMs: number | null;
+    lastSyncedAt: number | null;
+  };
+  partySearchBudget: {
+    used: number;
+    limit: number;
+    resetsInMs: number;
+  } | null;
+}

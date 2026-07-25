@@ -12,23 +12,34 @@ export function AdminNav({
 
   const onQueue = location.pathname === "/admin";
   const onGuests = location.pathname === "/admin/guests";
+  const onDiagnostics = location.pathname === "/admin/diagnostics";
 
   return (
     <nav className="admin-nav" aria-label="Admin sections">
+      {partyActive ? (
+        <>
+          <Link
+            to="/admin"
+            className={`admin-nav-link${onQueue ? " admin-nav-link--active" : ""}`}
+          >
+            Queue
+          </Link>
+          <Link
+            to="/admin/guests"
+            className={`admin-nav-link${onGuests ? " admin-nav-link--active" : ""}`}
+          >
+            Guests
+            {guestCount > 0 ? (
+              <span className="admin-nav-badge">{guestCount}</span>
+            ) : null}
+          </Link>
+        </>
+      ) : null}
       <Link
-        to="/admin"
-        className={`admin-nav-link${onQueue ? " admin-nav-link--active" : ""}`}
+        to="/admin/diagnostics"
+        className={`admin-nav-link${onDiagnostics ? " admin-nav-link--active" : ""}`}
       >
-        Queue
-      </Link>
-      <Link
-        to="/admin/guests"
-        className={`admin-nav-link${onGuests ? " admin-nav-link--active" : ""}`}
-      >
-        Guests
-        {guestCount > 0 ? (
-          <span className="admin-nav-badge">{guestCount}</span>
-        ) : null}
+        Diagnostics
       </Link>
     </nav>
   );

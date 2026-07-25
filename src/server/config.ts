@@ -8,8 +8,6 @@ export interface Config {
   spotifyClientId: string;
   spotifyClientSecret: string;
   spotifyRedirectUri: string;
-  /** ISO 3166-1 alpha-2 — required for artist top-tracks API */
-  spotifyMarket: string;
   encryptionKey: string;
   hostSetupToken: string | null;
   isProduction: boolean;
@@ -118,7 +116,6 @@ export function loadConfig(env: AppEnv): Config {
     spotifyClientId: requireEnv("SPOTIFY_CLIENT_ID", env),
     spotifyClientSecret: requireEnv("SPOTIFY_CLIENT_SECRET", env),
     spotifyRedirectUri,
-    spotifyMarket: (process.env.SPOTIFY_MARKET ?? "US").toUpperCase(),
     encryptionKey,
     hostSetupToken,
     isProduction,
