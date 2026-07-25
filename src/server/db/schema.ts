@@ -89,6 +89,24 @@ CREATE TABLE IF NOT EXISTS oauth_states (
   state TEXT PRIMARY KEY,
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS metrics_sessions (
+  id TEXT PRIMARY KEY,
+  started_at TEXT NOT NULL,
+  ended_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS metrics_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL REFERENCES metrics_sessions(id),
+  recorded_at TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  party_id TEXT,
+  payload TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_metrics_snapshots_session ON metrics_snapshots(session_id, recorded_at);
+CREATE INDEX IF NOT EXISTS idx_metrics_snapshots_reason ON metrics_snapshots(session_id, reason);
 `;
 
 export type Db = Database;

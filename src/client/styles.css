@@ -664,6 +664,61 @@ button.danger:hover {
   color: #ff6b6b;
 }
 
+.diagnostics-session-bar {
+  margin-bottom: 1rem;
+}
+
+.diagnostics-session-controls {
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.diagnostics-session-select select {
+  min-width: 16rem;
+}
+
+.diagnostics-snapshot-picker {
+  margin-bottom: 1rem;
+}
+
+.diagnostics-snapshot-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  max-height: 10rem;
+  overflow: auto;
+}
+
+.diagnostics-snapshot-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid #2a2a32;
+  border-radius: 8px;
+  background: #17171c;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.diagnostics-snapshot-chip--active {
+  border-color: #1db954;
+  background: #142218;
+}
+
+.diagnostics-snapshot-chip--429 {
+  border-color: #ff6b6b;
+}
+
+.diagnostics-snapshot-chip-meta {
+  font-size: 0.75rem;
+  color: #8a8a96;
+}
+
 @media (min-width: 900px) {
   .diagnostics-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

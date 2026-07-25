@@ -61,7 +61,15 @@ export function recordSpotifyApiCall(input: {
   if (input.status === 429) {
     rateLimitCount += 1;
     last429At = at;
+    rateLimitListener?.();
   }
+}
+
+let rateLimitListener: (() => void) | null = null;
+
+/** Called by metrics recorder to snapshot immediately on Spotify 429. */
+export function setSpotifyRateLimitListener(listener: (() => void) | null): void {
+  rateLimitListener = listener;
 }
 
 export function recordSearchActivity(event: Omit<SearchActivityEvent, "at">): void {

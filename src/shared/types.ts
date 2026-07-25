@@ -259,4 +259,29 @@ export interface HostDiagnostics {
     limit: number;
     resetsInMs: number;
   } | null;
+  /** Active process metrics session (persisted across restarts). */
+  sessionId: string;
+}
+
+export type MetricsSnapshotReason = "startup" | "interval" | "rate_limit";
+
+export interface MetricsSessionSummary {
+  id: string;
+  startedAt: string;
+  endedAt: string | null;
+  snapshotCount: number;
+  rateLimitSnapshotCount: number;
+  isCurrent: boolean;
+}
+
+export interface MetricsSnapshotSummary {
+  id: number;
+  sessionId: string;
+  recordedAt: string;
+  reason: MetricsSnapshotReason;
+  partyId: string | null;
+  rateLimitCount: number;
+  apiCallsTotal: number;
+  apiCallsLast5m: number;
+  syncRetryAfterMs: number | null;
 }

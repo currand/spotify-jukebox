@@ -30,7 +30,12 @@ import {
   trackFromSpotify,
   type SpotifyClient,
 } from "../services/spotify";
-import { buildHostDiagnostics } from "../services/diagnostics";
+import { buildHostDiagnostics, getActivePartyDiagnosticsContext } from "../services/diagnostics";
+import {
+  getMetricsSnapshot,
+  listMetricsSessions,
+  listMetricsSnapshots,
+} from "../services/metrics-recorder";
 import { getSyncState, requestPartySync } from "../services/sync";
 import {
   cacheSpotifyTracksMetadata,
@@ -295,15 +300,45 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
   });
 
   authed.get("/diagnostics", (c) => {
-    const party = db
-      .query(
-        `SELECT id, rate_limits FROM parties WHERE status IN ('on', 'off') ORDER BY created_at DESC LIMIT 1`,
-      )
-      .get() as { id: string; rate_limits: string } | null;
-    const partySearchLimit = party
-      ? normalizeRateLimits(JSON.parse(party.rate_limits) as PartyRateLimits).partySearch.count
-      : DEFAULT_PARTY_SEARCH_LIMIT.count;
-    return c.json(buildHostDiagnostics(party?.id ?? null, partySearchLimit));
+    const { partyId, partySearchLimit } = getActivePartyDiagnosticsContext(db);
+    return c.json(buildHostDiagnostics(partyId, partySearchLimit));
+  });
+
+  authed.get("/metrics/sessions", (c) => {
+    return c.json({ sessions: listMetricsSessions(db) });
+  });
+
+  authed.get("/metrics/sessions/:sessionId/snapshots", (c) => {
+    const sessionId = c.req.param("sessionId");
+    const reason = c.req.query("reason") as
+      | "startup"
+      | "interval"
+      | "rate_limit"
+      | undefined;
+    const limit = Math.min(1000, Math.max(1, Number(c.req.query("limit") ?? 500)));
+    const snapshots = listMetricsSnapshots(db, sessionId, { reason, limit });
+    if (snapshots.length === 0) {
+      const exists = db
+        .query(`SELECT id FROM metrics_sessions WHERE id = ?`)
+        .get(sessionId);
+      if (!exists) {
+        return c.json({ error: "Not found", code: "NOT_FOUND" }, 404);
+      }
+    }
+    return c.json({ snapshots });
+  });
+
+  authed.get("/metrics/sessions/:sessionId/snapshots/:snapshotId", (c) => {
+    const sessionId = c.req.param("sessionId");
+    const snapshotId = Number(c.req.param("snapshotId"));
+    if (!Number.isFinite(snapshotId)) {
+      return c.json({ error: "Invalid snapshot id", code: "BAD_REQUEST" }, 400);
+    }
+    const diagnostics = getMetricsSnapshot(db, sessionId, snapshotId);
+    if (!diagnostics) {
+      return c.json({ error: "Not found", code: "NOT_FOUND" }, 404);
+    }
+    return c.json(diagnostics);
   });
 
   authed.get("/parties/last-ended", (c) => {

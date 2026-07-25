@@ -485,7 +485,10 @@ Base path: `/api/v1`
 | GET | `/host/parties/:id/history` | Terminal history (`played` / `skipped` / `vetoed`) |
 | GET | `/host/parties/:id/search?q=` | Track search + artist matches |
 | GET | `/host/parties/:id/artists/:id/tracks?name=&filter=all\|credited` | Artist track search (same as guest) |
-| GET | `/host/diagnostics` | Live API/search/cache metrics (host session) |
+| GET | `/host/diagnostics` | Live API/search/cache metrics (current process session) |
+| GET | `/host/metrics/sessions` | List persisted metrics sessions (one per app start) |
+| GET | `/host/metrics/sessions/:id/snapshots` | Snapshot timeline for a session (`?reason=rate_limit`) |
+| GET | `/host/metrics/sessions/:id/snapshots/:snapshotId` | Full diagnostics payload at a point in time |
 
 ### Guest
 

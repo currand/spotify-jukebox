@@ -13,6 +13,11 @@ import { probeGuardMiddleware } from "./middleware/probe-guard";
 import { createSpotifyClient } from "./services/spotify";
 import { startSyncWorker } from "./services/sync";
 import { isDebugEnabled } from "./debug";
+import {
+  buildHostDiagnostics,
+  getActivePartyDiagnosticsContext,
+} from "./services/diagnostics";
+import { startMetricsRecorder } from "./services/metrics-recorder";
 
 const env = bootstrapEnv();
 const config = loadConfig(env);
@@ -75,6 +80,11 @@ if (config.env === "development") {
 }
 
 startSyncWorker(db, spotify);
+
+startMetricsRecorder(db, () => {
+  const { partyId, partySearchLimit } = getActivePartyDiagnosticsContext(db);
+  return buildHostDiagnostics(partyId, partySearchLimit);
+});
 
 const bindHost = config.isProduction ? "0.0.0.0" : "127.0.0.1";
 if (process.env.DEBUG) {
