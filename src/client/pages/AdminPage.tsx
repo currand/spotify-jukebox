@@ -2,12 +2,15 @@ import * as React from "react";
 import type {
   EndedPartyExport,
   HostSpotifyStatus,
+  PartyRateLimits,
   PartyView,
   QueueItemView,
   QueueSnapshot,
+  RateLimitConfig,
   SearchResult,
   TrackInfo,
 } from "@/shared/types";
+import { DEFAULT_RATE_LIMITS } from "@/shared/types";
 import { isTrackInPartyQueue } from "@/shared/queue-match";
 import { api, apiOptional } from "../http";
 import { AdminNav } from "../components/AdminNav";
@@ -452,15 +455,23 @@ export function AdminPage() {
                 if (e.target.value.trim()) setUseImportHistory(false);
               }}
             />
-            <input
-              style={{ marginTop: "0.5rem" }}
-              type="number"
-              placeholder="Veto threshold"
-              value={form.vetoThreshold}
-              onChange={(e) =>
-                setForm({ ...form, vetoThreshold: Number(e.target.value) })
-              }
-            />
+            <label style={{ display: "block", marginTop: "0.5rem" }}>
+              <span>Vetoes to skip a song</span>
+              <input
+                style={{ display: "block", marginTop: "0.25rem", width: "100%" }}
+                type="number"
+                min={1}
+                max={20}
+                title="How many guest vetoes remove a track from the queue"
+                value={form.vetoThreshold}
+                onChange={(e) =>
+                  setForm({ ...form, vetoThreshold: Number(e.target.value) })
+                }
+              />
+              <span className="small">
+                How many guests must veto before a track is skipped.
+              </span>
+            </label>
             <div style={{ marginTop: "0.75rem" }}>
               <button onClick={() => void createParty()} disabled={!canCreate}>
                 Create party
@@ -500,6 +511,12 @@ export function AdminPage() {
               src={`/api/v1/host/parties/${party.id}/qr`}
               alt="QR code"
               style={{ width: 180, background: "#fff", padding: 8, borderRadius: 8 }}
+            />
+            <GuestLimitsPanel
+              partyId={party.id}
+              vetoThreshold={party.vetoThreshold}
+              rateLimits={party.rateLimits}
+              onSaved={() => void load()}
             />
             <div style={{ marginTop: "1rem" }}>
               <button type="button" className="danger" onClick={() => void endParty()}>
@@ -723,6 +740,183 @@ export function AdminPage() {
       )}
       </div>
       <SpotifyAttribution />
+    </div>
+  );
+}
+
+function LimitRow({
+  label,
+  hint,
+  value,
+  windowUnit,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  value: RateLimitConfig;
+  windowUnit: "min" | "sec";
+  onChange: (next: RateLimitConfig) => void;
+}) {
+  const windowValue =
+    windowUnit === "sec"
+      ? Math.round(value.windowMs / 1000)
+      : Math.round(value.windowMs / 60_000);
+
+  return (
+    <div style={{ marginTop: "0.75rem" }}>
+      <div style={{ fontWeight: 600 }}>{label}</div>
+      <div className="small">{hint}</div>
+      <div className="row" style={{ marginTop: "0.35rem", flexWrap: "wrap" }}>
+        <label className="small">
+          Max{" "}
+          <input
+            type="number"
+            min={1}
+            max={999}
+            style={{ width: 72, marginInline: "0.25rem" }}
+            value={value.count}
+            onChange={(e) =>
+              onChange({ ...value, count: Number(e.target.value) })
+            }
+          />
+        </label>
+        <label className="small">
+          per{" "}
+          <input
+            type="number"
+            min={1}
+            max={windowUnit === "sec" ? 300 : 240}
+            style={{ width: 72, marginInline: "0.25rem" }}
+            value={windowValue}
+            onChange={(e) => {
+              const amount = Number(e.target.value);
+              onChange({
+                ...value,
+                windowMs:
+                  windowUnit === "sec" ? amount * 1000 : amount * 60_000,
+              });
+            }}
+          />{" "}
+          {windowUnit === "sec" ? "seconds" : "minutes"}
+        </label>
+      </div>
+    </div>
+  );
+}
+
+function GuestLimitsPanel({
+  partyId,
+  vetoThreshold,
+  rateLimits,
+  onSaved,
+}: {
+  partyId: string;
+  vetoThreshold: number;
+  rateLimits: PartyRateLimits;
+  onSaved: () => void;
+}) {
+  const [limits, setLimits] = React.useState<PartyRateLimits>(rateLimits);
+  const [vetoes, setVetoes] = React.useState(vetoThreshold);
+  const [saving, setSaving] = React.useState(false);
+  const [notice, setNotice] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    setLimits(rateLimits);
+    setVetoes(vetoThreshold);
+  }, [partyId, rateLimits, vetoThreshold]);
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api(`/host/parties/${partyId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ rateLimits: limits, vetoThreshold: vetoes }),
+      });
+      setNotice("Guest limits saved.");
+      onSaved();
+    } catch (e) {
+      setError(formatApiError(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function resetDefaults() {
+    setLimits(DEFAULT_RATE_LIMITS);
+    setVetoes(3);
+  }
+
+  function patchLimit(key: keyof PartyRateLimits, next: RateLimitConfig) {
+    setLimits((current) => ({ ...current, [key]: next }));
+  }
+
+  return (
+    <div className="card" style={{ marginTop: "1rem" }}>
+      <h3>Guest limits</h3>
+      <p className="small">
+        Per-guest action budgets reset after each time window. Boost is one use
+        per guest for the whole party — reset individual guests from the Guests
+        page.
+      </p>
+      <label style={{ display: "block", marginTop: "0.5rem" }}>
+        <span>Vetoes to skip a song</span>
+        <input
+          style={{ display: "block", marginTop: "0.25rem", width: "100%" }}
+          type="number"
+          min={1}
+          max={20}
+          value={vetoes}
+          onChange={(e) => setVetoes(Number(e.target.value))}
+        />
+      </label>
+      <LimitRow
+        label="Add songs"
+        hint="How many tracks a guest can queue in the window."
+        value={limits.add}
+        windowUnit="min"
+        onChange={(next) => patchLimit("add", next)}
+      />
+      <LimitRow
+        label="Upvotes"
+        hint="How many upvotes a guest can spend in the window."
+        value={limits.upvote}
+        windowUnit="min"
+        onChange={(next) => patchLimit("upvote", next)}
+      />
+      <LimitRow
+        label="Vetoes"
+        hint="How many vetoes a guest can cast in the window."
+        value={limits.veto}
+        windowUnit="min"
+        onChange={(next) => patchLimit("veto", next)}
+      />
+      <LimitRow
+        label="Search (per guest)"
+        hint="Spotify searches one guest can trigger in the window."
+        value={limits.search}
+        windowUnit="min"
+        onChange={(next) => patchLimit("search", next)}
+      />
+      <LimitRow
+        label="Search (party-wide)"
+        hint="Total Spotify searches across all guests in the window."
+        value={limits.partySearch}
+        windowUnit="sec"
+        onChange={(next) => patchLimit("partySearch", next)}
+      />
+      {error && <p className="error">{error}</p>}
+      {notice && <p className="small">{notice}</p>}
+      <div className="row" style={{ marginTop: "0.75rem" }}>
+        <button type="button" onClick={() => void save()} disabled={saving}>
+          {saving ? "Saving…" : "Save limits"}
+        </button>
+        <button type="button" className="secondary" onClick={resetDefaults}>
+          Reset defaults
+        </button>
+      </div>
     </div>
   );
 }
