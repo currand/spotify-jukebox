@@ -1,6 +1,8 @@
 import * as React from "react";
+import { Link } from "react-router-dom";
 import type { PartyView, QueueSnapshot } from "@/shared/types";
 import { api, apiOptional } from "../http";
+import { AdminNav } from "../components/AdminNav";
 import { SpotifyAttribution } from "../components/SpotifyAttribution";
 import {
   NowPlayingBanner,
@@ -11,6 +13,7 @@ import {
 interface PartyFull extends PartyView {
   id: string;
   slug: string;
+  guestCount?: number;
 }
 
 export function AdminDisplayPage() {
@@ -50,6 +53,9 @@ export function AdminDisplayPage() {
   if (!party) {
     return (
       <div className="app admin-display-page">
+        <Link to="/admin" className="admin-back-link">
+          ← Back to admin
+        </Link>
         <p>{error ?? "No active party — create one in admin first."}</p>
       </div>
     );
@@ -57,36 +63,51 @@ export function AdminDisplayPage() {
 
   return (
     <div className="app admin-display-page">
-      <header className="admin-display-header">
-        <div>
+      <Link to="/admin" className="admin-back-link">
+        ← Back to admin
+      </Link>
+      <AdminNav
+        guestCount={party.guestCount ?? 0}
+        partyActive
+      />
+
+      <div className="admin-display-layout">
+        <aside className="admin-display-qr-panel" aria-label="Join QR code">
+          <h2 className="admin-display-qr-heading">Join the party</h2>
+          <p className="small admin-display-qr-hint">Scan with your phone camera</p>
+          <div className="admin-display-qr-wrap">
+            <img
+              src={`/api/v1/host/parties/${party.id}/qr`}
+              alt="QR code to join party"
+              className="admin-display-qr"
+            />
+          </div>
+        </aside>
+
+        <div className="admin-display-queue">
           <h1>{party.name}</h1>
-          <p className="small">Scan to join · /{party.slug}</p>
+          <p className="small">/{party.slug}</p>
+
+          {error && <p className="error">{error}</p>}
+
+          {queue?.nowPlaying && <NowPlayingBanner item={queue.nowPlaying} />}
+
+          {upNext && <UpNextLockedSection item={upNext} />}
+
+          {laterQueue.length > 0 && (
+            <section>
+              <h2>Upcoming</h2>
+              {laterQueue.map((item) => (
+                <ReadOnlyQueueRow key={item.id} item={item} />
+              ))}
+            </section>
+          )}
+
+          {!queue?.nowPlaying && !upNext && laterQueue.length === 0 && (
+            <div className="banner warn">Add something!</div>
+          )}
         </div>
-        <img
-          src={`/api/v1/host/parties/${party.id}/qr`}
-          alt="QR code to join party"
-          className="admin-display-qr"
-        />
-      </header>
-
-      {error && <p className="error">{error}</p>}
-
-      {queue?.nowPlaying && <NowPlayingBanner item={queue.nowPlaying} />}
-
-      {upNext && <UpNextLockedSection item={upNext} />}
-
-      {laterQueue.length > 0 && (
-        <section>
-          <h2>Upcoming</h2>
-          {laterQueue.map((item) => (
-            <ReadOnlyQueueRow key={item.id} item={item} />
-          ))}
-        </section>
-      )}
-
-      {!queue?.nowPlaying && !upNext && laterQueue.length === 0 && (
-        <div className="banner warn">Add something!</div>
-      )}
+      </div>
 
       <SpotifyAttribution />
     </div>

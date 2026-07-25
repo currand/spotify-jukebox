@@ -42,6 +42,8 @@ export interface SyncState {
 export interface SpotifyQueueSnapshot {
   currentlyPlaying: SpotifyTrack | null;
   queue: SpotifyTrack[];
+  /** False when Spotify returned 204/404 — empty queue may mean no active device. */
+  available?: boolean;
 }
 
 let syncState: SyncState = {
@@ -443,14 +445,6 @@ export async function forcePartySync(
     );
   }
 
-  if (!snapshot.deviceActive) {
-    throw new PartySyncError(
-      "No active Spotify device",
-      "NO_ACTIVE_DEVICE",
-      503,
-    );
-  }
-
   bumpSyncGeneration(db, partyId);
   const refreshedParty = db
     .query(`SELECT id, sync_generation FROM parties WHERE id = ?`)
@@ -458,7 +452,11 @@ export async function forcePartySync(
 
   await withPartySyncLock(partyId, async () => {
     const items = getQueueItems(db, partyId);
-    let queueData: SpotifyQueueSnapshot = { currentlyPlaying: null, queue: [] };
+    let queueData: SpotifyQueueSnapshot = {
+      currentlyPlaying: null,
+      queue: [],
+      available: false,
+    };
     try {
       queueData = await spotify.getQueue();
     } catch (e) {
@@ -481,30 +479,42 @@ export async function forcePartySync(
       throw e;
     }
 
+    const queueConfirmed =
+      queueData.available !== false ||
+      queueData.queue.length > 0 ||
+      queueData.currentlyPlaying != null;
+
     const effective = buildEffectiveQueueSnapshot(queueData, snapshot, items);
-    await reconcilePlayingState(
-      db,
-      partyId,
-      items,
-      effective,
-      snapshot.isPlaying,
-      spotify,
-      snapshot.deviceName,
-    );
 
-    const afterPlaying = getQueueItems(db, partyId);
-    reconcileSpotifyBufferStatuses(db, partyId, afterPlaying, queueData);
-    reconcileSpotifyQueueTail(db, partyId, queueData);
+    if (snapshot.deviceActive || effective.currentlyPlaying?.uri) {
+      await reconcilePlayingState(
+        db,
+        partyId,
+        items,
+        effective,
+        snapshot.isPlaying,
+        spotify,
+        snapshot.deviceName,
+      );
+    }
 
-    const refreshed = getQueueItems(db, partyId);
-    await fillSpotifyBufferIfEmpty(
-      db,
-      partyId,
-      refreshed,
-      spotify,
-      queueData,
-      snapshot.deviceName,
-    );
+    if (queueConfirmed) {
+      const afterPlaying = getQueueItems(db, partyId);
+      reconcileSpotifyBufferStatuses(db, partyId, afterPlaying, queueData);
+      reconcileSpotifyQueueTail(db, partyId, queueData);
+    }
+
+    if (snapshot.deviceActive) {
+      const refreshed = getQueueItems(db, partyId);
+      await fillSpotifyBufferIfEmpty(
+        db,
+        partyId,
+        refreshed,
+        spotify,
+        queueData,
+        snapshot.deviceName,
+      );
+    }
     partyLastSyncedGeneration.set(partyId, refreshedParty.sync_generation);
   });
 }

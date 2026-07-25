@@ -500,7 +500,7 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
       const res = await spotifyFetch("/me/player/queue");
       if (res.status === 204 || res.status === 404) {
         debugLog("spotify", "queue empty", res.status);
-        return { currentlyPlaying: null, queue: [] };
+        return { currentlyPlaying: null, queue: [], available: false };
       }
       if (!res.ok) await throwSpotifyError(res);
       const data = await readJsonBody<{
@@ -510,13 +510,14 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
       debugLog("spotify", "queue body", summarizeQueueBody(data));
       if (!data) {
         debugLog("spotify", "queue opaque response");
-        return { currentlyPlaying: null, queue: [] };
+        return { currentlyPlaying: null, queue: [], available: false };
       }
       return {
         currentlyPlaying: data.currently_playing
           ? mapTrack(data.currently_playing)
           : null,
         queue: (data.queue ?? []).map(mapTrack),
+        available: true,
       };
     },
 

@@ -4,6 +4,9 @@
 - [x] Boosting or upvoting places a song ahead of the next up song in the virtual queue but cannot actually replace that song in the spotify queue. A boosted song should go to next in line after "next up" and have the boost/upvote and other buttons disabled unless another song is boosted ahead. In short, the buffer song is immutable, only the penultimate and lower songs can change order.
 - [x] Unlabeled number on the create-party form — was veto threshold (`3` default). Now labeled "Vetoes to skip a song" with helper text.
 - [x] If party mode is off, there should be no API calls.
+- [x] Admin display Display route has no back or navigation buttons. QR should scale to right half of screen with queue on left half.
+- [x] Sync with Spotify button should work even when not playing. It can simply sync the buffer song.
+- [x] Tracks in admin portal are not visible due to buttons. Move buttons below tracks in the same way they are in user pages.
 
 # Features
 
