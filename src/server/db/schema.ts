@@ -101,6 +101,7 @@ export function initDb(config: Config): Db {
   db.exec(SCHEMA);
   for (const sql of [
     `ALTER TABLE queue_items ADD COLUMN from_seed INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE queue_items ADD COLUMN from_spotify INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE guests ADD COLUMN last_seen_at TEXT`,
     `ALTER TABLE guests ADD COLUMN last_ip TEXT`,
   ]) {

@@ -1,5 +1,7 @@
 import type { Db } from "../db/schema";
 import type { ExportTrack, QueueItemStatus } from "@/shared/types";
+import { newId } from "../crypto";
+import type { TrackInfo } from "./spotify";
 
 export interface QueueItemRow {
   id: string;
@@ -16,6 +18,7 @@ export interface QueueItemRow {
   manual_order: number | null;
   added_by_guest_id: string | null;
   from_seed: number;
+  from_spotify: number;
   added_at: string;
   finished_at: string | null;
   guest_display_name?: string | null;
@@ -84,11 +87,38 @@ export function getNormalUpcoming(items: QueueItemRow[]): QueueItemRow[] {
     .sort(compareNormalQueue);
 }
 
+/** Play order: now playing and Spotify-buffered track are canonical; rest is virtual. */
 export function getPlayOrder(items: QueueItemRow[]): QueueItemRow[] {
   const playing = items.find((i) => i.status === "playing");
   const boost = getBoostLane(items);
   const normal = getNormalUpcoming(items);
-  return [...(playing ? [playing] : []), ...boost, ...normal];
+  const queued = items.find((i) => i.status === "queued");
+
+  let upcoming: QueueItemRow[];
+  if (queued) {
+    upcoming = [
+      queued,
+      ...boost.filter((i) => i.id !== queued.id),
+      ...normal.filter((i) => i.id !== queued.id),
+    ];
+  } else if (
+    !playing &&
+    normal.length === 1 &&
+    normal[0]!.status === "pending" &&
+    boost.length > 0
+  ) {
+    // Sole pending normal is already "Sending to Spotify…" — boosts queue behind it.
+    const pin = normal[0]!;
+    upcoming = [
+      pin,
+      ...boost.filter((i) => i.id !== pin.id),
+      ...normal.filter((i) => i.id !== pin.id),
+    ];
+  } else {
+    upcoming = [...boost, ...normal];
+  }
+
+  return [...(playing ? [playing] : []), ...upcoming];
 }
 
 export function getUpcomingPlayOrder(items: QueueItemRow[]): QueueItemRow[] {
@@ -99,18 +129,28 @@ export function getNextUpcomingItem(items: QueueItemRow[]): QueueItemRow | null 
   return getUpcomingPlayOrder(items)[0] ?? null;
 }
 
+/**
+ * Track in Spotify's buffer slot (`queued`) or next virtual track when buffer is empty.
+ * `queued` / `playing` statuses are set by sync from Spotify — not virtual reordering.
+ */
+export function getSpotifyBufferItem(
+  items: QueueItemRow[],
+): QueueItemRow | null {
+  return getUpcomingPlayOrder(items)[0] ?? null;
+}
+
 /** Pending next-up track — already first; upvote/boost won't change order. */
 export function isGuestNextUpPendingLocked(
   items: QueueItemRow[],
   itemId: string,
 ): boolean {
-  const next = getNextUpcomingItem(items);
   const item = items.find((i) => i.id === itemId);
-  if (!next || !item || next.id !== itemId) return false;
-  return item.status === "pending";
+  if (!item || item.status !== "pending") return false;
+  const buffer = getSpotifyBufferItem(items);
+  return buffer?.id === itemId;
 }
 
-/** Guest cannot upvote/boost/veto a track already sent to Spotify's queue buffer. */
+/** Guest cannot veto a track already sent to Spotify's queue buffer. */
 export function isGuestSpotifyBufferLocked(
   items: QueueItemRow[],
   itemId: string,
@@ -120,14 +160,21 @@ export function isGuestSpotifyBufferLocked(
   return item.status === "queued";
 }
 
+function isGuestBufferSlotLocked(
+  items: QueueItemRow[],
+  itemId: string,
+): boolean {
+  const buffer = getSpotifyBufferItem(items);
+  return buffer?.id === itemId;
+}
+
 export function isGuestUpvoteBlocked(
   items: QueueItemRow[],
   itemId: string,
 ): boolean {
-  return (
-    isGuestSpotifyBufferLocked(items, itemId) ||
-    isGuestNextUpPendingLocked(items, itemId)
-  );
+  const item = items.find((i) => i.id === itemId);
+  if (!item || !["pending", "queued"].includes(item.status)) return true;
+  return isGuestBufferSlotLocked(items, itemId);
 }
 
 export function isGuestBoostBlocked(
@@ -137,8 +184,7 @@ export function isGuestBoostBlocked(
   const item = items.find((i) => i.id === itemId);
   if (!item || !["pending", "queued"].includes(item.status)) return true;
   if (item.is_boosted === 1) return true;
-  if (item.status === "queued") return true;
-  return isGuestNextUpPendingLocked(items, itemId);
+  return isGuestBufferSlotLocked(items, itemId);
 }
 
 export function isGuestVetoBlocked(
@@ -146,6 +192,46 @@ export function isGuestVetoBlocked(
   itemId: string,
 ): boolean {
   return isGuestSpotifyBufferLocked(items, itemId);
+}
+
+export function adoptSpotifyTrack(
+  db: Db,
+  partyId: string,
+  track: TrackInfo,
+  status: Extract<QueueItemStatus, "playing" | "queued">,
+): string {
+  const existing = db
+    .query(
+      `SELECT id FROM queue_items
+       WHERE party_id = ? AND spotify_uri = ?
+         AND status IN ('pending', 'queued', 'playing')`,
+    )
+    .get(partyId, track.uri) as { id: string } | null;
+
+  if (existing) {
+    db.run(`UPDATE queue_items SET status = ? WHERE id = ?`, [status, existing.id]);
+    return existing.id;
+  }
+
+  const id = newId();
+  db.run(
+    `INSERT INTO queue_items (
+      id, party_id, spotify_uri, track_name, artist_name, album_art_url,
+      upvote_count, veto_count, status, is_boosted, boost_position,
+      manual_order, added_by_guest_id, from_seed, from_spotify, added_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, 0, NULL, NULL, NULL, 0, 1, ?)`,
+    [
+      id,
+      partyId,
+      track.uri,
+      track.name,
+      track.artistName,
+      track.albumArtUrl,
+      status,
+      new Date().toISOString(),
+    ],
+  );
+  return id;
 }
 
 export function markFinished(
@@ -173,11 +259,6 @@ export function bumpSyncGeneration(db: Db, partyId: string): void {
   db.run(
     `UPDATE parties SET sync_generation = sync_generation + 1, updated_at = ? WHERE id = ?`,
     [new Date().toISOString(), partyId],
-  );
-  db.run(
-    `UPDATE queue_items SET status = 'pending'
-     WHERE party_id = ? AND status = 'queued'`,
-    [partyId],
   );
 }
 
@@ -236,9 +317,11 @@ export function toQueueItemView(row: QueueItemRow) {
   const addedBy =
     row.from_seed === 1
       ? "From playlist"
-      : row.added_by_guest_id
-        ? (row.guest_display_name ?? "Guest")
-        : "Host";
+      : row.from_spotify === 1
+        ? "Spotify"
+        : row.added_by_guest_id
+          ? (row.guest_display_name ?? "Guest")
+          : "Host";
   return {
     id: row.id,
     spotifyUri: row.spotify_uri,

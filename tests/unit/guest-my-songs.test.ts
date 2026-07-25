@@ -17,6 +17,7 @@ const base = (overrides: Partial<QueueItemRow>): QueueItemRow => ({
   manual_order: null,
   added_by_guest_id: null,
   from_seed: 0,
+  from_spotify: 0,
   added_at: "2026-01-01T00:00:00.000Z",
   finished_at: null,
   ...overrides,

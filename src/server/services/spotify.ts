@@ -1,7 +1,9 @@
 import type { Config } from "../config";
+import { debugLog } from "../debug";
 import { decrypt, encrypt } from "../crypto";
 import type { Db } from "../db/schema";
 import type { SpotifyTrack } from "@/shared/types";
+import { resolveSpotifyRateLimitMs, SpotifyApiError } from "./spotify-errors";
 
 export interface PlayerSnapshot {
   deviceActive: boolean;
@@ -74,6 +76,59 @@ function isRestrictedDeviceType(type: string | undefined): boolean {
   );
 }
 
+export function isPlaybackActive(
+  device: { id?: string } | null | undefined,
+  item: { uri?: string } | null | undefined,
+): boolean {
+  return Boolean(device?.id) || Boolean(item?.uri);
+}
+
+function summarizePlayerBody(data: {
+  is_playing?: boolean;
+  item?: { uri?: string; name?: string } | null;
+  device?: {
+    id?: string;
+    name?: string;
+    type?: string;
+    is_restricted?: boolean;
+  } | null;
+} | null): Record<string, unknown> {
+  if (!data) return { body: null };
+  return {
+    isPlaying: data.is_playing ?? null,
+    trackUri: data.item?.uri ?? null,
+    trackName: data.item?.name ?? null,
+    deviceId: data.device?.id ?? null,
+    deviceName: data.device?.name ?? null,
+    deviceType: data.device?.type ?? null,
+    deviceRestricted: data.device?.is_restricted ?? null,
+    deviceActive: isPlaybackActive(data.device, data.item),
+  };
+}
+
+function summarizeQueueBody(data: {
+  currently_playing?: { uri?: string; name?: string } | null;
+  queue?: { uri?: string; name?: string }[];
+} | null): Record<string, unknown> {
+  if (!data) return { body: null };
+  return {
+    currentlyPlayingUri: data.currently_playing?.uri ?? null,
+    currentlyPlayingName: data.currently_playing?.name ?? null,
+    queueLength: data.queue?.length ?? 0,
+    queueUris: (data.queue ?? []).slice(0, 5).map((t) => t.uri),
+  };
+}
+
+function logSpotifySnapshot(label: string, snapshot: PlayerSnapshot): void {
+  debugLog("spotify", label, {
+    deviceActive: snapshot.deviceActive,
+    isPlaying: snapshot.isPlaying,
+    deviceRestricted: snapshot.deviceRestricted,
+    deviceName: snapshot.deviceName,
+    currentUri: snapshot.currentUri,
+  });
+}
+
 async function readJsonBody<T>(res: Response): Promise<T | null> {
   if (res.status === 204) return null;
   const text = await res.text();
@@ -125,7 +180,15 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
         refresh_token: refreshToken,
       }),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      debugLog(
+        "spotify",
+        "token refresh failed",
+        res.status,
+        await res.text().catch(() => ""),
+      );
+      return null;
+    }
     const data = await readJsonBody<{
       access_token: string;
       expires_in: number;
@@ -141,13 +204,18 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
         new Date().toISOString(),
       ],
     );
+    debugLog("spotify", "token refreshed", { expiresAt: newExpires });
     return accessToken;
   }
 
   async function spotifyFetch(path: string, init?: RequestInit): Promise<Response> {
+    const method = init?.method ?? "GET";
+    const started = Date.now();
+    debugLog("spotify", "→", method, path);
+
     const token = await refreshTokenIfNeeded();
     if (!token) throw new Error("NOT_CONNECTED");
-    return fetch(`https://api.spotify.com/v1${path}`, {
+    const res = await fetch(`https://api.spotify.com/v1${path}`, {
       ...init,
       headers: {
         Authorization: `Bearer ${token}`,
@@ -157,40 +225,108 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
         ...(init?.headers ?? {}),
       },
     });
+
+    const elapsedMs = Date.now() - started;
+    const retryAfter = res.headers.get("Retry-After");
+    debugLog(
+      "spotify",
+      "←",
+      method,
+      path,
+      res.status,
+      `${elapsedMs}ms`,
+      retryAfter ? { retryAfter } : undefined,
+    );
+    return res;
+  }
+
+  async function throwSpotifyError(res: Response): Promise<never> {
+    const body = await res.text();
+    debugLog("spotify", "error body", {
+      status: res.status,
+      retryAfter: res.headers.get("Retry-After"),
+      body: body.slice(0, 500),
+    });
+    throw new SpotifyApiError(
+      `SPOTIFY_${res.status}:${body}`,
+      res.status,
+      res.status === 429
+        ? resolveSpotifyRateLimitMs(res.headers.get("Retry-After"), body, res.status)
+        : null,
+    );
   }
 
   async function api<T>(path: string, init?: RequestInit): Promise<T> {
     const res = await spotifyFetch(path, init);
     if (res.status === 204) return undefined as T;
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`SPOTIFY_${res.status}:${body}`);
-    }
+    if (!res.ok) await throwSpotifyError(res);
     const data = await readJsonBody<T>(res);
     if (data == null) {
-      throw new Error(`SPOTIFY_${res.status}:invalid response`);
+      throw new SpotifyApiError(
+        `SPOTIFY_${res.status}:invalid response`,
+        res.status,
+        null,
+      );
     }
     return data;
+  }
+
+  async function getPlayerSnapshotFromCurrentlyPlaying(): Promise<PlayerSnapshot | null> {
+    debugLog("spotify", "fallback currently-playing");
+    const res = await spotifyFetch("/me/player/currently-playing");
+    if (res.status === 204 || res.status === 404) {
+      debugLog("spotify", "currently-playing empty", res.status);
+      return null;
+    }
+    if (!res.ok) {
+      await throwSpotifyError(res);
+    }
+
+    const data = await readJsonBody<{
+      is_playing?: boolean;
+      item?: { uri: string; name?: string } | null;
+    }>(res);
+    debugLog("spotify", "currently-playing body", summarizePlayerBody(data));
+    if (!data?.item?.uri) {
+      return null;
+    }
+
+    const snapshot = {
+      deviceActive: true,
+      isPlaying: Boolean(data.is_playing),
+      deviceRestricted: false,
+      deviceName: null,
+      currentUri: data.item.uri,
+    };
+    logSpotifySnapshot("fallback snapshot", snapshot);
+    return snapshot;
   }
 
   async function getPlayerSnapshot(): Promise<PlayerSnapshot> {
     const res = await spotifyFetch("/me/player");
     if (res.status === 204 || res.status === 404) {
-      return {
+      debugLog("spotify", "/me/player empty", res.status, "trying fallback");
+      const fallback = await getPlayerSnapshotFromCurrentlyPlaying();
+      if (fallback) {
+        return fallback;
+      }
+      const empty = {
         deviceActive: false,
         isPlaying: false,
         deviceRestricted: false,
         deviceName: null,
         currentUri: null,
       };
+      logSpotifySnapshot("no playback", empty);
+      return empty;
     }
     if (!res.ok) {
-      throw new Error(`SPOTIFY_${res.status}`);
+      await throwSpotifyError(res);
     }
 
     const data = await readJsonBody<{
       is_playing?: boolean;
-      item?: { uri: string } | null;
+      item?: { uri: string; name?: string } | null;
       device?: {
         id: string;
         name?: string;
@@ -198,15 +334,18 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
         is_restricted?: boolean;
       } | null;
     }>(res);
+    debugLog("spotify", "/me/player body", summarizePlayerBody(data));
 
     if (!data) {
-      return {
+      const restricted = {
         deviceActive: true,
         isPlaying: false,
         deviceRestricted: true,
         deviceName: null,
         currentUri: null,
       };
+      logSpotifySnapshot("opaque player response", restricted);
+      return restricted;
     }
 
     const device = data.device;
@@ -215,13 +354,15 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
       isRestrictedDeviceType(device?.type) ||
       (device?.name?.toLowerCase().includes("airplay") ?? false);
 
-    return {
-      deviceActive: Boolean(device?.id),
+    const snapshot = {
+      deviceActive: isPlaybackActive(device, data.item),
       isPlaying: Boolean(data.is_playing),
       deviceRestricted,
       deviceName: device?.name ?? null,
       currentUri: data.item?.uri ?? null,
     };
+    logSpotifySnapshot("player snapshot", snapshot);
+    return snapshot;
   }
 
   return {
@@ -318,15 +459,26 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
     },
 
     async getQueue() {
-      const data = await api<{
+      const res = await spotifyFetch("/me/player/queue");
+      if (res.status === 204 || res.status === 404) {
+        debugLog("spotify", "queue empty", res.status);
+        return { currentlyPlaying: null, queue: [] };
+      }
+      if (!res.ok) await throwSpotifyError(res);
+      const data = await readJsonBody<{
         currently_playing: SpotifyTrack | null;
         queue: SpotifyTrack[];
-      }>("/me/player/queue");
+      }>(res);
+      debugLog("spotify", "queue body", summarizeQueueBody(data));
+      if (!data) {
+        debugLog("spotify", "queue opaque response");
+        return { currentlyPlaying: null, queue: [] };
+      }
       return {
         currentlyPlaying: data.currently_playing
           ? mapTrack(data.currently_playing)
           : null,
-        queue: data.queue.map(mapTrack),
+        queue: (data.queue ?? []).map(mapTrack),
       };
     },
 

@@ -3,6 +3,7 @@ import type { QueueItemView } from "./types";
 
 export interface QueueMatchSource {
   nowPlaying: QueueItemView | null;
+  upcomingOrder?: QueueItemView[];
   boostLane: QueueItemView[];
   upcoming: QueueItemView[];
   dedupTitles: string[];
@@ -13,10 +14,12 @@ export function isTrackInPartyQueue(
   track: { uri: string; name: string },
   queue: QueueMatchSource,
 ): boolean {
+  const ordered =
+    queue.upcomingOrder ??
+    [...queue.boostLane, ...queue.upcoming];
   const activeUris = [
     queue.nowPlaying?.spotifyUri,
-    ...queue.boostLane.map((item) => item.spotifyUri),
-    ...queue.upcoming.map((item) => item.spotifyUri),
+    ...ordered.map((item) => item.spotifyUri),
   ].filter((uri): uri is string => Boolean(uri));
 
   if (activeUris.includes(track.uri)) return true;

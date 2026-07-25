@@ -46,7 +46,7 @@ export function AdminGuestsPage() {
     const label = guest.displayName ?? "this guest";
     if (
       !confirm(
-        `Reset rate limits for ${label}?\n\nThey can add, upvote, and veto again. Existing votes and vetoes on songs are unchanged.`,
+        `Reset limits for ${label}?\n\nThey can add, upvote, veto, and boost again. Any active boosts on their songs are removed so the queue can resync.`,
       )
     ) {
       return;

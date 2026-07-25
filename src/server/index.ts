@@ -12,6 +12,7 @@ import { createHostRoutes } from "./routes/host";
 import { probeGuardMiddleware } from "./middleware/probe-guard";
 import { createSpotifyClient } from "./services/spotify";
 import { startSyncWorker } from "./services/sync";
+import { isDebugEnabled } from "./debug";
 
 const env = bootstrapEnv();
 const config = loadConfig(env);
@@ -76,6 +77,12 @@ if (config.env === "development") {
 startSyncWorker(db, spotify);
 
 const bindHost = config.isProduction ? "0.0.0.0" : "127.0.0.1";
+if (process.env.DEBUG) {
+  const namespaces = ["spotify", "sync"].filter(isDebugEnabled);
+  console.log(
+    `Debug logging enabled${namespaces.length ? `: ${namespaces.join(", ")}` : " (all)"}`,
+  );
+}
 console.log(`Jukebox [${config.env}] listening on http://${bindHost}:${config.port}`);
 export default {
   port: config.port,

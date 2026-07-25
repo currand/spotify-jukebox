@@ -317,6 +317,12 @@ export function AdminPage() {
                   can still queue.
                 </div>
               )}
+              {status.retryAfterMs != null && status.retryAfterMs > 0 && (
+                <div className="banner warn">
+                  {status.lastError ??
+                    `Spotify rate limited — retrying in ${Math.ceil(status.retryAfterMs / 1000)}s`}
+                </div>
+              )}
               {status.deviceRestricted && (
                 <div className="banner warn">
                   {status.lastError ??
@@ -620,7 +626,10 @@ export function AdminPage() {
           {queue?.nowPlaying && <NowPlayingBanner item={queue.nowPlaying} />}
 
           {!showSearchResults &&
-            [...(queue?.boostLane ?? []), ...(queue?.upcoming ?? [])].map((item) => (
+            (queue?.upcomingOrder ?? [
+              ...(queue?.boostLane ?? []),
+              ...(queue?.upcoming ?? []),
+            ]).map((item) => (
             <div key={item.id} className={`track card${item.isBoosted ? " track--boosted" : ""}`}>
               {item.albumArtUrl && <img src={item.albumArtUrl} alt="" />}
               <div className="track-meta">

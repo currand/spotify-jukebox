@@ -2,7 +2,7 @@ import * as React from "react";
 import type { QueueItemView, TrackInfo } from "@/shared/types";
 
 export function BoostBadge() {
-  return <span className="boost-badge">Boost</span>;
+  return <span className="boost-badge">Boosted</span>;
 }
 
 export function TrackTitle({

@@ -134,10 +134,14 @@ export interface HostSpotifyStatus {
   deviceRestricted: boolean;
   deviceName: string | null;
   lastError: string | null;
+  /** Milliseconds until Spotify rate-limit backoff ends; null when not rate limited. */
+  retryAfterMs: number | null;
 }
 
 export interface QueueSnapshot {
   nowPlaying: QueueItemView | null;
+  /** Full upcoming play order (boost lane, then normal; queued track pinned first). */
+  upcomingOrder: QueueItemView[];
   upcoming: QueueItemView[];
   boostLane: QueueItemView[];
   dedupTitles: string[];

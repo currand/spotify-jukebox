@@ -112,9 +112,7 @@ export function getGuestMySongs(
         row.is_boosted === 0 &&
         !isGuestBoostBlocked(partyActive, row.id);
       view.canUnboost =
-        row.is_boosted === 1 &&
-        row.status !== "playing" &&
-        boostUsed;
+        row.is_boosted === 1 && row.status !== "playing";
       view.canRemove = row.status !== "playing";
       active.push(view);
     } else if (TERMINAL_STATUSES.includes(row.status)) {
@@ -237,12 +235,32 @@ export function clearPartyGuests(db: Db, partyId: string): number {
   return count;
 }
 
+/** Remove boost flags from a guest's active queue items and restore their boost allowance. */
+export function clearGuestBoost(
+  db: Db,
+  partyId: string,
+  guestId: string,
+): number {
+  const result = db.run(
+    `UPDATE queue_items
+     SET is_boosted = 0, boost_position = NULL, status = 'pending'
+     WHERE party_id = ? AND added_by_guest_id = ? AND is_boosted = 1
+       AND status IN ('pending', 'queued')`,
+    [partyId, guestId],
+  );
+  db.run(`UPDATE guests SET boost_used = 0 WHERE id = ? AND party_id = ?`, [
+    guestId,
+    partyId,
+  ]);
+  return result.changes ?? 0;
+}
+
 /** Clear a guest's rate-limit counters so they can add/upvote/veto again. */
 export function resetGuestRateLimits(
   db: Db,
   partyId: string,
   guestId: string,
-): { cleared: number } {
+): { cleared: number; boostsCleared: number } {
   const guest = db
     .query(`SELECT id FROM guests WHERE id = ? AND party_id = ?`)
     .get(guestId, partyId) as { id: string } | null;
@@ -255,6 +273,7 @@ export function resetGuestRateLimits(
     .get(guestId) as { count: number };
 
   db.run(`DELETE FROM rate_limit_events WHERE guest_id = ?`, [guestId]);
+  const boostsCleared = clearGuestBoost(db, partyId, guestId);
 
-  return { cleared: before.count };
+  return { cleared: before.count, boostsCleared };
 }

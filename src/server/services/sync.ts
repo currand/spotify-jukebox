@@ -1,20 +1,25 @@
 import type { Db } from "../db/schema";
 import {
+  adoptSpotifyTrack,
   getQueueItems,
   getUpcomingPlayOrder,
   markFinished,
-  markPriorItemsPlayed,
   type QueueItemRow,
 } from "./queue";
-import type { PlayerSnapshot, SpotifyClient } from "./spotify";
-import { isNoActiveDeviceError, isRestrictedDeviceError } from "./spotify-errors";
+import { trackFromSpotify, type PlayerSnapshot, type SpotifyClient } from "./spotify";
+import type { SpotifyTrack } from "@/shared/types";
+import { debugLog } from "../debug";
+import {
+  getSpotifyRetryAfterMs,
+  isNoActiveDeviceError,
+  isRestrictedDeviceError,
+  isSpotifyRateLimitError,
+} from "./spotify-errors";
 
-const SYNC_INTERVAL_MS = 2000;
+const SYNC_INTERVAL_MS = 5000;
 
 const RESTRICTED_DEVICE_HINT =
   "This device doesn't support Spotify's queue API — use the Spotify app on your phone or computer.";
-
-const ACTIVE_VIRTUAL_STATUSES = ["pending", "queued", "playing"];
 
 export interface SyncState {
   deviceActive: boolean;
@@ -22,6 +27,12 @@ export interface SyncState {
   deviceRestricted: boolean;
   deviceName: string | null;
   lastError: string | null;
+  rateLimitedUntil: number | null;
+}
+
+export interface SpotifyQueueSnapshot {
+  currentlyPlaying: SpotifyTrack | null;
+  queue: SpotifyTrack[];
 }
 
 let syncState: SyncState = {
@@ -30,30 +41,32 @@ let syncState: SyncState = {
   deviceRestricted: false,
   deviceName: null,
   lastError: null,
+  rateLimitedUntil: null,
 };
 
-const lastSyncedGeneration = new Map<string, number>();
 const partySyncInFlight = new Map<string, Promise<void>>();
 
 export function isUriBufferedInSpotify(
   uri: string,
-  queueData: {
-    currentlyPlaying: { uri: string } | null;
-    queue: { uri: string }[];
-  },
+  queueData: SpotifyQueueSnapshot,
 ): boolean {
   if (queueData.currentlyPlaying?.uri === uri) return true;
   return queueData.queue.some((track) => track.uri === uri);
 }
 
-/** Jukebox-managed URIs still waiting in Spotify's upcoming queue (not now playing). */
+/** Whether Spotify already has a track waiting in its upcoming queue. */
+export function isSpotifyBufferOccupied(queueData: SpotifyQueueSnapshot): boolean {
+  return queueData.queue.length > 0;
+}
+
+/** @deprecated Prefer isSpotifyBufferOccupied — kept for tests inspecting jukebox URIs in Spotify. */
 export function getManagedSpotifyQueueUris(
   items: QueueItemRow[],
   queueData: { queue: { uri: string }[] },
 ): string[] {
   const activeUris = new Set(
     items
-      .filter((item) => ACTIVE_VIRTUAL_STATUSES.includes(item.status))
+      .filter((item) => ["pending", "queued", "playing"].includes(item.status))
       .map((item) => item.spotify_uri),
   );
   return queueData.queue
@@ -61,33 +74,94 @@ export function getManagedSpotifyQueueUris(
     .filter((uri) => activeUris.has(uri));
 }
 
-/** Only buffer the virtual next when Spotify has no other jukebox track waiting. */
-export function shouldAddNextToSpotifyBuffer(
-  next: QueueItemRow,
+/** First virtual track to send to Spotify when its buffer slot is empty. */
+export function getVirtualNextToBuffer(
   items: QueueItemRow[],
-  queueData: {
-    currentlyPlaying: { uri: string } | null;
-    queue: { uri: string }[];
-  },
-  rowStatus: string,
-  forceRebuild: boolean,
-): boolean {
-  if (rowStatus === "playing") return false;
-  if (isUriBufferedInSpotify(next.spotify_uri, queueData)) return false;
-  if (rowStatus === "queued") return false;
-  if (getManagedSpotifyQueueUris(items, queueData).length > 0) return false;
-  if (rowStatus !== "pending" && !forceRebuild) return false;
-  return true;
+  queueData: SpotifyQueueSnapshot,
+): QueueItemRow | null {
+  if (isSpotifyBufferOccupied(queueData)) {
+    return null;
+  }
+
+  for (const item of getUpcomingPlayOrder(items)) {
+    if (item.status === "playing" || item.status === "queued") continue;
+    if (!["pending"].includes(item.status)) continue;
+    if (isUriBufferedInSpotify(item.spotify_uri, queueData)) continue;
+    return item;
+  }
+  return null;
 }
 
-/** Skip playback when Spotify plays a demoted, vetoed, or out-of-order jukebox track. */
-export function shouldSkipUnexpectedPlayback(
-  match: QueueItemRow,
+/** Align `queued` with whatever Spotify reports as up next (jukebox or external). */
+export function reconcileSpotifyBufferStatuses(
+  db: Db,
+  partyId: string,
   items: QueueItemRow[],
-): boolean {
-  if (match.status === "vetoed" || match.status === "skipped") return true;
-  const expectedNext = getUpcomingPlayOrder(items)[0];
-  return !expectedNext || expectedNext.id !== match.id;
+  queueData: SpotifyQueueSnapshot,
+): void {
+  const bufferTrack = queueData.queue[0] ?? null;
+
+  if (!bufferTrack) {
+    for (const item of items) {
+      if (item.status === "queued") {
+        db.run(`UPDATE queue_items SET status = 'pending' WHERE id = ?`, [item.id]);
+      }
+    }
+    return;
+  }
+
+  const bufferId = adoptSpotifyTrack(
+    db,
+    partyId,
+    trackFromSpotify(bufferTrack),
+    "queued",
+  );
+
+  for (const item of items) {
+    if (item.id === bufferId || item.status === "playing") continue;
+    if (item.status === "queued") {
+      db.run(`UPDATE queue_items SET status = 'pending' WHERE id = ?`, [item.id]);
+    }
+  }
+}
+
+/** Only skip tracks the party explicitly removed (vetoed / skipped). */
+export function shouldSkipTerminalPlayback(match: QueueItemRow): boolean {
+  return match.status === "vetoed" || match.status === "skipped";
+}
+
+/** Merge player snapshot into queue data when the queue API omits now playing. */
+export function buildEffectiveQueueSnapshot(
+  queueData: SpotifyQueueSnapshot,
+  snapshot: PlayerSnapshot,
+  items: QueueItemRow[],
+): SpotifyQueueSnapshot {
+  if (queueData.currentlyPlaying?.uri) {
+    return queueData;
+  }
+
+  const uri = snapshot.currentUri;
+  if (!uri) {
+    return queueData;
+  }
+
+  const match = items.find((item) => item.spotify_uri === uri);
+  if (!match) {
+    return queueData;
+  }
+
+  return {
+    ...queueData,
+    currentlyPlaying: {
+      uri: match.spotify_uri,
+      id: match.spotify_uri.split(":").pop() ?? match.spotify_uri,
+      name: match.track_name,
+      artists: [{ name: match.artist_name }],
+      album: {
+        images: match.album_art_url ? [{ url: match.album_art_url }] : [],
+      },
+    },
+  };
 }
 
 export function getSyncState(): SyncState {
@@ -111,6 +185,45 @@ function markDeviceRestricted(deviceName: string | null): void {
   };
 }
 
+function rateLimitMessage(retryAfterMs: number): string {
+  return `Spotify rate limited — retrying in ${Math.ceil(retryAfterMs / 1000)}s`;
+}
+
+function markRateLimited(error: unknown): void {
+  const retryAfterMs = getSpotifyRetryAfterMs(error);
+  const until = Date.now() + retryAfterMs;
+  const rateLimitedUntil = Math.max(syncState.rateLimitedUntil ?? 0, until);
+  const remainingMs = rateLimitedUntil - Date.now();
+  syncState = {
+    ...syncState,
+    spotifyReachable: true,
+    rateLimitedUntil,
+    lastError: rateLimitMessage(remainingMs),
+  };
+}
+
+/** Apply Spotify 429 backoff from any API caller (sync worker, status poll, etc.). */
+export function applySpotifyRateLimit(error: unknown): void {
+  if (!isSpotifyRateLimitError(error)) return;
+  markRateLimited(error);
+}
+
+function clearRateLimitIfExpired(): void {
+  if (syncState.rateLimitedUntil && Date.now() >= syncState.rateLimitedUntil) {
+    syncState = {
+      ...syncState,
+      rateLimitedUntil: null,
+      lastError: syncState.deviceRestricted
+        ? restrictedMessage(syncState.deviceName)
+        : null,
+    };
+  }
+}
+
+function isRateLimited(): boolean {
+  return syncState.rateLimitedUntil != null && Date.now() < syncState.rateLimitedUntil;
+}
+
 function applyPlayerSnapshot(snapshot: PlayerSnapshot): void {
   syncState = {
     ...syncState,
@@ -120,7 +233,9 @@ function applyPlayerSnapshot(snapshot: PlayerSnapshot): void {
     deviceName: snapshot.deviceName,
     lastError: snapshot.deviceRestricted
       ? restrictedMessage(snapshot.deviceName)
-      : null,
+      : isRateLimited()
+        ? syncState.lastError
+        : null,
   };
 }
 
@@ -137,9 +252,9 @@ function isQueueControlError(error: unknown): boolean {
   );
 }
 
-function handleSyncError(e: unknown): void {
-  if (isQueueControlError(e)) {
-    markDeviceRestricted(syncState.deviceName);
+function handlePlayerError(e: unknown): void {
+  if (isSpotifyRateLimitError(e)) {
+    markRateLimited(e);
     return;
   }
   syncState = {
@@ -147,6 +262,24 @@ function handleSyncError(e: unknown): void {
     spotifyReachable: false,
     deviceRestricted: false,
     deviceName: syncState.deviceName,
+    lastError: e instanceof Error ? e.message : String(e),
+    rateLimitedUntil: null,
+  };
+}
+
+/** Queue/write failures must not clear a known-good active device. */
+function handleQueueSyncError(e: unknown): void {
+  if (isSpotifyRateLimitError(e)) {
+    markRateLimited(e);
+    return;
+  }
+  if (isQueueControlError(e)) {
+    markDeviceRestricted(syncState.deviceName);
+    return;
+  }
+  syncState = {
+    ...syncState,
+    spotifyReachable: false,
     lastError: e instanceof Error ? e.message : String(e),
   };
 }
@@ -187,21 +320,36 @@ export async function syncPartyQueue(
 
   await withPartySyncLock(partyId, async () => {
     try {
+      clearRateLimitIfExpired();
+
       const token = await spotify.getAccessToken();
       if (!token) return;
 
-      const snapshot = await spotify.getPlayerSnapshot();
-      if (!snapshot.deviceActive) return;
-      applyPlayerSnapshot(snapshot);
+      let snapshot: PlayerSnapshot;
+      try {
+        snapshot = await spotify.getPlayerSnapshot();
+        applyPlayerSnapshot(snapshot);
+      } catch (e) {
+        handlePlayerError(e);
+        return;
+      }
 
-      await runPartySync(db, spotify, party, snapshot);
+      if (!snapshot.deviceActive || isRateLimited()) return;
+
+      try {
+        await runPartySync(db, spotify, party, snapshot);
+      } catch (e) {
+        handleQueueSyncError(e);
+      }
     } catch (e) {
-      handleSyncError(e);
+      handlePlayerError(e);
     }
   });
 }
 
 async function runSyncTick(db: Db, spotify: SpotifyClient): Promise<void> {
+  clearRateLimitIfExpired();
+
   const party = db
     .query(`SELECT * FROM parties WHERE status = 'on' LIMIT 1`)
     .get() as { id: string; sync_generation: number } | null;
@@ -215,20 +363,52 @@ async function runSyncTick(db: Db, spotify: SpotifyClient): Promise<void> {
         deviceRestricted: false,
         deviceName: null,
         lastError: "Spotify not connected",
+        rateLimitedUntil: null,
       };
       return;
     }
 
-    const snapshot = await spotify.getPlayerSnapshot();
-    applyPlayerSnapshot(snapshot);
+    if (isRateLimited()) {
+      const remainingMs = (syncState.rateLimitedUntil ?? 0) - Date.now();
+      syncState = {
+        ...syncState,
+        spotifyReachable: true,
+        lastError: rateLimitMessage(remainingMs),
+      };
+    }
+
+    let snapshot: PlayerSnapshot;
+    try {
+      snapshot = await spotify.getPlayerSnapshot();
+      applyPlayerSnapshot(snapshot);
+      debugLog("sync", "player snapshot applied", {
+        deviceActive: snapshot.deviceActive,
+        isPlaying: snapshot.isPlaying,
+        deviceRestricted: snapshot.deviceRestricted,
+        deviceName: snapshot.deviceName,
+        currentUri: snapshot.currentUri,
+        rateLimited: isRateLimited(),
+      });
+    } catch (e) {
+      handlePlayerError(e);
+      return;
+    }
+
+    if (isRateLimited()) {
+      return;
+    }
 
     if (!party || !snapshot.deviceActive) return;
 
-    await withPartySyncLock(party.id, () =>
-      runPartySync(db, spotify, party, snapshot),
-    );
+    try {
+      await withPartySyncLock(party.id, () =>
+        runPartySync(db, spotify, party, snapshot),
+      );
+    } catch (e) {
+      handleQueueSyncError(e);
+    }
   } catch (e) {
-    handleSyncError(e);
+    handlePlayerError(e);
   }
 }
 
@@ -238,40 +418,60 @@ async function runPartySync(
   party: { id: string; sync_generation: number },
   snapshot: PlayerSnapshot,
 ): Promise<void> {
-  const generation = Number(party.sync_generation);
-  const forceRebuild =
-    (lastSyncedGeneration.get(party.id) ?? -1) !== generation;
-  lastSyncedGeneration.set(party.id, generation);
-
   const items = getQueueItems(db, party.id);
+
+  let queueData: SpotifyQueueSnapshot = { currentlyPlaying: null, queue: [] };
+  let queueApiAvailable = true;
+
+  try {
+    queueData = await spotify.getQueue();
+    debugLog("sync", "queue fetched", {
+      currentlyPlaying: queueData.currentlyPlaying?.uri ?? null,
+      queueLength: queueData.queue.length,
+    });
+  } catch (e) {
+    if (isSpotifyRateLimitError(e)) {
+      markRateLimited(e);
+      queueApiAvailable = false;
+      debugLog("sync", "queue rate limited");
+    } else if (isQueueControlError(e)) {
+      markDeviceRestricted(snapshot.deviceName);
+      queueApiAvailable = false;
+      debugLog("sync", "queue control error", e);
+    } else {
+      debugLog("sync", "queue error", e);
+      throw e;
+    }
+  }
+
+  const effective = buildEffectiveQueueSnapshot(queueData, snapshot, items);
+
   await reconcilePlayingState(
     db,
     party.id,
     items,
-    snapshot.currentUri,
+    effective,
     snapshot.isPlaying,
     spotify,
     snapshot.deviceName,
   );
 
-  const refreshed = getQueueItems(db, party.id);
-  const playing = refreshed.find((i) => i.status === "playing");
-  if (playing) {
-    markPriorItemsPlayed(db, refreshed, playing.id);
+  if (!queueApiAvailable || syncState.deviceRestricted) {
+    return;
   }
 
-  await syncNextToSpotify(
+  const afterPlaying = getQueueItems(db, party.id);
+  reconcileSpotifyBufferStatuses(db, party.id, afterPlaying, queueData);
+
+  const refreshed = getQueueItems(db, party.id);
+  await fillSpotifyBufferIfEmpty(
     db,
     party.id,
-    getQueueItems(db, party.id),
+    refreshed,
     spotify,
-    forceRebuild,
+    queueData,
     snapshot.deviceName,
   );
-}
-
-function isTerminalStatus(status: string): boolean {
-  return status === "played" || status === "skipped" || status === "vetoed";
 }
 
 async function skipCurrentTrack(
@@ -281,6 +481,10 @@ async function skipCurrentTrack(
   try {
     await spotify.skipNext();
   } catch (e) {
+    if (isSpotifyRateLimitError(e)) {
+      markRateLimited(e);
+      return;
+    }
     if (isQueueControlError(e)) {
       markDeviceRestricted(deviceName);
       return;
@@ -289,21 +493,22 @@ async function skipCurrentTrack(
   }
 }
 
-/** Observe Spotify playback; skip demoted/vetoed tracks when they reach the front. */
+/** Adopt Spotify's now playing — import external tracks when needed. */
 async function reconcilePlayingState(
   db: Db,
   partyId: string,
   items: QueueItemRow[],
-  spotifyUri: string | null,
+  queueData: SpotifyQueueSnapshot,
   isPlaying: boolean,
   spotify: SpotifyClient,
   deviceName: string | null,
 ): Promise<void> {
+  const current = queueData.currentlyPlaying;
   const playing = items.find((i) => i.status === "playing");
   const vetoedOrSkipped = (item: QueueItemRow) =>
     item.status === "vetoed" || item.status === "skipped";
 
-  if (!spotifyUri) {
+  if (!current?.uri) {
     if (!isPlaying && playing) {
       markFinished(
         db,
@@ -314,11 +519,11 @@ async function reconcilePlayingState(
     return;
   }
 
-  if (playing?.spotify_uri === spotifyUri) {
+  if (playing?.spotify_uri === current.uri) {
     return;
   }
 
-  if (playing && playing.spotify_uri !== spotifyUri) {
+  if (playing && playing.spotify_uri !== current.uri) {
     markFinished(
       db,
       playing.id,
@@ -327,80 +532,65 @@ async function reconcilePlayingState(
   }
 
   const freshItems = getQueueItems(db, partyId);
-  const match = freshItems.find((i) => i.spotify_uri === spotifyUri);
+  let match = freshItems.find((i) => i.spotify_uri === current.uri);
+
   if (!match) {
+    const id = adoptSpotifyTrack(db, partyId, trackFromSpotify(current), "playing");
+    db.run(
+      `UPDATE queue_items SET status = 'pending'
+       WHERE party_id = ? AND status = 'playing' AND id != ?`,
+      [partyId, id],
+    );
     return;
   }
 
-  if (isTerminalStatus(match.status)) {
+  if (shouldSkipTerminalPlayback(match)) {
     await skipCurrentTrack(spotify, deviceName);
     return;
   }
 
-  if (shouldSkipUnexpectedPlayback(match, freshItems)) {
-    markFinished(db, match.id, "skipped");
-    await skipCurrentTrack(spotify, deviceName);
+  if (match.status === "played") {
+    db.run(
+      `UPDATE queue_items SET status = 'pending'
+       WHERE party_id = ? AND status = 'playing' AND id != ?`,
+      [partyId, match.id],
+    );
+    db.run(`UPDATE queue_items SET status = 'playing' WHERE id = ?`, [match.id]);
     return;
   }
 
-  markPriorItemsPlayed(db, freshItems, match.id);
+  db.run(
+    `UPDATE queue_items SET status = 'pending'
+     WHERE party_id = ? AND status = 'playing' AND id != ?`,
+    [partyId, match.id],
+  );
   db.run(`UPDATE queue_items SET status = 'playing' WHERE id = ?`, [match.id]);
 }
 
-/** Add exactly one upcoming track to Spotify's queue when the buffer slot is free. */
-async function syncNextToSpotify(
+/** Fill Spotify's buffer slot from the virtual queue when empty — never replace what's waiting. */
+async function fillSpotifyBufferIfEmpty(
   db: Db,
   partyId: string,
   items: QueueItemRow[],
   spotify: SpotifyClient,
-  forceRebuild: boolean,
+  queueData: SpotifyQueueSnapshot,
   deviceName: string | null,
 ): Promise<void> {
-  if (syncState.deviceRestricted) return;
-
-  const next = getUpcomingPlayOrder(items)[0];
-  if (!next) {
-    for (const item of items.filter((i) => i.status === "queued")) {
-      db.run(`UPDATE queue_items SET status = 'pending' WHERE id = ?`, [item.id]);
-    }
+  if (isSpotifyBufferOccupied(queueData)) {
     return;
   }
 
-  for (const item of items.filter((i) => i.status === "queued" && i.id !== next.id)) {
-    db.run(`UPDATE queue_items SET status = 'pending' WHERE id = ?`, [item.id]);
-  }
-
-  const row = db
-    .query(`SELECT status FROM queue_items WHERE id = ?`)
-    .get(next.id) as { status: string } | null;
-  if (!row || row.status === "playing") return;
-
-  let queueData;
-  try {
-    queueData = await spotify.getQueue();
-  } catch (e) {
-    if (isQueueControlError(e)) {
-      markDeviceRestricted(deviceName);
-      return;
-    }
-    throw e;
-  }
-
-  if (isUriBufferedInSpotify(next.spotify_uri, queueData)) {
-    if (row.status !== "queued") {
-      db.run(`UPDATE queue_items SET status = 'queued' WHERE id = ?`, [next.id]);
-    }
-    return;
-  }
-
-  if (!shouldAddNextToSpotifyBuffer(next, items, queueData, row.status, forceRebuild)) {
-    return;
-  }
+  const next = getVirtualNextToBuffer(items, queueData);
+  if (!next) return;
 
   try {
     await spotify.addToQueue(next.spotify_uri);
     db.run(`UPDATE queue_items SET status = 'queued' WHERE id = ?`, [next.id]);
   } catch (e) {
+    if (isSpotifyRateLimitError(e)) {
+      markRateLimited(e);
+      return;
+    }
     if (isQueueControlError(e)) {
       markDeviceRestricted(deviceName);
       return;

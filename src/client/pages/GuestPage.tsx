@@ -200,7 +200,7 @@ function GuestApp({ slug }: { slug: string }) {
   const partyOff = queue?.party.status !== "on";
   const showingSearch = searchView !== "idle" && results;
 
-  const upcomingOrdered = [
+  const upcomingOrdered = queue?.upcomingOrder ?? [
     ...(queue?.boostLane ?? []),
     ...(queue?.upcoming ?? []),
   ];
@@ -208,11 +208,8 @@ function GuestApp({ slug }: { slug: string }) {
     queue?.nextItemId != null
       ? upcomingOrdered.find((item) => item.id === queue.nextItemId)
       : upcomingOrdered[0];
-  const laterBoost =
-    queue?.boostLane.filter((item) => item.id !== upNext?.id) ?? [];
-  const laterUpcoming =
-    queue?.upcoming.filter((item) => item.id !== upNext?.id) ?? [];
-  const hasLater = laterBoost.length > 0 || laterUpcoming.length > 0;
+  const later = upcomingOrdered.filter((item) => item.id !== upNext?.id);
+  const hasLater = later.length > 0;
 
   if (!joined) {
     return (
@@ -373,18 +370,7 @@ function GuestApp({ slug }: { slug: string }) {
       {!showingSearch && hasLater && (
         <section>
           <h2>Later</h2>
-          {laterBoost.map((item) => (
-            <QueueRow
-              key={item.id}
-              item={item}
-              guestId={me?.id}
-              canMutate={canMutate && !partyOff}
-              boostUsed={me?.boostUsed ?? true}
-              onAction={act}
-              slug={slug}
-            />
-          ))}
-          {laterUpcoming.map((item) => (
+          {later.map((item) => (
             <QueueRow
               key={item.id}
               item={item}

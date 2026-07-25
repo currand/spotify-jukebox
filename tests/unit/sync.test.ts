@@ -1,11 +1,48 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import {
+  buildEffectiveQueueSnapshot,
   getManagedSpotifyQueueUris,
+  getVirtualNextToBuffer,
   isUriBufferedInSpotify,
-  shouldAddNextToSpotifyBuffer,
-  shouldSkipUnexpectedPlayback,
+  reconcileSpotifyBufferStatuses,
+  shouldSkipTerminalPlayback,
 } from "../../src/server/services/sync";
-import type { QueueItemRow } from "../../src/server/services/queue";
+import { getUpcomingPlayOrder, type QueueItemRow } from "../../src/server/services/queue";
+import type { Db } from "../../src/server/db/schema";
+
+import type { SpotifyTrack } from "@/shared/types";
+
+function spotifyTrack(uri: string, name = "Track"): SpotifyTrack {
+  return {
+    uri,
+    id: uri.split(":").pop() ?? uri,
+    name,
+    artists: [{ name: "Artist" }],
+    album: { images: [] },
+  };
+}
+
+const base = (overrides: Partial<QueueItemRow>): QueueItemRow => ({
+  id: "1",
+  party_id: "p",
+  spotify_uri: "spotify:track:one",
+  track_name: "t",
+  artist_name: "a",
+  album_art_url: null,
+  upvote_count: 0,
+  veto_count: 0,
+  status: "pending",
+  is_boosted: 0,
+  boost_position: null,
+  manual_order: null,
+  added_by_guest_id: null,
+  from_seed: 0,
+  from_spotify: 0,
+  added_at: "2026-01-01T00:00:00.000Z",
+  finished_at: null,
+  ...overrides,
+});
 
 describe("isUriBufferedInSpotify", () => {
   const uri = "spotify:track:abc123";
@@ -14,7 +51,7 @@ describe("isUriBufferedInSpotify", () => {
     expect(
       isUriBufferedInSpotify(uri, {
         currentlyPlaying: null,
-        queue: [{ uri: "spotify:track:other" }, { uri }],
+        queue: [spotifyTrack("spotify:track:other"), spotifyTrack(uri)],
       }),
     ).toBe(true);
   });
@@ -22,7 +59,7 @@ describe("isUriBufferedInSpotify", () => {
   test("detects track as currently playing", () => {
     expect(
       isUriBufferedInSpotify(uri, {
-        currentlyPlaying: { uri },
+        currentlyPlaying: spotifyTrack(uri),
         queue: [],
       }),
     ).toBe(true);
@@ -31,34 +68,14 @@ describe("isUriBufferedInSpotify", () => {
   test("returns false when track is absent", () => {
     expect(
       isUriBufferedInSpotify(uri, {
-        currentlyPlaying: { uri: "spotify:track:other" },
-        queue: [{ uri: "spotify:track:another" }],
+        currentlyPlaying: spotifyTrack("spotify:track:other"),
+        queue: [spotifyTrack("spotify:track:another")],
       }),
     ).toBe(false);
   });
 });
 
 describe("getManagedSpotifyQueueUris", () => {
-  const base = (overrides: Partial<QueueItemRow>): QueueItemRow => ({
-    id: "1",
-    party_id: "p",
-    spotify_uri: "spotify:track:one",
-    track_name: "t",
-    artist_name: "a",
-    album_art_url: null,
-    upvote_count: 0,
-    veto_count: 0,
-    status: "pending",
-    is_boosted: 0,
-    boost_position: null,
-    manual_order: null,
-    added_by_guest_id: null,
-    from_seed: 0,
-    added_at: "2026-01-01T00:00:00.000Z",
-    finished_at: null,
-    ...overrides,
-  });
-
   test("returns only active virtual queue URIs from Spotify queue", () => {
     const items = [
       base({ spotify_uri: "spotify:track:stale", status: "pending" }),
@@ -76,126 +93,181 @@ describe("getManagedSpotifyQueueUris", () => {
   });
 });
 
-describe("shouldAddNextToSpotifyBuffer", () => {
-  const base = (overrides: Partial<QueueItemRow>): QueueItemRow => ({
-    id: "1",
-    party_id: "p",
-    spotify_uri: "spotify:track:next",
-    track_name: "t",
-    artist_name: "a",
-    album_art_url: null,
-    upvote_count: 0,
-    veto_count: 0,
-    status: "pending",
-    is_boosted: 0,
-    boost_position: null,
-    manual_order: null,
-    added_by_guest_id: null,
-    from_seed: 0,
-    added_at: "2026-01-01T00:00:00.000Z",
-    finished_at: null,
-    ...overrides,
-  });
+describe("reconcileSpotifyBufferStatuses", () => {
+  function testDb(): Db {
+    const db = new Database(":memory:") as Db;
+    db.run(`
+      CREATE TABLE queue_items (
+        id TEXT PRIMARY KEY,
+        party_id TEXT NOT NULL,
+        spotify_uri TEXT NOT NULL,
+        track_name TEXT NOT NULL,
+        artist_name TEXT NOT NULL,
+        album_art_url TEXT,
+        upvote_count INTEGER NOT NULL DEFAULT 0,
+        veto_count INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'pending',
+        is_boosted INTEGER NOT NULL DEFAULT 0,
+        boost_position INTEGER,
+        manual_order INTEGER,
+        added_by_guest_id TEXT,
+      from_seed INTEGER NOT NULL DEFAULT 0,
+      from_spotify INTEGER NOT NULL DEFAULT 0,
+      added_at TEXT NOT NULL,
+        finished_at TEXT
+      )
+    `);
+    return db;
+  }
 
-  test("allows add when buffer is empty", () => {
-    const next = base({});
+  test("marks the Spotify buffer track as queued and demotes stale queued rows", () => {
+    const db = testDb();
+    db.run(
+      `INSERT INTO queue_items (id, party_id, spotify_uri, track_name, artist_name, status, from_seed, added_at)
+       VALUES ('spotify-next', 'p', 'spotify:track:next', 'Next', 'Artist', 'pending', 0, '2026-01-01T00:00:00.000Z')`,
+    );
+    db.run(
+      `INSERT INTO queue_items (id, party_id, spotify_uri, track_name, artist_name, status, from_seed, added_at)
+       VALUES ('stale', 'p', 'spotify:track:stale', 'Stale', 'Artist', 'queued', 0, '2026-01-02T00:00:00.000Z')`,
+    );
+
     const items = [
-      next,
-      base({ id: "2", spotify_uri: "spotify:track:later", added_at: "2026-01-02T00:00:00.000Z" }),
+      base({ id: "spotify-next", spotify_uri: "spotify:track:next", status: "pending" }),
+      base({ id: "stale", spotify_uri: "spotify:track:stale", status: "queued" }),
     ];
-    expect(
-      shouldAddNextToSpotifyBuffer(
-        next,
-        items,
-        { currentlyPlaying: { uri: "spotify:track:now" }, queue: [] },
-        "pending",
-        false,
-      ),
-    ).toBe(true);
-  });
 
-  test("defers add when another jukebox track occupies Spotify buffer", () => {
-    const next = base({ spotify_uri: "spotify:track:new-next" });
-    const stale = base({
-      id: "2",
-      spotify_uri: "spotify:track:stale",
-      added_at: "2026-01-02T00:00:00.000Z",
+    reconcileSpotifyBufferStatuses(db, "p", items, {
+      currentlyPlaying: null,
+      queue: [{ uri: "spotify:track:next", id: "x", name: "Next", artists: [{ name: "Artist" }], album: { images: [] } }],
     });
-    expect(
-      shouldAddNextToSpotifyBuffer(
-        next,
-        [next, stale],
-        {
-          currentlyPlaying: { uri: "spotify:track:now" },
-          queue: [{ uri: "spotify:track:stale" }],
-        },
-        "pending",
-        false,
-      ),
-    ).toBe(false);
+
+    const next = db
+      .query(`SELECT status FROM queue_items WHERE id = ?`)
+      .get("spotify-next") as { status: string };
+    const stale = db
+      .query(`SELECT status FROM queue_items WHERE id = ?`)
+      .get("stale") as { status: string };
+
+    expect(next.status).toBe("queued");
+    expect(stale.status).toBe("pending");
   });
 
-  test("does not add when virtual next is already buffered", () => {
-    const next = base({});
-    expect(
-      shouldAddNextToSpotifyBuffer(
-        next,
-        [next],
+  test("imports an external Spotify queue track as queued", () => {
+    const db = testDb();
+    reconcileSpotifyBufferStatuses(db, "p", [], {
+      currentlyPlaying: null,
+      queue: [
         {
-          currentlyPlaying: { uri: "spotify:track:now" },
-          queue: [{ uri: next.spotify_uri }],
+          uri: "spotify:track:external",
+          id: "ext",
+          name: "External Song",
+          artists: [{ name: "DJ" }],
+          album: { images: [{ url: "https://art.test/a.jpg" }] },
         },
-        "pending",
-        false,
-      ),
-    ).toBe(false);
+      ],
+    });
+
+    const row = db
+      .query(
+        `SELECT status, track_name, artist_name, from_spotify FROM queue_items WHERE spotify_uri = ?`,
+      )
+      .get("spotify:track:external") as {
+      status: string;
+      track_name: string;
+      artist_name: string;
+      from_spotify: number;
+    };
+
+    expect(row.status).toBe("queued");
+    expect(row.track_name).toBe("External Song");
+    expect(row.artist_name).toBe("DJ");
+    expect(row.from_spotify).toBe(1);
   });
 });
 
-describe("shouldSkipUnexpectedPlayback", () => {
-  const base = (overrides: Partial<QueueItemRow>): QueueItemRow => ({
-    id: "1",
-    party_id: "p",
-    spotify_uri: "spotify:track:one",
-    track_name: "t",
-    artist_name: "a",
-    album_art_url: null,
-    upvote_count: 0,
-    veto_count: 0,
-    status: "pending",
-    is_boosted: 0,
-    boost_position: null,
-    manual_order: null,
-    added_by_guest_id: null,
-    from_seed: 0,
-    added_at: "2026-01-01T00:00:00.000Z",
-    finished_at: null,
-    ...overrides,
-  });
-
-  test("skips vetoed tracks", () => {
-    const item = base({ status: "vetoed" });
-    expect(shouldSkipUnexpectedPlayback(item, [item])).toBe(true);
-  });
-
-  test("skips demoted tracks that are no longer virtual next", () => {
-    const stale = base({ id: "stale", spotify_uri: "spotify:track:stale" });
-    const next = base({
-      id: "next",
-      spotify_uri: "spotify:track:next",
-      upvote_count: 5,
+describe("getVirtualNextToBuffer", () => {
+  test("skips tracks already in Spotify and picks next pending virtual track", () => {
+    const buffered = base({
+      id: "buffered",
+      spotify_uri: "spotify:track:buffered",
+      status: "queued",
+    });
+    const boosted = base({
+      id: "boost",
+      spotify_uri: "spotify:track:boost",
+      is_boosted: 1,
+      boost_position: 1,
       added_at: "2026-01-02T00:00:00.000Z",
     });
-    expect(shouldSkipUnexpectedPlayback(stale, [stale, next])).toBe(true);
-  });
-
-  test("allows expected virtual next to play", () => {
-    const next = base({ id: "next" });
     const later = base({
       id: "later",
       spotify_uri: "spotify:track:later",
+      added_at: "2026-01-03T00:00:00.000Z",
+    });
+    const items = [buffered, boosted, later];
+    const queueData = {
+      currentlyPlaying: spotifyTrack("spotify:track:now"),
+      queue: [spotifyTrack("spotify:track:buffered")],
+    };
+
+    expect(getVirtualNextToBuffer(items, queueData)).toBeNull();
+    expect(getUpcomingPlayOrder(items).map((i) => i.id)).toEqual([
+      "buffered",
+      "boost",
+      "later",
+    ]);
+  });
+
+  test("returns first pending virtual track when Spotify buffer is empty", () => {
+    const boosted = base({
+      id: "boost",
+      is_boosted: 1,
+      boost_position: 1,
+    });
+    const normal = base({
+      id: "normal",
+      spotify_uri: "spotify:track:normal",
       added_at: "2026-01-02T00:00:00.000Z",
     });
-    expect(shouldSkipUnexpectedPlayback(next, [next, later])).toBe(false);
+    const next = getVirtualNextToBuffer([boosted, normal], {
+      currentlyPlaying: spotifyTrack("spotify:track:now"),
+      queue: [],
+    });
+    expect(next?.id).toBe("normal");
+  });
+});
+
+describe("shouldSkipTerminalPlayback", () => {
+  test("only skips vetoed or skipped tracks", () => {
+    expect(shouldSkipTerminalPlayback(base({ status: "vetoed" }))).toBe(true);
+    expect(shouldSkipTerminalPlayback(base({ status: "skipped" }))).toBe(true);
+    expect(shouldSkipTerminalPlayback(base({ status: "pending" }))).toBe(false);
+  });
+});
+
+describe("buildEffectiveQueueSnapshot", () => {
+  test("fills currentlyPlaying from player snapshot when queue API omits it", () => {
+    const items = [
+      base({
+        id: "playing",
+        spotify_uri: "spotify:track:live",
+        track_name: "Live Track",
+        artist_name: "Live Artist",
+        status: "pending",
+      }),
+    ];
+    const effective = buildEffectiveQueueSnapshot(
+      { currentlyPlaying: null, queue: [] },
+      {
+        deviceActive: true,
+        isPlaying: true,
+        deviceRestricted: false,
+        deviceName: "Phone",
+        currentUri: "spotify:track:live",
+      },
+      items,
+    );
+    expect(effective.currentlyPlaying?.uri).toBe("spotify:track:live");
+    expect(effective.currentlyPlaying?.name).toBe("Live Track");
   });
 });

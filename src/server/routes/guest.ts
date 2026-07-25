@@ -18,6 +18,7 @@ import {
   getNormalUpcoming,
   getNextUpcomingItem,
   getQueueItems,
+  getUpcomingPlayOrder,
   isGuestBoostBlocked,
   isGuestUpvoteBlocked,
   isGuestVetoBlocked,
@@ -238,10 +239,12 @@ export function createGuestRoutes(db: Db, config: Config) {
     });
     const boostLane = getBoostLane(items).map(toGuestQueueItemView);
     const upcoming = getNormalUpcoming(items).map(toGuestQueueItemView);
+    const upcomingOrder = getUpcomingPlayOrder(items).map(toGuestQueueItemView);
 
     c.header("ETag", etag);
     return c.json({
       nowPlaying: nowPlaying ? toGuestQueueItemView(nowPlaying) : null,
+      upcomingOrder,
       upcoming,
       boostLane,
       nextItemId: nextItem?.id ?? null,

@@ -21,6 +21,7 @@ import {
   isDuplicateError,
   markFinished,
   nextBoostPosition,
+  resetQueuedToPending,
   toQueueItemView,
 } from "../services/queue";
 import {
@@ -29,7 +30,10 @@ import {
   storeHostTokens,
   trackFromSpotify,
 } from "../services/spotify";
-import { getSyncState, syncPartyQueue } from "../services/sync";
+import { applySpotifyRateLimit, getSyncState, syncPartyQueue } from "../services/sync";
+import {
+  isSpotifyRateLimitError,
+} from "../services/spotify-errors";
 import { addTrackToParty } from "./guest";
 import { clearPartyGuests, countNamedPartyGuests, getPartyGuestAdminViews, resetGuestRateLimits } from "../services/guests";
 import { DEFAULT_RATE_LIMITS, type PartyRateLimits } from "@/shared/types";
@@ -155,7 +159,7 @@ export function createHostRoutes(db: Db, config: Config) {
       session && new Date(session.expires_at) >= new Date(),
     );
 
-    const sync = getSyncState();
+    let sync = getSyncState();
     let deviceActive = sync.deviceActive;
     let deviceRestricted = sync.deviceRestricted;
     let deviceName = sync.deviceName;
@@ -172,10 +176,18 @@ export function createHostRoutes(db: Db, config: Config) {
               ? `${deviceName} doesn't support Spotify's queue API — use the Spotify app on your phone or computer.`
               : sync.lastError;
         }
-      } catch {
-        /* use sync state */
+      } catch (e) {
+        if (isSpotifyRateLimitError(e)) {
+          applySpotifyRateLimit(e);
+          sync = getSyncState();
+          lastError = sync.lastError;
+        }
       }
     }
+    const retryAfterMs =
+      sync.rateLimitedUntil != null
+        ? Math.max(0, sync.rateLimitedUntil - Date.now())
+        : null;
     return c.json({
       connected: Boolean(creds),
       authenticated,
@@ -185,6 +197,7 @@ export function createHostRoutes(db: Db, config: Config) {
       deviceRestricted,
       deviceName,
       lastError,
+      retryAfterMs,
     });
   });
 
@@ -417,6 +430,7 @@ export function createHostRoutes(db: Db, config: Config) {
     const nowPlaying = items.find((i) => i.status === "playing");
     return c.json({
       nowPlaying: nowPlaying ? toQueueItemView(nowPlaying) : null,
+      upcomingOrder: getUpcomingPlayOrder(items).map(toQueueItemView),
       boostLane: getBoostLane(items).map(toQueueItemView),
       upcoming: getNormalUpcoming(items).map(toQueueItemView),
       dedupTitles: getDedupTitles(db, partyId),
@@ -484,6 +498,7 @@ export function createHostRoutes(db: Db, config: Config) {
         [index, item.id],
       );
     });
+    resetQueuedToPending(db, partyId);
     bumpSyncGeneration(db, partyId);
     await afterQueueChange(db, spotify, partyId);
     return c.json({ ok: true });
@@ -519,6 +534,7 @@ export function createHostRoutes(db: Db, config: Config) {
         [now, item.id],
       );
     }
+    resetQueuedToPending(db, partyId);
     bumpSyncGeneration(db, partyId);
     await afterQueueChange(db, spotify, partyId);
     return c.json({ ok: true, skipped: toSkip.length });
@@ -546,6 +562,7 @@ export function createHostRoutes(db: Db, config: Config) {
           `UPDATE queue_items SET is_boosted = 1, boost_position = ?, status = 'pending' WHERE id = ?`,
           [pos, itemId],
         );
+        resetQueuedToPending(db, partyId);
         bumpSyncGeneration(db, partyId);
         break;
       }
@@ -572,6 +589,7 @@ export function createHostRoutes(db: Db, config: Config) {
           orderA,
           b.id,
         ]);
+        resetQueuedToPending(db, partyId);
         bumpSyncGeneration(db, partyId);
         break;
       }
@@ -635,6 +653,10 @@ export function createHostRoutes(db: Db, config: Config) {
     const guestId = c.req.param("guestId");
     try {
       const result = resetGuestRateLimits(db, partyId, guestId);
+      if (result.boostsCleared > 0) {
+        bumpSyncGeneration(db, partyId);
+        await syncPartyQueue(db, spotify, partyId);
+      }
       return c.json({ ok: true, ...result });
     } catch (e) {
       if (e instanceof Error && e.message === "NOT_FOUND") {
