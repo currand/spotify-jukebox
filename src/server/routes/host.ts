@@ -25,15 +25,18 @@ import {
   toQueueItemView,
 } from "../services/queue";
 import {
-  createSpotifyClient,
   extractPlaylistId,
   storeHostTokens,
   trackFromSpotify,
+  type SpotifyClient,
 } from "../services/spotify";
-import { applySpotifyRateLimit, getSyncState, syncPartyQueue } from "../services/sync";
+import { getSyncState, requestPartySync } from "../services/sync";
 import {
-  isSpotifyRateLimitError,
-} from "../services/spotify-errors";
+  getPartyArtistTopTracks,
+  normalizeRateLimits,
+  searchPartyCatalog,
+  SpotifySearchRateLimitedError,
+} from "../services/spotify-search";
 import { addTrackToParty } from "./guest";
 import { clearPartyGuests, countNamedPartyGuests, getPartyGuestAdminViews, resetGuestRateLimits } from "../services/guests";
 import { DEFAULT_RATE_LIMITS, type PartyRateLimits } from "@/shared/types";
@@ -41,7 +44,7 @@ import { deleteCookie, getCookie } from "hono/cookie";
 import { SPOTIFY_SCOPES } from "../config";
 
 function parseRateLimits(json: string): PartyRateLimits {
-  return JSON.parse(json) as PartyRateLimits;
+  return normalizeRateLimits(JSON.parse(json) as PartyRateLimits);
 }
 
 function slugify(name: string): string {
@@ -54,16 +57,11 @@ function slugify(name: string): string {
   );
 }
 
-async function afterQueueChange(
-  db: Db,
-  spotify: ReturnType<typeof createSpotifyClient>,
-  partyId: string,
-): Promise<void> {
-  await syncPartyQueue(db, spotify, partyId);
+function afterQueueChange(db: Db, partyId: string): void {
+  requestPartySync(db, partyId);
 }
 
-export function createHostRoutes(db: Db, config: Config) {
-  const spotify = createSpotifyClient(db, config);
+export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient) {
   const app = new Hono();
 
   const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
@@ -160,30 +158,6 @@ export function createHostRoutes(db: Db, config: Config) {
     );
 
     let sync = getSyncState();
-    let deviceActive = sync.deviceActive;
-    let deviceRestricted = sync.deviceRestricted;
-    let deviceName = sync.deviceName;
-    let lastError = sync.lastError;
-    if (creds) {
-      try {
-        const playback = await spotify.getPlayerSnapshot();
-        deviceActive = playback.deviceActive;
-        deviceRestricted = playback.deviceRestricted;
-        deviceName = playback.deviceName;
-        if (deviceRestricted) {
-          lastError =
-            deviceName != null
-              ? `${deviceName} doesn't support Spotify's queue API — use the Spotify app on your phone or computer.`
-              : sync.lastError;
-        }
-      } catch (e) {
-        if (isSpotifyRateLimitError(e)) {
-          applySpotifyRateLimit(e);
-          sync = getSyncState();
-          lastError = sync.lastError;
-        }
-      }
-    }
     const retryAfterMs =
       sync.rateLimitedUntil != null
         ? Math.max(0, sync.rateLimitedUntil - Date.now())
@@ -192,12 +166,13 @@ export function createHostRoutes(db: Db, config: Config) {
       connected: Boolean(creds),
       authenticated,
       expiresAt: creds?.expires_at ?? null,
-      deviceActive,
+      deviceActive: sync.deviceActive,
       spotifyReachable: sync.spotifyReachable,
-      deviceRestricted,
-      deviceName,
-      lastError,
+      deviceRestricted: sync.deviceRestricted,
+      deviceName: sync.deviceName,
+      lastError: sync.lastError,
       retryAfterMs,
+      lastSyncedAt: sync.lastSyncedAt,
     });
   });
 
@@ -407,8 +382,7 @@ export function createHostRoutes(db: Db, config: Config) {
       values as (string | number)[],
     );
     if (body.status === "on") {
-      bumpSyncGeneration(db, id);
-      await syncPartyQueue(db, spotify, id);
+      requestPartySync(db, id);
     }
     return c.json({ ok: true });
   });
@@ -475,7 +449,7 @@ export function createHostRoutes(db: Db, config: Config) {
     }
     try {
       const id = await addTrackToParty(db, partyId, info, null, false);
-      await syncPartyQueue(db, spotify, partyId);
+      requestPartySync(db, partyId);
       return c.json({ id }, 201);
     } catch (e) {
       if (isDuplicateError(e)) {
@@ -500,7 +474,7 @@ export function createHostRoutes(db: Db, config: Config) {
     });
     resetQueuedToPending(db, partyId);
     bumpSyncGeneration(db, partyId);
-    await afterQueueChange(db, spotify, partyId);
+    afterQueueChange(db, partyId);
     return c.json({ ok: true });
   });
 
@@ -513,7 +487,7 @@ export function createHostRoutes(db: Db, config: Config) {
       [now, partyId],
     );
     bumpSyncGeneration(db, partyId);
-    await afterQueueChange(db, spotify, partyId);
+    afterQueueChange(db, partyId);
     return c.json({ ok: true });
   });
 
@@ -536,7 +510,7 @@ export function createHostRoutes(db: Db, config: Config) {
     }
     resetQueuedToPending(db, partyId);
     bumpSyncGeneration(db, partyId);
-    await afterQueueChange(db, spotify, partyId);
+    afterQueueChange(db, partyId);
     return c.json({ ok: true, skipped: toSkip.length });
   });
 
@@ -602,7 +576,7 @@ export function createHostRoutes(db: Db, config: Config) {
       default:
         return c.json({ error: "Unknown action", code: "INVALID_ACTION" }, 400);
     }
-    await afterQueueChange(db, spotify, partyId);
+    afterQueueChange(db, partyId);
     return c.json({ ok: true });
   });
 
@@ -616,7 +590,7 @@ export function createHostRoutes(db: Db, config: Config) {
     }
     markFinished(db, c.req.param("itemId"), "skipped");
     bumpSyncGeneration(db, c.req.param("id"));
-    await afterQueueChange(db, spotify, c.req.param("id"));
+    afterQueueChange(db, c.req.param("id"));
     return c.json({ ok: true });
   });
 
@@ -634,7 +608,7 @@ export function createHostRoutes(db: Db, config: Config) {
       return c.json({ error: "Skip failed", code: "SPOTIFY_ERROR" }, 502);
     }
     bumpSyncGeneration(db, partyId);
-    await afterQueueChange(db, spotify, partyId);
+    afterQueueChange(db, partyId);
     return c.json({ ok: true });
   });
 
@@ -654,8 +628,7 @@ export function createHostRoutes(db: Db, config: Config) {
     try {
       const result = resetGuestRateLimits(db, partyId, guestId);
       if (result.boostsCleared > 0) {
-        bumpSyncGeneration(db, partyId);
-        await syncPartyQueue(db, spotify, partyId);
+        requestPartySync(db, partyId);
       }
       return c.json({ ok: true, ...result });
     } catch (e) {
@@ -694,38 +667,68 @@ export function createHostRoutes(db: Db, config: Config) {
   authed.get("/parties/:id/search", async (c) => {
     const q = c.req.query("q")?.trim();
     if (!q) return c.json({ tracks: [], artists: [] });
-    const [tracks, artists] = await Promise.all([
-      spotify.searchTracks(q, 10),
-      spotify.searchArtists(q, 5),
-    ]);
-    return c.json({
-      tracks: tracks.map((t) => ({
-        ...trackFromSpotify(t),
-        id: t.id,
-      })),
-      artists,
-    });
+    const partyId = c.req.param("id");
+    try {
+      const data = await searchPartyCatalog(
+        spotify,
+        db,
+        partyId,
+        q,
+        null,
+        parseRateLimits(
+          (
+            db.query(`SELECT rate_limits FROM parties WHERE id = ?`).get(partyId) as
+              | { rate_limits: string }
+              | null
+          )?.rate_limits ?? JSON.stringify(DEFAULT_RATE_LIMITS),
+        ),
+      );
+      return c.json(data);
+    } catch (e) {
+      if (e instanceof SpotifySearchRateLimitedError) {
+        return c.json(
+          {
+            error: "Search rate limited",
+            code: "RATE_LIMITED",
+            retryAfterMs: e.retryAfterMs,
+          },
+          429,
+        );
+      }
+      return c.json({ error: "Search unavailable", code: "SPOTIFY_ERROR" }, 503);
+    }
   });
 
   authed.get("/parties/:id/artists/:artistId/top-tracks", async (c) => {
+    const partyId = c.req.param("id");
     try {
-      const tracks = await spotify.getArtistTopTracks(
+      const tracks = await getPartyArtistTopTracks(
+        spotify,
+        db,
+        partyId,
         c.req.param("artistId"),
         c.req.query("name"),
+        null,
+        parseRateLimits(
+          (
+            db.query(`SELECT rate_limits FROM parties WHERE id = ?`).get(partyId) as
+              | { rate_limits: string }
+              | null
+          )?.rate_limits ?? JSON.stringify(DEFAULT_RATE_LIMITS),
+        ),
       );
-      return c.json({
-        tracks: tracks.map((t) => {
-          const info = trackFromSpotify(t);
-          return {
-            uri: info.uri,
-            id: t.id,
-            name: info.name,
-            artistName: info.artistName,
-            albumArtUrl: info.albumArtUrl,
-          };
-        }),
-      });
-    } catch {
+      return c.json({ tracks });
+    } catch (e) {
+      if (e instanceof SpotifySearchRateLimitedError) {
+        return c.json(
+          {
+            error: "Search rate limited",
+            code: "RATE_LIMITED",
+            retryAfterMs: e.retryAfterMs,
+          },
+          429,
+        );
+      }
       return c.json({ error: "Search unavailable", code: "SPOTIFY_ERROR" }, 503);
     }
   });

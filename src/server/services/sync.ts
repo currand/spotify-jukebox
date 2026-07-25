@@ -1,6 +1,7 @@
 import type { Db } from "../db/schema";
 import {
   adoptSpotifyTrack,
+  bumpSyncGeneration,
   getQueueItems,
   getUpcomingPlayOrder,
   markFinished,
@@ -19,7 +20,8 @@ import {
   isSpotifyReauthRequired,
 } from "./spotify-errors";
 
-const SYNC_INTERVAL_MS = 5000;
+const SYNC_INTERVAL_ACTIVE_MS = 5000;
+const SYNC_INTERVAL_IDLE_MS = 20000;
 
 const RESTRICTED_DEVICE_HINT =
   "This device doesn't support Spotify's queue API — use the Spotify app on your phone or computer.";
@@ -31,6 +33,8 @@ export interface SyncState {
   deviceName: string | null;
   lastError: string | null;
   rateLimitedUntil: number | null;
+  /** When the sync worker last refreshed player state from Spotify. */
+  lastSyncedAt: number | null;
 }
 
 export interface SpotifyQueueSnapshot {
@@ -45,10 +49,39 @@ let syncState: SyncState = {
   deviceName: null,
   lastError: null,
   rateLimitedUntil: null,
+  lastSyncedAt: null,
 };
 
 const partySyncInFlight = new Map<string, Promise<void>>();
+const partyLastSyncedGeneration = new Map<string, number>();
 let consecutiveRateLimitHits = 0;
+let syncWorkerTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function partyNeedsSpotifyQueueSync(
+  db: Db,
+  partyId: string,
+  syncGeneration: number,
+): boolean {
+  return (partyLastSyncedGeneration.get(partyId) ?? -1) < syncGeneration;
+}
+
+export function partyHasPendingBufferWork(db: Db, partyId: string): boolean {
+  return getQueueItems(db, partyId).some((item) => item.status === "pending");
+}
+
+export function getSyncIntervalMs(
+  db: Db,
+  party: { id: string; sync_generation: number } | null,
+): number {
+  if (!party) return SYNC_INTERVAL_IDLE_MS;
+  if (partyNeedsSpotifyQueueSync(db, party.id, party.sync_generation)) {
+    return SYNC_INTERVAL_ACTIVE_MS;
+  }
+  if (partyHasPendingBufferWork(db, party.id)) {
+    return SYNC_INTERVAL_ACTIVE_MS;
+  }
+  return SYNC_INTERVAL_IDLE_MS;
+}
 
 export function isUriBufferedInSpotify(
   uri: string,
@@ -243,6 +276,7 @@ function applyPlayerSnapshot(snapshot: PlayerSnapshot): void {
     spotifyReachable: true,
     deviceRestricted: snapshot.deviceRestricted,
     deviceName: snapshot.deviceName,
+    lastSyncedAt: Date.now(),
     lastError: snapshot.deviceRestricted
       ? restrictedMessage(snapshot.deviceName)
       : isRateLimited()
@@ -279,6 +313,7 @@ function handlePlayerError(e: unknown): void {
         formatSpotifyErrorForUser(e) ??
         "Spotify authorization expired — connect Spotify again in admin.",
       rateLimitedUntil: null,
+      lastSyncedAt: syncState.lastSyncedAt,
     };
     return;
   }
@@ -289,6 +324,7 @@ function handlePlayerError(e: unknown): void {
     deviceName: syncState.deviceName,
     lastError: formatSpotifyErrorForUser(e) ?? (e instanceof Error ? e.message : String(e)),
     rateLimitedUntil: null,
+    lastSyncedAt: syncState.lastSyncedAt,
   };
 }
 
@@ -311,10 +347,19 @@ function handleQueueSyncError(e: unknown): void {
 }
 
 export function startSyncWorker(db: Db, spotify: SpotifyClient): void {
-  setInterval(() => {
-    void runSyncTick(db, spotify);
-  }, SYNC_INTERVAL_MS);
-  void runSyncTick(db, spotify);
+  const tick = async () => {
+    await runSyncTick(db, spotify);
+    const party = db
+      .query(`SELECT id, sync_generation FROM parties WHERE status = 'on' LIMIT 1`)
+      .get() as { id: string; sync_generation: number } | null;
+    syncWorkerTimer = setTimeout(() => void tick(), getSyncIntervalMs(db, party));
+  };
+  void tick();
+}
+
+/** Queue a Spotify sync on the background worker — avoids duplicate API calls per mutation. */
+export function requestPartySync(db: Db, partyId: string): void {
+  bumpSyncGeneration(db, partyId);
 }
 
 async function withPartySyncLock(
@@ -331,46 +376,6 @@ async function withPartySyncLock(
       partySyncInFlight.delete(partyId);
     }
   }
-}
-
-/** Run sync immediately after a virtual queue change (host/guest mutation). */
-export async function syncPartyQueue(
-  db: Db,
-  spotify: SpotifyClient,
-  partyId: string,
-): Promise<void> {
-  const party = db
-    .query(`SELECT * FROM parties WHERE id = ? AND status = 'on'`)
-    .get(partyId) as { id: string; sync_generation: number } | null;
-  if (!party) return;
-
-  await withPartySyncLock(partyId, async () => {
-    try {
-      clearRateLimitIfExpired();
-
-      const token = await spotify.getAccessToken();
-      if (!token) return;
-
-      let snapshot: PlayerSnapshot;
-      try {
-        snapshot = await spotify.getPlayerSnapshot();
-        applyPlayerSnapshot(snapshot);
-      } catch (e) {
-        handlePlayerError(e);
-        return;
-      }
-
-      if (!snapshot.deviceActive || isRateLimited()) return;
-
-      try {
-        await runPartySync(db, spotify, party, snapshot);
-      } catch (e) {
-        handleQueueSyncError(e);
-      }
-    } catch (e) {
-      handlePlayerError(e);
-    }
-  });
 }
 
 async function runSyncTick(db: Db, spotify: SpotifyClient): Promise<void> {
@@ -390,6 +395,7 @@ async function runSyncTick(db: Db, spotify: SpotifyClient): Promise<void> {
         deviceName: null,
         lastError: "Spotify not connected",
         rateLimitedUntil: null,
+        lastSyncedAt: syncState.lastSyncedAt,
       };
       return;
     }
@@ -445,29 +451,37 @@ async function runPartySync(
   snapshot: PlayerSnapshot,
 ): Promise<void> {
   const items = getQueueItems(db, party.id);
+  const needsQueue =
+    partyHasPendingBufferWork(db, party.id) ||
+    partyNeedsSpotifyQueueSync(db, party.id, party.sync_generation);
 
   let queueData: SpotifyQueueSnapshot = { currentlyPlaying: null, queue: [] };
-  let queueApiAvailable = true;
+  let queueApiAvailable = !needsQueue;
 
-  try {
-    queueData = await spotify.getQueue();
-    debugLog("sync", "queue fetched", {
-      currentlyPlaying: queueData.currentlyPlaying?.uri ?? null,
-      queueLength: queueData.queue.length,
-    });
-  } catch (e) {
-    if (isSpotifyRateLimitError(e)) {
-      markRateLimited(e);
-      queueApiAvailable = false;
-      debugLog("sync", "queue rate limited");
-    } else if (isQueueControlError(e)) {
-      markDeviceRestricted(snapshot.deviceName);
-      queueApiAvailable = false;
-      debugLog("sync", "queue control error", e);
-    } else {
-      debugLog("sync", "queue error", e);
-      throw e;
+  if (needsQueue) {
+    try {
+      queueData = await spotify.getQueue();
+      queueApiAvailable = true;
+      debugLog("sync", "queue fetched", {
+        currentlyPlaying: queueData.currentlyPlaying?.uri ?? null,
+        queueLength: queueData.queue.length,
+      });
+    } catch (e) {
+      if (isSpotifyRateLimitError(e)) {
+        markRateLimited(e);
+        queueApiAvailable = false;
+        debugLog("sync", "queue rate limited");
+      } else if (isQueueControlError(e)) {
+        markDeviceRestricted(snapshot.deviceName);
+        queueApiAvailable = false;
+        debugLog("sync", "queue control error", e);
+      } else {
+        debugLog("sync", "queue error", e);
+        throw e;
+      }
     }
+  } else {
+    debugLog("sync", "skipping queue fetch — idle");
   }
 
   const effective = buildEffectiveQueueSnapshot(queueData, snapshot, items);
@@ -482,7 +496,8 @@ async function runPartySync(
     snapshot.deviceName,
   );
 
-  if (!queueApiAvailable || syncState.deviceRestricted) {
+  if (!needsQueue || !queueApiAvailable || syncState.deviceRestricted) {
+    partyLastSyncedGeneration.set(party.id, party.sync_generation);
     return;
   }
 
@@ -498,6 +513,7 @@ async function runPartySync(
     queueData,
     snapshot.deviceName,
   );
+  partyLastSyncedGeneration.set(party.id, party.sync_generation);
 }
 
 async function skipCurrentTrack(

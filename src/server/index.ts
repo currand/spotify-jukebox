@@ -46,8 +46,8 @@ app.use(
 );
 
 const api = new Hono();
-api.route("/", createGuestRoutes(db, config));
-api.route("/", createHostRoutes(db, config));
+api.route("/", createGuestRoutes(db, config, spotify));
+api.route("/", createHostRoutes(db, config, spotify));
 app.route("/api/v1", api);
 
 app.get("/health", (c) => c.json({ ok: true }));

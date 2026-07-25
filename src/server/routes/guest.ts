@@ -11,7 +11,6 @@ import { isDuplicateTitle } from "@/shared/dedup";
 import { touchGuestLastSeen, countGuestActiveSongs, getGuestMySongs } from "../services/guests";
 import { getClientIp } from "../client-ip";
 import {
-  bumpSyncGeneration,
   computeQueueEtag,
   getBoostLane,
   getDedupTitles,
@@ -32,10 +31,16 @@ import {
   remainingQuota,
 } from "../services/rate-limit";
 import {
-  createSpotifyClient,
   trackFromSpotify,
+  type SpotifyClient,
 } from "../services/spotify";
-import { syncPartyQueue } from "../services/sync";
+import { requestPartySync } from "../services/sync";
+import {
+  getPartyArtistTopTracks,
+  normalizeRateLimits,
+  searchPartyCatalog,
+  SpotifySearchRateLimitedError,
+} from "../services/spotify-search";
 import {
   type PartyRateLimits,
   type QueueItemStatus,
@@ -67,7 +72,7 @@ function requireGuest(c: import("hono").Context<GuestVars>) {
 }
 
 function parseRateLimits(json: string): PartyRateLimits {
-  return JSON.parse(json) as PartyRateLimits;
+  return normalizeRateLimits(JSON.parse(json) as PartyRateLimits);
 }
 
 function getPartyBySlug(db: Db, slug: string) {
@@ -86,8 +91,7 @@ function getPartyBySlug(db: Db, slug: string) {
     | null;
 }
 
-export function createGuestRoutes(db: Db, config: Config) {
-  const spotify = createSpotifyClient(db, config);
+export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient) {
   const app = new Hono<GuestVars>();
 
   app.use("/parties/:slug", guestSessionMiddleware(db));
@@ -267,25 +271,28 @@ export function createGuestRoutes(db: Db, config: Config) {
     const q = c.req.query("q")?.trim();
     if (!q) return c.json({ tracks: [], artists: [] });
 
+    const guest = getGuest(c);
     try {
-      const [tracks, artists] = await Promise.all([
-        spotify.searchTracks(q, 10),
-        spotify.searchArtists(q, 5),
-      ]);
-      return c.json({
-        tracks: tracks.map((t) => {
-          const info = trackFromSpotify(t);
-          return {
-            uri: info.uri,
-            id: t.id,
-            name: info.name,
-            artistName: info.artistName,
-            albumArtUrl: info.albumArtUrl,
-          };
-        }),
-        artists,
-      });
-    } catch {
+      const data = await searchPartyCatalog(
+        spotify,
+        db,
+        party.id,
+        q,
+        guest?.id ?? null,
+        parseRateLimits(party.rate_limits),
+      );
+      return c.json(data);
+    } catch (e) {
+      if (e instanceof SpotifySearchRateLimitedError) {
+        return c.json(
+          {
+            error: "Search rate limited",
+            code: "RATE_LIMITED",
+            retryAfterMs: e.retryAfterMs,
+          },
+          429,
+        );
+      }
       return c.json({ error: "Search unavailable", code: "SPOTIFY_ERROR" }, 503);
     }
   });
@@ -293,24 +300,29 @@ export function createGuestRoutes(db: Db, config: Config) {
   app.get("/parties/:slug/artists/:artistId/top-tracks", async (c) => {
     const party = getPartyBySlug(db, c.req.param("slug"));
     if (!party) return c.json({ error: "Party not found", code: "NOT_FOUND" }, 404);
+    const guest = getGuest(c);
     try {
-      const tracks = await spotify.getArtistTopTracks(
+      const tracks = await getPartyArtistTopTracks(
+        spotify,
+        db,
+        party.id,
         c.req.param("artistId"),
         c.req.query("name"),
+        guest?.id ?? null,
+        parseRateLimits(party.rate_limits),
       );
-      return c.json({
-        tracks: tracks.map((t) => {
-          const info = trackFromSpotify(t);
-          return {
-            uri: info.uri,
-            id: t.id,
-            name: info.name,
-            artistName: info.artistName,
-            albumArtUrl: info.albumArtUrl,
-          };
-        }),
-      });
-    } catch {
+      return c.json({ tracks });
+    } catch (e) {
+      if (e instanceof SpotifySearchRateLimitedError) {
+        return c.json(
+          {
+            error: "Search rate limited",
+            code: "RATE_LIMITED",
+            retryAfterMs: e.retryAfterMs,
+          },
+          429,
+        );
+      }
       return c.json({ error: "Search unavailable", code: "SPOTIFY_ERROR" }, 503);
     }
   });
@@ -478,8 +490,7 @@ export function createGuestRoutes(db: Db, config: Config) {
       recordAction(db, guest.id, "veto");
       if (newCount >= party.veto_threshold) {
         markFinished(db, itemId, "vetoed");
-        bumpSyncGeneration(db, party.id);
-        await syncPartyQueue(db, spotify, party.id);
+        requestPartySync(db, party.id);
       }
       return c.json({ ok: true, vetoCount: newCount });
     } catch {
@@ -547,8 +558,7 @@ export function createGuestRoutes(db: Db, config: Config) {
       [pos, itemId],
     );
     db.run(`UPDATE guests SET boost_used = 1 WHERE id = ?`, [guest.id]);
-    bumpSyncGeneration(db, party.id);
-    await syncPartyQueue(db, spotify, party.id);
+    requestPartySync(db, party.id);
     return c.json({ ok: true });
   });
 
@@ -620,8 +630,7 @@ export function createGuestRoutes(db: Db, config: Config) {
     if (item.is_boosted === 1 && guest.boostUsed) {
       db.run(`UPDATE guests SET boost_used = 0 WHERE id = ?`, [guest.id]);
     }
-    bumpSyncGeneration(db, party.id);
-    await syncPartyQueue(db, spotify, party.id);
+    requestPartySync(db, party.id);
     return c.json({ ok: true });
   });
 
@@ -676,8 +685,7 @@ export function createGuestRoutes(db: Db, config: Config) {
     if (guest.boostUsed) {
       db.run(`UPDATE guests SET boost_used = 0 WHERE id = ?`, [guest.id]);
     }
-    bumpSyncGeneration(db, party.id);
-    await syncPartyQueue(db, spotify, party.id);
+    requestPartySync(db, party.id);
     return c.json({ ok: true });
   });
 
@@ -703,7 +711,7 @@ export function createGuestRoutes(db: Db, config: Config) {
   async function handleAdd(
     c: import("hono").Context<GuestVars>,
     db: Db,
-    spotifyClient: ReturnType<typeof createSpotifyClient>,
+    spotifyClient: SpotifyClient,
     isHost: boolean,
   ) {
     const slug = c.req.param("slug")!;
@@ -809,7 +817,7 @@ export function createGuestRoutes(db: Db, config: Config) {
       ],
     );
     if (guest && !isHost) recordAction(db, guest.id, "add");
-    await syncPartyQueue(db, spotifyClient, party.id);
+    requestPartySync(db, party.id);
     return c.json({ id }, 201);
   }
 

@@ -3,8 +3,11 @@ import { describe, expect, test } from "bun:test";
 import {
   buildEffectiveQueueSnapshot,
   getManagedSpotifyQueueUris,
+  getSyncIntervalMs,
   getVirtualNextToBuffer,
   isUriBufferedInSpotify,
+  partyHasPendingBufferWork,
+  partyNeedsSpotifyQueueSync,
   reconcileSpotifyBufferStatuses,
   shouldSkipTerminalPlayback,
 } from "../../src/server/services/sync";
@@ -269,5 +272,15 @@ describe("buildEffectiveQueueSnapshot", () => {
     );
     expect(effective.currentlyPlaying?.uri).toBe("spotify:track:live");
     expect(effective.currentlyPlaying?.name).toBe("Live Track");
+  });
+});
+
+describe("sync pacing helpers", () => {
+  test("detects when party generation is ahead of last Spotify sync", () => {
+    expect(partyNeedsSpotifyQueueSync({} as Db, "party-a", 2)).toBe(true);
+  });
+
+  test("uses idle interval when party is null", () => {
+    expect(getSyncIntervalMs({} as Db, null)).toBe(20_000);
   });
 });

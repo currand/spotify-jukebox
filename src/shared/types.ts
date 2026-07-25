@@ -16,12 +16,23 @@ export interface PartyRateLimits {
   add: RateLimitConfig;
   upvote: RateLimitConfig;
   veto: RateLimitConfig;
+  /** Per-guest Spotify search budget */
+  search: RateLimitConfig;
+  /** Party-wide Spotify search budget across all guests */
+  partySearch: RateLimitConfig;
 }
+
+export const DEFAULT_PARTY_SEARCH_LIMIT: RateLimitConfig = {
+  count: 24,
+  windowMs: 30 * 1000,
+};
 
 export const DEFAULT_RATE_LIMITS: PartyRateLimits = {
   add: { count: 3, windowMs: 20 * 60 * 1000 },
   upvote: { count: 10, windowMs: 60 * 60 * 1000 },
   veto: { count: 3, windowMs: 30 * 60 * 1000 },
+  search: { count: 6, windowMs: 60 * 1000 },
+  partySearch: DEFAULT_PARTY_SEARCH_LIMIT,
 };
 
 export interface ApiError {
@@ -136,6 +147,7 @@ export interface HostSpotifyStatus {
   lastError: string | null;
   /** Milliseconds until Spotify rate-limit backoff ends; null when not rate limited. */
   retryAfterMs: number | null;
+  lastSyncedAt: number | null;
 }
 
 export interface QueueSnapshot {

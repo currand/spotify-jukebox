@@ -47,6 +47,7 @@ function GuestApp({ slug }: { slug: string }) {
   );
   const [error, setError] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
+  const [searching, setSearching] = React.useState(false);
   const etagRef = React.useRef<string | null>(null);
   const artistLoadRef = React.useRef(0);
 
@@ -109,16 +110,28 @@ function GuestApp({ slug }: { slug: string }) {
   }
 
   async function search() {
-    if (!query.trim()) return;
+    const trimmed = query.trim();
+    if (trimmed.length < 3) {
+      setError("Enter at least 3 characters to search.");
+      return;
+    }
+    if (searching) return;
+    setSearching(true);
     setError(null);
     setNotice(null);
-    const data = await api<SearchResult>(
-      `/parties/${slug}/search?q=${encodeURIComponent(query)}`,
-    );
-    setResults(data);
-    setSearchView("results");
-    setSelectedArtist(null);
-    setArtistFilter(null);
+    try {
+      const data = await api<SearchResult>(
+        `/parties/${slug}/search?q=${encodeURIComponent(trimmed)}`,
+      );
+      setResults(data);
+      setSearchView("results");
+      setSelectedArtist(null);
+      setArtistFilter(null);
+    } catch (e) {
+      setError(formatApiError(e));
+    } finally {
+      setSearching(false);
+    }
   }
 
   async function loadArtistFilter(
@@ -290,8 +303,11 @@ function GuestApp({ slug }: { slug: string }) {
             placeholder="Search songs or artists"
             onKeyDown={(e) => e.key === "Enter" && void search()}
           />
-          <button onClick={() => void search()} disabled={!canMutate || partyOff}>
-            Search
+          <button
+            onClick={() => void search()}
+            disabled={!canMutate || partyOff || searching || query.trim().length < 3}
+          >
+            {searching ? "Searching…" : "Search"}
           </button>
         </div>
         {notice && <p className="toast-ok">{notice}</p>}

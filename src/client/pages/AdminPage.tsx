@@ -50,6 +50,7 @@ export function AdminPage() {
   >(null);
   const [notice, setNotice] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [hostSearching, setHostSearching] = React.useState(false);
   const [endedExport, setEndedExport] = React.useState<EndedPartyExport | null>(
     null,
   );
@@ -210,16 +211,29 @@ export function AdminPage() {
   }
 
   async function hostSearch() {
-    if (!party || !query.trim()) return;
+    if (!party) return;
+    const trimmed = query.trim();
+    if (trimmed.length < 3) {
+      setError("Enter at least 3 characters to search.");
+      return;
+    }
+    if (hostSearching) return;
+    setHostSearching(true);
     setError(null);
     setNotice(null);
-    const data = await api<SearchResult>(
-      `/host/parties/${party.id}/search?q=${encodeURIComponent(query)}`,
-    );
-    setResults(data);
-    setShowSearchResults(true);
-    setSelectedArtist(null);
-    setArtistFilter(null);
+    try {
+      const data = await api<SearchResult>(
+        `/host/parties/${party.id}/search?q=${encodeURIComponent(trimmed)}`,
+      );
+      setResults(data);
+      setShowSearchResults(true);
+      setSelectedArtist(null);
+      setArtistFilter(null);
+    } catch (e) {
+      setError(formatApiError(e));
+    } finally {
+      setHostSearching(false);
+    }
   }
 
   async function hostArtistFilter(
@@ -530,7 +544,12 @@ export function AdminPage() {
                 placeholder="Search to add"
                 onKeyDown={(e) => e.key === "Enter" && void hostSearch()}
               />
-              <button onClick={() => void hostSearch()}>Search</button>
+              <button
+                onClick={() => void hostSearch()}
+                disabled={hostSearching || query.trim().length < 3}
+              >
+                {hostSearching ? "Searching…" : "Search"}
+              </button>
             </div>
             {showSearchResults && results && (
               <SearchNav

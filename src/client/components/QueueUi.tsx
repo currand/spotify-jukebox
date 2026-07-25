@@ -158,8 +158,8 @@ export function formatApiError(error: unknown): string {
   if (msg.includes("Display name required")) {
     return "Enter your name before adding songs.";
   }
-  if (msg.includes("Rate limited")) {
-    return "Slow down — you've hit the add limit for now.";
+  if (msg.includes("Rate limited") || msg.includes("Search rate limited")) {
+    return "Slow down — try again in a moment.";
   }
   if (msg.includes("already queued in Spotify") || msg.includes("NEXT_LOCKED")) {
     return "That song is already queued in Spotify.";
