@@ -94,6 +94,13 @@ export function getCachedTrackMetadata(uriOrId: string): TrackInfo | null {
   return null;
 }
 
+/** Store track metadata from any Spotify response (playlist import, search, etc.). */
+export function cacheSpotifyTracksMetadata(tracks: SpotifyTrack[]): void {
+  for (const track of tracks) {
+    mapSpotifyTrackToInfo(track);
+  }
+}
+
 function checkPartySearchLimit(
   partyId: string,
   limit: { count: number; windowMs: number },

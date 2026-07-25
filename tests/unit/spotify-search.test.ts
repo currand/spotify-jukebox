@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  cacheSpotifyTracksMetadata,
   clearSpotifySearchCacheForTests,
   getCachedTrackMetadata,
   getPartyArtistTopTracks,
@@ -137,6 +138,15 @@ describe("searchPartyCatalog", () => {
     const cached = getCachedTrackMetadata("spotify:track:t1");
     expect(cached?.name).toBe("Dancing Queen");
     expect(cached?.albumArtUrl).toBe("https://i.scdn.co/image/t1");
+  });
+
+  test("cacheSpotifyTracksMetadata stores playlist import tracks", () => {
+    clearSpotifySearchCacheForTests();
+    cacheSpotifyTracksMetadata([mockTrack("seed-1", "Seed Song", "Band")]);
+
+    const cached = getCachedTrackMetadata("spotify:track:seed-1");
+    expect(cached?.name).toBe("Seed Song");
+    expect(cached?.artistName).toBe("Band");
   });
 });
 

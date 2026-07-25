@@ -32,6 +32,7 @@ import {
 } from "../services/spotify";
 import { getSyncState, requestPartySync } from "../services/sync";
 import {
+  cacheSpotifyTracksMetadata,
   getPartyArtistTopTracks,
   normalizeRateLimits,
   searchPartyCatalog,
@@ -261,6 +262,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
         }
       } else if (seedInput) {
         const tracks = await spotify.getPlaylistTracks(playlistId);
+        cacheSpotifyTracksMetadata(tracks);
         for (const track of tracks) {
           try {
             await addTrackToParty(db, partyId, trackFromSpotify(track), null, true);
