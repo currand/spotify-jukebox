@@ -1,6 +1,9 @@
 services:
   jukebox:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${JUKEBOX_IMAGE:-jukebox:local}
     restart: unless-stopped
     ports:
       - "${JUKEBOX_PORT:-3000}:3000"

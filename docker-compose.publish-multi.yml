@@ -1,0 +1,15 @@
+# Multi-arch publish overlay — use with `build --push` only.
+#
+#   bun run docker:publish
+#
+# Multi-platform images cannot be loaded into the local Docker engine;
+# they must be pushed to a registry.
+
+services:
+  jukebox:
+    build:
+      platforms:
+        - linux/amd64
+        - linux/arm64
+      tags:
+        - ${JUKEBOX_IMAGE:?Set JUKEBOX_IMAGE in .env.docker}

@@ -1,0 +1,18 @@
+# Registry build overlay — tags image from JUKEBOX_IMAGE in .env.docker
+#
+# Local build (single platform, then push manually):
+#   docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.publish.yml build
+#   docker push $(grep '^JUKEBOX_IMAGE=' .env.docker | cut -d= -f2-)
+#
+# Or: bun run docker:build:registry && bun run docker:push
+#
+# Multi-arch build+push (requires buildx, pushes directly — cannot load locally):
+#   bun run docker:publish
+
+services:
+  jukebox:
+    build:
+      platforms:
+        - ${JUKEBOX_PLATFORM:-linux/amd64}
+      tags:
+        - ${JUKEBOX_IMAGE:?Set JUKEBOX_IMAGE in .env.docker}

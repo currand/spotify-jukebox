@@ -103,6 +103,28 @@ bun run docker:up
 
 Jukebox listens on **`http://localhost:3000`** (override host port with `JUKEBOX_PORT=8080 bun run docker:up`).
 
+**Private registry** (optional — for build/push or pulling on a server):
+
+```bash
+cp .env.docker.example .env.docker
+# Set JUKEBOX_IMAGE=your-registry/jukebox:latest
+# Optional: JUKEBOX_PLATFORM=linux/arm64 (default linux/amd64)
+
+docker login your-registry:5555
+
+# Single platform: build locally, then push
+bun run docker:build:registry
+bun run docker:push
+
+# Or multi-arch build + push in one step (requires buildx)
+bun run docker:publish
+
+# Run the published image
+bun run docker:up:registry
+```
+
+**Important:** `docker-compose.publish-multi.yml` is multi-arch and must use `build --push` — a plain `build` will fail because Docker cannot load multi-platform images locally. Use `docker-compose.publish.yml` for single-platform `build`.
+
 **With Cloudflare Tunnel** (optional overlay — tunnel only, no host port):
 
 ```bash
@@ -110,7 +132,7 @@ cp .env.cloudflared.example .env.cloudflared
 # Add TUNNEL_TOKEN from Cloudflare Zero Trust → Tunnels
 
 bun run docker:up:cloudflare
-# Or: docker compose -f docker-compose.yml -f docker-compose.cloudflare.yml up --build -d
+# Or: docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.cloudflare.yml up -d
 ```
 
 Configure the tunnel public hostname → `http://jukebox:3000` (Docker service name).
@@ -137,10 +159,11 @@ docker compose -f docker-compose.yml -f docker-compose.cloudflare.yml logs -f
 |---|---|
 | `bun run dev` | `.env.development`, then `.env.local` |
 | `bun run start` | `.env.production`, then `.env.local` |
-| `bun run docker:up` | `jukebox` → `.env.production` |
-| `bun run docker:up:cloudflare` | `jukebox` → `.env.production`; `cloudflared` → `.env.cloudflared` |
+| `bun run docker:up` | `jukebox` container ← `.env.production`; local image `jukebox:local` |
+| `bun run docker:up:registry` | compose ← `.env.docker`; container ← `.env.production` |
+| `bun run docker:up:cloudflare` | above + `cloudflared` ← `.env.cloudflared` |
 
-All secret env files are gitignored. Templates: `.env.development.example`, `.env.production.example`, `.env.cloudflared.example`. Overview: `.env.example`.
+All secret env files are gitignored. Templates: `.env.development.example`, `.env.production.example`, `.env.cloudflared.example`, `.env.docker.example`. Overview: `.env.example`.
 
 ### Variable reference
 
@@ -155,7 +178,8 @@ All secret env files are gitignored. Templates: `.env.development.example`, `.en
 | `HOST_SETUP_TOKEN` | optional | required | Prod: enter in Admin before Connect Spotify |
 | `SPOTIFY_MARKET` | optional | optional | Default `US` |
 | `TUNNEL_TOKEN` | — | `.env.cloudflared` only | Only with `docker-compose.cloudflare.yml` |
-| `JUKEBOX_PORT` | — | optional | Host port for default Docker compose (default `3000`) |
+| `JUKEBOX_IMAGE` | — | `.env.docker` only | Compose interpolation; default `jukebox:local` |
+| `JUKEBOX_PORT` | — | `.env.docker` or shell | Host port for default Docker compose (default `3000`) |
 | `DATABASE_PATH` | optional | optional | Defaults shown in examples |
 | `PORT` | optional | optional | Default `3000` |
 
