@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  artistsToPrefetch,
   cacheSpotifyTracksMetadata,
   clearSpotifySearchCacheForTests,
   getCachedTrackMetadata,
+  getArtistTracksCacheEntryForTests,
   getPartyArtistTracks,
   normalizeRateLimits,
   prefetchArtistCatalogsForTests,
@@ -36,13 +38,9 @@ describe("searchPartyCatalog", () => {
     clearSpotifySearchCacheForTests();
     let calls = 0;
     const spotify = {
-      searchTracks: async () => {
+      searchCatalog: async () => {
         calls += 1;
-        return [];
-      },
-      searchArtists: async () => {
-        calls += 1;
-        return [];
+        return { tracks: [], artists: [] };
       },
       searchArtistTracks: async () => [],
     };
@@ -68,20 +66,16 @@ describe("searchPartyCatalog", () => {
       null,
       DEFAULT_RATE_LIMITS,
     );
-    expect(calls).toBe(2);
+    expect(calls).toBe(1);
   });
 
   test("rejects short queries without Spotify calls", async () => {
     clearSpotifySearchCacheForTests();
     let calls = 0;
     const spotify = {
-      searchTracks: async () => {
+      searchCatalog: async () => {
         calls += 1;
-        return [];
-      },
-      searchArtists: async () => {
-        calls += 1;
-        return [];
+        return { tracks: [], artists: [] };
       },
       searchArtistTracks: async () => [],
     };
@@ -101,8 +95,7 @@ describe("searchPartyCatalog", () => {
   test("throws when party search budget is exceeded", async () => {
     clearSpotifySearchCacheForTests();
     const spotify = {
-      searchTracks: async () => [],
-      searchArtists: async () => [],
+      searchCatalog: async () => ({ tracks: [], artists: [] }),
       searchArtistTracks: async () => [],
     };
     const db = { query: () => ({ get: () => null }), run: () => {} } as never;
@@ -120,8 +113,10 @@ describe("searchPartyCatalog", () => {
   test("caches track metadata including album art from search hits", async () => {
     clearSpotifySearchCacheForTests();
     const spotify = {
-      searchTracks: async () => [mockTrack("t1", "Dancing Queen")],
-      searchArtists: async () => [],
+      searchCatalog: async () => ({
+        tracks: [mockTrack("t1", "Dancing Queen")],
+        artists: [],
+      }),
       searchArtistTracks: async () => [],
     };
     const db = { query: () => ({ get: () => null }), run: () => {} } as never;
@@ -150,6 +145,80 @@ describe("searchPartyCatalog", () => {
   });
 });
 
+describe("artistsToPrefetch", () => {
+  test("only prefetches artists credited on catalog track hits", () => {
+    const tracks = [
+      mockTrack("1", "Even Flow", "Pearl Jam", "pj"),
+      mockTrack("2", "Alive", "Pearl Jam", "pj"),
+    ];
+    const artists = [
+      { id: "pj", name: "Pearl Jam" },
+      { id: "beatles", name: "The Beatles" },
+      { id: "evan", name: "Evanescence" },
+    ];
+
+    expect(artistsToPrefetch(artists, tracks)).toEqual([
+      { id: "pj", name: "Pearl Jam", trackHits: 2 },
+    ]);
+  });
+
+  test("prioritizes artists with more catalog track hits", () => {
+    const tracks = [
+      mockTrack("1", "A", "ABBA", "abba"),
+      mockTrack("2", "B", "ABBA", "abba"),
+      mockTrack("3", "C", "ABBA", "abba"),
+      mockTrack("4", "D", "Cher", "cher"),
+    ];
+    const artists = [
+      { id: "abba", name: "ABBA" },
+      { id: "cher", name: "Cher" },
+    ];
+
+    expect(artistsToPrefetch(artists, tracks).map((artist) => artist.id)).toEqual([
+      "abba",
+      "cher",
+    ]);
+  });
+});
+
+describe("catalog artist seeding", () => {
+  test("seeds artist cache from catalog track hits before prefetch", async () => {
+    clearSpotifySearchCacheForTests();
+    const beatlesTracks = [
+      mockTrack("1", "Help!", "The Beatles", "beatles"),
+      mockTrack("2", "Yesterday", "The Beatles", "beatles"),
+      mockTrack("3", "Come Together", "The Beatles", "beatles"),
+    ];
+    const spotify = {
+      searchCatalog: async () => ({
+        tracks: beatlesTracks,
+        artists: [{ id: "beatles", name: "The Beatles", imageUrl: null }],
+      }),
+      searchArtistTracks: async () => {
+        throw new Error("prefetch should not block seeded response");
+      },
+    };
+    const db = { query: () => ({ get: () => null }), run: () => {} } as never;
+
+    await searchPartyCatalog(
+      spotify as never,
+      db,
+      "party-1",
+      "beatles",
+      null,
+      DEFAULT_RATE_LIMITS,
+    );
+
+    const entry = getArtistTracksCacheEntryForTests("party-1", "beatles");
+    expect(entry?.complete).toBe(false);
+    expect(entry?.all.map((track) => track.name)).toEqual([
+      "Help!",
+      "Yesterday",
+      "Come Together",
+    ]);
+  });
+});
+
 describe("artist catalog prefetch", () => {
   test("prefetch warms artist tracks cache for later guest requests", async () => {
     clearSpotifySearchCacheForTests();
@@ -161,9 +230,12 @@ describe("artist catalog prefetch", () => {
       },
     };
 
-    await prefetchArtistCatalogsForTests(spotify as never, "party-1", [
-      { id: "artist-1", name: "ABBA" },
-    ]);
+    await prefetchArtistCatalogsForTests(
+      spotify as never,
+      "party-1",
+      [{ id: "artist-1", name: "ABBA" }],
+      [mockTrack("warm", "Warm Up", "ABBA", "artist-1")],
+    );
 
     expect(searchCalls).toBe(1);
 

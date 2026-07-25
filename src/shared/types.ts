@@ -189,7 +189,7 @@ export interface SpotifyTrack {
   uri: string;
   id: string;
   name: string;
-  artists: { name: string }[];
+  artists: { id?: string; name: string }[];
   album: { images: { url: string }[] };
 }
 

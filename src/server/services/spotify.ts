@@ -18,6 +18,15 @@ export interface SpotifyClient {
   getAccessToken(): Promise<string | null>;
   getPlayerSnapshot(): Promise<PlayerSnapshot>;
   searchTracks(query: string, limit?: number): Promise<SpotifyTrack[]>;
+  /** Single /search call returning both tracks and artists (type=track,artist). */
+  searchCatalog(
+    query: string,
+    trackLimit?: number,
+    artistLimit?: number,
+  ): Promise<{
+    tracks: SpotifyTrack[];
+    artists: { id: string; name: string; imageUrl: string | null }[];
+  }>;
   searchArtists(query: string, limit?: number): Promise<
     { id: string; name: string; imageUrl: string | null }[]
   >;
@@ -25,6 +34,7 @@ export interface SpotifyClient {
   searchArtistTracks(
     artistId: string,
     artistName?: string,
+    options?: { limit?: number; offset?: number },
   ): Promise<
     {
       uri: string;
@@ -56,7 +66,7 @@ function mapTrack(raw: {
   uri: string;
   id: string;
   name: string;
-  artists: { name: string }[];
+  artists: { id?: string; name: string }[];
   album: { images: { url: string }[] };
 }): SpotifyTrack {
   return {
@@ -391,6 +401,30 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
       return data.tracks.items.map(mapTrack);
     },
 
+    async searchCatalog(query, trackLimit = 10, artistLimit = 5) {
+      const limit = Math.min(10, Math.max(trackLimit, artistLimit));
+      const data = await api<{
+        tracks: { items: SpotifyTrack[] };
+        artists: {
+          items: {
+            id: string;
+            name: string;
+            images: { url: string }[];
+          }[];
+        };
+      }>(
+        `/search?q=${encodeURIComponent(query)}&type=track,artist&limit=${limit}`,
+      );
+      return {
+        tracks: (data.tracks?.items ?? []).slice(0, trackLimit).map(mapTrack),
+        artists: (data.artists?.items ?? []).slice(0, artistLimit).map((a) => ({
+          id: a.id,
+          name: a.name,
+          imageUrl: a.images[0]?.url ?? null,
+        })),
+      };
+    },
+
     async searchArtists(query, limit = 5) {
       const data = await api<{
         artists: {
@@ -408,7 +442,9 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
       }));
     },
 
-    async searchArtistTracks(artistId, artistName) {
+    async searchArtistTracks(artistId, artistName, options) {
+      const limit = Math.min(10, Math.max(1, options?.limit ?? 10));
+      const offset = Math.max(0, options?.offset ?? 0);
       let name = artistName?.trim();
       if (!name) {
         const artist = await api<{ name: string }>(
@@ -428,7 +464,7 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
           }[];
         };
       }>(
-        `/search?q=${encodeURIComponent(`artist:${name}`)}&type=track&limit=10`,
+        `/search?q=${encodeURIComponent(`artist:${name}`)}&type=track&limit=${limit}&offset=${offset}`,
       );
       return data.tracks?.items ?? [];
     },

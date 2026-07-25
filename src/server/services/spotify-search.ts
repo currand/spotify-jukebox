@@ -20,8 +20,51 @@ export const SEARCH_CACHE_TTL_MS = 30 * 60 * 1000;
 export const ARTIST_TRACKS_CACHE_TTL_MS = 60 * 60 * 1000;
 /** Track metadata (name, artist, album art) — stable and safe to reuse widely. */
 export const TRACK_METADATA_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-/** Prefetch artist track search for the first N artists on each fresh catalog search. */
-export const ARTIST_PREFETCH_COUNT = 3;
+/** Max catalog queries retained per party — hot queries stay, long tail evicted. */
+export const SEARCH_CACHE_MAX_PER_PARTY = 60;
+/** Max artist drill-down catalogs per party — popular artists stay warm. */
+export const ARTIST_TRACKS_CACHE_MAX_PER_PARTY = 48;
+/** Max track metadata entries — album art/titles for recently touched tracks. */
+export const TRACK_METADATA_CACHE_MAX_ENTRIES = 3000;
+/** Background artist catalog fetches after a fresh catalog search. */
+export const ARTIST_PREFETCH_COUNT = 5;
+/** Extra search pages for the dominant artist on a catalog hit (10 tracks/page). */
+export const ARTIST_PREFETCH_DEEP_PAGES = 3;
+
+export interface PrefetchArtistTarget {
+  id: string;
+  name: string;
+  trackHits: number;
+}
+
+export function artistsToPrefetch(
+  artists: { id: string; name: string }[],
+  tracks: { artists: { id?: string }[] }[],
+  limit = ARTIST_PREFETCH_COUNT,
+): PrefetchArtistTarget[] {
+  const trackCounts = new Map<string, { name: string; count: number }>();
+  for (const track of tracks) {
+    for (const artist of track.artists) {
+      if (!artist.id) continue;
+      const current = trackCounts.get(artist.id);
+      if (current) {
+        current.count += 1;
+      } else {
+        trackCounts.set(artist.id, {
+          name: artist.name,
+          count: 1,
+        });
+      }
+    }
+  }
+
+  const artistTabIds = new Set(artists.map((artist) => artist.id));
+  return [...trackCounts.entries()]
+    .filter(([id]) => artistTabIds.has(id))
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, limit)
+    .map(([id, { name, count }]) => ({ id, name, trackHits: count }));
+}
 const CACHE_SAMPLE_LIMIT = 12;
 
 export type SearchCaller = "guest" | "host";
@@ -29,15 +72,30 @@ export type ArtistTrackFilter = "all" | "credited";
 
 interface ArtistTracksCacheEntry {
   expiresAt: number;
+  lastAccessedAt: number;
+  /** False when populated only from catalog search seeds — still served to guests. */
+  complete: boolean;
   all: TrackInfo[];
   credited: TrackInfo[];
 }
 
-const searchCache = new Map<string, { expiresAt: number; data: SearchResult }>();
+interface SearchCacheEntry {
+  expiresAt: number;
+  lastAccessedAt: number;
+  data: SearchResult;
+}
+
+interface TrackMetadataCacheEntry {
+  expiresAt: number;
+  lastAccessedAt: number;
+  track: TrackInfo;
+}
+
+const searchCache = new Map<string, SearchCacheEntry>();
 const searchInFlight = new Map<string, Promise<SearchResult>>();
 const artistTracksCache = new Map<string, ArtistTracksCacheEntry>();
 const artistTracksInFlight = new Map<string, Promise<ArtistTracksCacheEntry>>();
-const trackMetadataCache = new Map<string, { expiresAt: number; track: TrackInfo }>();
+const trackMetadataCache = new Map<string, TrackMetadataCacheEntry>();
 const partySearchBuckets = new Map<string, { count: number; resetAt: number }>();
 
 export class SpotifySearchRateLimitedError extends Error {
@@ -72,6 +130,141 @@ function artistTracksCacheKey(partyId: string, artistId: string): string {
   return `${partyId}:artist-tracks:${artistId}`;
 }
 
+function touchEntry(entry: { lastAccessedAt: number }): void {
+  entry.lastAccessedAt = Date.now();
+}
+
+function evictLruByPrefix(
+  map: Map<string, { lastAccessedAt: number }>,
+  prefix: string,
+  maxEntries: number,
+): void {
+  const live: { key: string; lastAccessedAt: number }[] = [];
+  for (const [key, entry] of map.entries()) {
+    if (key.startsWith(prefix)) {
+      live.push({ key, lastAccessedAt: entry.lastAccessedAt });
+    }
+  }
+  if (live.length <= maxEntries) return;
+  live.sort((a, b) => a.lastAccessedAt - b.lastAccessedAt);
+  for (let i = 0; i < live.length - maxEntries; i += 1) {
+    map.delete(live[i]!.key);
+  }
+}
+
+function evictTrackMetadataCache(): void {
+  if (trackMetadataCache.size <= TRACK_METADATA_CACHE_MAX_ENTRIES) return;
+
+  const canonical = new Map<string, TrackMetadataCacheEntry>();
+  for (const [key, entry] of trackMetadataCache.entries()) {
+    if (key.startsWith("id:")) continue;
+    canonical.set(key, entry);
+  }
+
+  const sorted = [...canonical.entries()].sort(
+    (a, b) => a[1].lastAccessedAt - b[1].lastAccessedAt,
+  );
+  const removeCount = canonical.size - TRACK_METADATA_CACHE_MAX_ENTRIES;
+  for (let i = 0; i < removeCount; i += 1) {
+    const [uri, entry] = sorted[i]!;
+    trackMetadataCache.delete(uri);
+    if (entry.track.id) {
+      trackMetadataCache.delete(`id:${entry.track.id}`);
+    }
+  }
+}
+
+function mergeTrackLists(primary: TrackInfo[], secondary: TrackInfo[]): TrackInfo[] {
+  const seen = new Set(primary.map((track) => track.id).filter(Boolean));
+  const merged = [...primary];
+  for (const track of secondary) {
+    if (track.id && !seen.has(track.id)) {
+      seen.add(track.id);
+      merged.push(track);
+    }
+  }
+  return merged;
+}
+
+function buildArtistTracksEntry(
+  artistId: string,
+  rawTracks: SpotifyTrack[],
+  existing?: ArtistTracksCacheEntry,
+): Pick<ArtistTracksCacheEntry, "all" | "credited"> {
+  const fetchedAll = rawTracks.map((track) => mapSpotifyTrackToInfo(track));
+  const all = mergeTrackLists(fetchedAll, existing?.all ?? []);
+  const credited = pickArtistSearchTracks(
+    rawTracks.map((track) => ({
+      id: track.id,
+      artists: track.artists.map((artist) => ({
+        id: artist.id ?? "",
+      })),
+    })),
+    artistId,
+    all.length,
+  ).map((track) => {
+    const match = all.find((entry) => entry.id === track.id);
+    if (match) return match;
+    const raw = rawTracks.find((entry) => entry.id === track.id);
+    return raw ? mapSpotifyTrackToInfo(raw) : null;
+  }).filter((track): track is TrackInfo => Boolean(track));
+
+  const mergedCredited = mergeTrackLists(credited, existing?.credited ?? []);
+  return { all, credited: mergedCredited };
+}
+
+function mergeArtistTracksCache(
+  partyId: string,
+  artistId: string,
+  seededTracks: TrackInfo[],
+  complete: boolean,
+): ArtistTracksCacheEntry {
+  const key = artistTracksCacheKey(partyId, artistId);
+  const now = Date.now();
+  const existing = artistTracksCache.get(key);
+  const seededAll = mergeTrackLists(seededTracks, existing?.all ?? []);
+  const seededCredited = seededAll.filter((track) =>
+    seededTracks.some((seed) => seed.id === track.id),
+  );
+  const entry: ArtistTracksCacheEntry = {
+    expiresAt: now + ARTIST_TRACKS_CACHE_TTL_MS,
+    lastAccessedAt: now,
+    complete: complete || Boolean(existing?.complete),
+    all: seededAll,
+    credited: mergeTrackLists(seededCredited, existing?.credited ?? []),
+  };
+  artistTracksCache.set(key, entry);
+  evictLruByPrefix(
+    artistTracksCache,
+    `${partyId}:artist-tracks:`,
+    ARTIST_TRACKS_CACHE_MAX_PER_PARTY,
+  );
+  return entry;
+}
+
+/** Seed artist catalogs from catalog track hits — no extra Spotify calls. */
+export function seedArtistTracksFromCatalog(
+  partyId: string,
+  tracks: SpotifyTrack[],
+): void {
+  const byArtist = new Map<string, TrackInfo[]>();
+  for (const track of tracks) {
+    const info = mapSpotifyTrackToInfo(track);
+    for (const artist of track.artists) {
+      if (!artist.id) continue;
+      const bucket = byArtist.get(artist.id) ?? [];
+      if (!bucket.some((entry) => entry.id === info.id)) {
+        bucket.push(info);
+      }
+      byArtist.set(artist.id, bucket);
+    }
+  }
+
+  for (const [artistId, seededTracks] of byArtist.entries()) {
+    mergeArtistTracksCache(partyId, artistId, seededTracks, false);
+  }
+}
+
 function mapSpotifyTrackToInfo(track: SpotifyTrack): TrackInfo {
   const info = trackFromSpotify(track);
   const mapped: TrackInfo = {
@@ -86,20 +279,32 @@ function mapSpotifyTrackToInfo(track: SpotifyTrack): TrackInfo {
 }
 
 function cacheTrackMetadata(track: TrackInfo): void {
-  const expiresAt = Date.now() + TRACK_METADATA_CACHE_TTL_MS;
-  trackMetadataCache.set(track.uri, { expiresAt, track });
+  const now = Date.now();
+  const expiresAt = now + TRACK_METADATA_CACHE_TTL_MS;
+  const existing = trackMetadataCache.get(track.uri);
+  const entry: TrackMetadataCacheEntry = {
+    expiresAt,
+    lastAccessedAt: now,
+    track,
+  };
+  trackMetadataCache.set(track.uri, entry);
   if (track.id) {
-    trackMetadataCache.set(`id:${track.id}`, { expiresAt, track });
+    trackMetadataCache.set(`id:${track.id}`, entry);
+  } else if (existing?.track.id) {
+    trackMetadataCache.delete(`id:${existing.track.id}`);
   }
+  evictTrackMetadataCache();
 }
 
 export function getCachedTrackMetadata(uriOrId: string): TrackInfo | null {
   const direct = trackMetadataCache.get(uriOrId);
   if (direct && direct.expiresAt > Date.now()) {
+    touchEntry(direct);
     return direct.track;
   }
   const byId = trackMetadataCache.get(`id:${uriOrId.replace(/^spotify:track:/, "")}`);
   if (byId && byId.expiresAt > Date.now()) {
+    touchEntry(byId);
     return byId.track;
   }
   return null;
@@ -187,7 +392,7 @@ export function getSearchCacheSnapshot(
       samples: artistSamples,
     },
     trackMetadata: {
-      count: countLiveEntries(trackMetadataCache),
+      count: [...trackMetadataCache.keys()].filter((key) => !key.startsWith("id:")).length,
     },
   };
 }
@@ -240,13 +445,36 @@ function recordSearch(db: Db, guestId: string | null): void {
   }
 }
 
-function isArtistTracksCached(partyId: string, artistId: string): boolean {
+function isArtistTracksComplete(partyId: string, artistId: string): boolean {
   const cached = artistTracksCache.get(artistTracksCacheKey(partyId, artistId));
-  return Boolean(cached && cached.expiresAt > Date.now());
+  return Boolean(cached && cached.expiresAt > Date.now() && cached.complete);
 }
 
-function artistTracksQueryLabel(artistName: string, filter: ArtistTrackFilter): string {
-  return `artist:${artistName} (${filter})`;
+async function fetchArtistTrackPages(
+  spotify: SpotifyClient,
+  artistId: string,
+  artistName: string,
+  pages: number,
+): Promise<SpotifyTrack[]> {
+  const raw: SpotifyTrack[] = [];
+  for (let page = 0; page < pages; page += 1) {
+    const batch = await spotify.searchArtistTracks(artistId, artistName, {
+      limit: 10,
+      offset: page * 10,
+    });
+    if (batch.length === 0) break;
+    for (const track of batch) {
+      raw.push({
+        uri: track.uri,
+        id: track.id,
+        name: track.name,
+        artists: track.artists,
+        album: track.album,
+      });
+    }
+    if (batch.length < 10) break;
+  }
+  return raw;
 }
 
 async function loadArtistTracks(
@@ -254,11 +482,13 @@ async function loadArtistTracks(
   partyId: string,
   artistId: string,
   artistName: string,
+  options?: { pages?: number },
 ): Promise<ArtistTracksCacheEntry> {
   const key = artistTracksCacheKey(partyId, artistId);
-  const cached = artistTracksCache.get(key);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached;
+  const existing = artistTracksCache.get(key);
+  if (existing && existing.expiresAt > Date.now() && existing.complete) {
+    touchEntry(existing);
+    return existing;
   }
 
   const inFlight = artistTracksInFlight.get(key);
@@ -266,32 +496,24 @@ async function loadArtistTracks(
     return inFlight;
   }
 
+  const pages = options?.pages ?? 1;
   const run = (async () => {
-    const raw = await spotify.searchArtistTracks(artistId, artistName);
-    const all = raw.map((track) =>
-      mapSpotifyTrackToInfo({
-        uri: track.uri,
-        id: track.id,
-        name: track.name,
-        artists: track.artists,
-        album: track.album,
-      }),
-    );
-    const credited = pickArtistSearchTracks(raw, artistId).map((track) =>
-      mapSpotifyTrackToInfo({
-        uri: track.uri,
-        id: track.id,
-        name: track.name,
-        artists: track.artists,
-        album: track.album,
-      }),
-    );
+    const raw = await fetchArtistTrackPages(spotify, artistId, artistName, pages);
+    const built = buildArtistTracksEntry(artistId, raw, existing);
+    const now = Date.now();
     const entry: ArtistTracksCacheEntry = {
-      expiresAt: Date.now() + ARTIST_TRACKS_CACHE_TTL_MS,
-      all,
-      credited,
+      expiresAt: now + ARTIST_TRACKS_CACHE_TTL_MS,
+      lastAccessedAt: now,
+      complete: true,
+      all: built.all,
+      credited: built.credited,
     };
     artistTracksCache.set(key, entry);
+    evictLruByPrefix(
+      artistTracksCache,
+      `${partyId}:artist-tracks:`,
+      ARTIST_TRACKS_CACHE_MAX_PER_PARTY,
+    );
     return entry;
   })();
 
@@ -310,14 +532,16 @@ function prefetchArtistCatalogs(
   spotify: SpotifyClient,
   partyId: string,
   artists: { id: string; name: string }[],
+  tracks: SpotifyTrack[],
 ): void {
-  const targets = artists.slice(0, ARTIST_PREFETCH_COUNT);
+  const targets = artistsToPrefetch(artists, tracks);
   if (targets.length === 0) return;
 
   void (async () => {
-    for (const artist of targets) {
-      try {
-        if (!isArtistTracksCached(partyId, artist.id)) {
+    await Promise.all(
+      targets.map(async (artist, index) => {
+        try {
+          if (isArtistTracksComplete(partyId, artist.id)) return;
           recordSearchActivity({
             partyId,
             query: artistTracksQueryLabel(artist.name, "all"),
@@ -325,13 +549,32 @@ function prefetchArtistCatalogs(
             cacheHit: false,
             kind: "artist-tracks",
           });
-          await loadArtistTracks(spotify, partyId, artist.id, artist.name);
+          const pages =
+            index === 0 && artist.trackHits >= 3 ? ARTIST_PREFETCH_DEEP_PAGES : 1;
+          await loadArtistTracks(spotify, partyId, artist.id, artist.name, { pages });
+        } catch {
+          /* prefetch is best-effort */
         }
-      } catch {
-        /* prefetch is best-effort */
-      }
-    }
+      }),
+    );
   })();
+}
+
+function artistTracksQueryLabel(artistName: string, filter: ArtistTrackFilter): string {
+  return `artist:${artistName} (${filter})`;
+}
+
+function scheduleArtistCatalogRefresh(
+  spotify: SpotifyClient,
+  partyId: string,
+  artistId: string,
+  artistName: string,
+): void {
+  void loadArtistTracks(spotify, partyId, artistId, artistName, {
+    pages: ARTIST_PREFETCH_DEEP_PAGES,
+  }).catch(() => {
+    /* background refresh is best-effort */
+  });
 }
 
 function logCatalogSearch(
@@ -369,6 +612,7 @@ export async function searchPartyCatalog(
   const key = searchCacheKey(partyId, trimmed);
   const cached = searchCache.get(key);
   if (cached && cached.expiresAt > Date.now()) {
+    touchEntry(cached);
     logCatalogSearch(partyId, trimmed, caller, true);
     return cached.data;
   }
@@ -380,18 +624,22 @@ export async function searchPartyCatalog(
 
   const run = (async () => {
     assertSearchAllowed(db, partyId, guestId, limits);
-    const [tracks, artists] = await Promise.all([
-      spotify.searchTracks(trimmed, 10),
-      spotify.searchArtists(trimmed, 5),
-    ]);
+    const { tracks, artists } = await spotify.searchCatalog(trimmed, 10, 5);
     recordSearch(db, guestId);
     logCatalogSearch(partyId, trimmed, caller, false);
     const data: SearchResult = {
       tracks: tracks.map(mapSpotifyTrackToInfo),
       artists,
     };
-    searchCache.set(key, { expiresAt: Date.now() + SEARCH_CACHE_TTL_MS, data });
-    prefetchArtistCatalogs(spotify, partyId, artists);
+    const now = Date.now();
+    searchCache.set(key, {
+      expiresAt: now + SEARCH_CACHE_TTL_MS,
+      lastAccessedAt: now,
+      data,
+    });
+    evictLruByPrefix(searchCache, `${partyId}:`, SEARCH_CACHE_MAX_PER_PARTY);
+    seedArtistTracksFromCatalog(partyId, tracks);
+    prefetchArtistCatalogs(spotify, partyId, artists, tracks);
     return data;
   })();
 
@@ -420,6 +668,7 @@ export async function getPartyArtistTracks(
   const key = artistTracksCacheKey(partyId, artistId);
   const cached = artistTracksCache.get(key);
   if (cached && cached.expiresAt > Date.now()) {
+    touchEntry(cached);
     recordSearchActivity({
       partyId,
       query: label,
@@ -427,6 +676,14 @@ export async function getPartyArtistTracks(
       cacheHit: true,
       kind: "artist-tracks",
     });
+    if (!cached.complete) {
+      scheduleArtistCatalogRefresh(
+        spotify,
+        partyId,
+        artistId,
+        artistName ?? "",
+      );
+    }
     return filter === "credited" ? cached.credited : cached.all;
   }
 
@@ -465,12 +722,26 @@ export function clearSpotifySearchCacheForTests(): void {
 }
 
 /** @internal test helper */
+export function getArtistTracksCacheEntryForTests(
+  partyId: string,
+  artistId: string,
+): ArtistTracksCacheEntry | undefined {
+  return artistTracksCache.get(artistTracksCacheKey(partyId, artistId));
+}
+
+/** @internal test helper */
 export async function prefetchArtistCatalogsForTests(
   spotify: SpotifyClient,
   partyId: string,
   artists: { id: string; name: string }[],
+  tracks: { artists: { id?: string }[] }[] = [],
 ): Promise<void> {
-  for (const artist of artists.slice(0, ARTIST_PREFETCH_COUNT)) {
-    await loadArtistTracks(spotify, partyId, artist.id, artist.name);
-  }
+  const targets = artistsToPrefetch(artists, tracks);
+  await Promise.all(
+    targets.map((artist, index) => {
+      const pages =
+        index === 0 && artist.trackHits >= 3 ? ARTIST_PREFETCH_DEEP_PAGES : 1;
+      return loadArtistTracks(spotify, partyId, artist.id, artist.name, { pages });
+    }),
+  );
 }
