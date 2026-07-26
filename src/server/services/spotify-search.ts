@@ -12,6 +12,11 @@ import {
   trackFromSpotify,
   type SpotifyClient,
 } from "./spotify";
+import {
+  getSpotifyRetryAfterMs,
+  isSpotifyRateLimitError,
+} from "./spotify-errors";
+import { isSpotifyRateLimited } from "./sync";
 
 export const MIN_SEARCH_QUERY_LENGTH = 3;
 /** Search query results — guests repeat queries within a party but not for hours. */
@@ -27,7 +32,7 @@ export const ARTIST_TRACKS_CACHE_MAX_PER_PARTY = 48;
 /** Max track metadata entries — album art/titles for recently touched tracks. */
 export const TRACK_METADATA_CACHE_MAX_ENTRIES = 3000;
 /** Background artist catalog fetches after a fresh catalog search. */
-export const ARTIST_PREFETCH_COUNT = 5;
+export const ARTIST_PREFETCH_COUNT = 2;
 /** Extra search pages for the dominant artist on a catalog hit (10 tracks/page). */
 export const ARTIST_PREFETCH_DEEP_PAGES = 3;
 
@@ -539,25 +544,26 @@ function prefetchArtistCatalogs(
   if (targets.length === 0) return;
 
   void (async () => {
-    await Promise.all(
-      targets.map(async (artist, index) => {
-        try {
-          if (isArtistTracksComplete(partyId, artist.id)) return;
-          recordSearchActivity({
-            partyId,
-            query: artistTracksQueryLabel(artist.name, "all"),
-            source: "prefetch",
-            cacheHit: false,
-            kind: "artist-tracks",
-          });
-          const pages =
-            index === 0 && artist.trackHits >= 3 ? ARTIST_PREFETCH_DEEP_PAGES : 1;
-          await loadArtistTracks(spotify, partyId, artist.id, artist.name, { pages });
-        } catch {
-          /* prefetch is best-effort */
-        }
-      }),
-    );
+    if (isSpotifyRateLimited()) return;
+
+    for (const [index, artist] of targets.entries()) {
+      try {
+        if (isSpotifyRateLimited()) return;
+        if (isArtistTracksComplete(partyId, artist.id)) continue;
+        recordSearchActivity({
+          partyId,
+          query: artistTracksQueryLabel(artist.name, "all"),
+          source: "prefetch",
+          cacheHit: false,
+          kind: "artist-tracks",
+        });
+        const pages =
+          index === 0 && artist.trackHits >= 3 ? ARTIST_PREFETCH_DEEP_PAGES : 1;
+        await loadArtistTracks(spotify, partyId, artist.id, artist.name, { pages });
+      } catch {
+        /* prefetch is best-effort */
+      }
+    }
   })();
 }
 
@@ -571,6 +577,8 @@ function scheduleArtistCatalogRefresh(
   artistId: string,
   artistName: string,
 ): void {
+  if (isSpotifyRateLimited()) return;
+
   void loadArtistTracks(spotify, partyId, artistId, artistName, {
     pages: ARTIST_PREFETCH_DEEP_PAGES,
   }).catch(() => {
@@ -625,7 +633,22 @@ export async function searchPartyCatalog(
 
   const run = (async () => {
     assertSearchAllowed(db, partyId, guestId, limits);
-    const { tracks, artists } = await spotify.searchCatalog(trimmed, 10, 5);
+    let tracks: SpotifyTrack[];
+    let artists: { id: string; name: string; imageUrl: string | null }[];
+    try {
+      ({ tracks, artists } = await spotify.searchCatalog(trimmed, 10, 5));
+    } catch (e) {
+      if (isSpotifyRateLimitError(e)) {
+        const stale = searchCache.get(key);
+        if (stale) {
+          touchEntry(stale);
+          logCatalogSearch(partyId, trimmed, caller, true);
+          return stale.data;
+        }
+        throw new SpotifySearchRateLimitedError(getSpotifyRetryAfterMs(e));
+      }
+      throw e;
+    }
     recordSearch(db, guestId);
     logCatalogSearch(partyId, trimmed, caller, false);
     const data: SearchResult = {
@@ -703,13 +726,72 @@ export async function getPartyArtistTracks(
     cacheHit: false,
     kind: "artist-tracks",
   });
-  const entry = await loadArtistTracks(
-    spotify,
-    partyId,
-    artistId,
-    artistName ?? "",
-  );
+  let entry: ArtistTracksCacheEntry;
+  try {
+    entry = await loadArtistTracks(
+      spotify,
+      partyId,
+      artistId,
+      artistName ?? "",
+    );
+  } catch (e) {
+    if (isSpotifyRateLimitError(e)) {
+      const stale = artistTracksCache.get(key);
+      if (stale) {
+        touchEntry(stale);
+        recordSearchActivity({
+          partyId,
+          query: label,
+          source: caller,
+          cacheHit: true,
+          kind: "artist-tracks",
+        });
+        return filter === "credited" ? stale.credited : stale.all;
+      }
+      throw new SpotifySearchRateLimitedError(getSpotifyRetryAfterMs(e));
+    }
+    throw e;
+  }
   return filter === "credited" ? entry.credited : entry.all;
+}
+
+/** @internal test helper */
+export function seedSearchCacheForTests(
+  partyId: string,
+  query: string,
+  data: SearchResult,
+  options?: { expired?: boolean },
+): void {
+  const now = Date.now();
+  searchCache.set(searchCacheKey(partyId, query), {
+    expiresAt:
+      (options?.expired ?? true)
+        ? now - 1000
+        : now + SEARCH_CACHE_TTL_MS,
+    lastAccessedAt: now,
+    data,
+  });
+}
+
+/** @internal test helper */
+export function seedArtistTracksCacheForTests(
+  partyId: string,
+  artistId: string,
+  tracks: TrackInfo[],
+  options?: { expired?: boolean },
+): void {
+  const now = Date.now();
+  const entry: ArtistTracksCacheEntry = {
+    expiresAt:
+      (options?.expired ?? true)
+        ? now - 1000
+        : now + ARTIST_TRACKS_CACHE_TTL_MS,
+    lastAccessedAt: now,
+    complete: true,
+    all: tracks,
+    credited: tracks,
+  };
+  artistTracksCache.set(artistTracksCacheKey(partyId, artistId), entry);
 }
 
 /** @internal test helper */

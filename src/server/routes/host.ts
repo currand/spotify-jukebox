@@ -53,7 +53,7 @@ import {
   type ArtistTrackFilter,
 } from "../services/spotify-search";
 import { addTrackToParty } from "./guest";
-import { clearPartyGuests, countNamedPartyGuests, getPartyGuestAdminViews, resetGuestRateLimits } from "../services/guests";
+import { clearPartyGuests, countNamedPartyGuests, getPartyGuestAdminViews, purgeStalePartyGuests, resetGuestRateLimits } from "../services/guests";
 import { DEFAULT_PARTY_SEARCH_LIMIT, DEFAULT_RATE_LIMITS, type PartyRateLimits } from "@/shared/types";
 import { deleteCookie, getCookie } from "hono/cookie";
 import { SPOTIFY_SCOPES } from "../config";
@@ -445,6 +445,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
       values as (string | number)[],
     );
     if (body.status === "on") {
+      purgeStalePartyGuests(db, id);
       requestPartySync(db, id);
     }
     return c.json({ ok: true });
@@ -748,6 +749,12 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
   authed.delete("/parties/:id/guests", (c) => {
     const partyId = c.req.param("id");
     const removed = clearPartyGuests(db, partyId);
+    return c.json({ ok: true, removed });
+  });
+
+  authed.post("/parties/:id/guests/purge-stale", (c) => {
+    const partyId = c.req.param("id");
+    const removed = purgeStalePartyGuests(db, partyId);
     return c.json({ ok: true, removed });
   });
 

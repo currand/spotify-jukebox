@@ -195,6 +195,14 @@ Config validation enforces:
 bun test
 ```
 
+### Load / endurance testing
+
+Simulated guests should reuse sessions or reset the guest list between runs:
+
+1. **Clear guests before each run** — `DELETE /api/v1/host/parties/:id/guests` (admin auth), or use **Clear all guests** on the admin Guests page.
+2. **Reuse sessions** — persist the `guest_session_{slug}` cookie or dev `sessionToken` from `POST /parties/:slug/join` across runs so the same guest row is reused.
+3. **Stale cleanup** — turning a party **on** purges guests inactive for 24h with no songs added; manual purge: `POST /api/v1/host/parties/:id/guests/purge-stale`.
+
 See [docs/SPEC.md](docs/SPEC.md) for the full specification.
 
 ## Security

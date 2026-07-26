@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { SpotifyApiError } from "../../src/server/services/spotify-errors";
+import { SpotifyApiError, MIN_SPOTIFY_BACKOFF_MS } from "../../src/server/services/spotify-errors";
 import {
   applySpotifyRateLimit,
   getNextSyncDelayMs,
@@ -18,8 +18,20 @@ describe("sync Spotify rate limit backoff", () => {
 
     const sync = getSyncState();
     expect(sync.rateLimitedUntil).not.toBeNull();
-    expect(sync.rateLimitedUntil! - Date.now()).toBeGreaterThan(7000);
+    expect(sync.rateLimitedUntil! - Date.now()).toBeGreaterThanOrEqual(
+      MIN_SPOTIFY_BACKOFF_MS - 100,
+    );
     expect(sync.lastError).toContain("retrying in");
+  });
+
+  test("first 429 enforces minimum backoff even when Spotify Retry-After is 5s", () => {
+    applySpotifyRateLimit(new SpotifyApiError("SPOTIFY_429:{}", 429, 5000));
+
+    const remaining = getSyncState().rateLimitedUntil! - Date.now();
+    expect(remaining).toBeGreaterThanOrEqual(MIN_SPOTIFY_BACKOFF_MS - 100);
+    expect(getNextSyncDelayMs({} as never, { id: "p", sync_generation: 1 })).toBeGreaterThanOrEqual(
+      MIN_SPOTIFY_BACKOFF_MS - 100,
+    );
   });
 
   test("getNextSyncDelayMs waits for backoff instead of polling at 10s", () => {

@@ -270,6 +270,64 @@ export function getPartyGuestAdminViews(
   });
 }
 
+export const STALE_GUEST_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+function deleteGuestsAndRelatedData(db: Db, partyId: string, guestIds: string[]): number {
+  if (guestIds.length === 0) return 0;
+  const placeholders = guestIds.map(() => "?").join(", ");
+
+  db.run(
+    `DELETE FROM votes WHERE guest_id IN (${placeholders})`,
+    guestIds,
+  );
+  db.run(
+    `DELETE FROM vetoes WHERE guest_id IN (${placeholders})`,
+    guestIds,
+  );
+  db.run(
+    `DELETE FROM rate_limit_events WHERE guest_id IN (${placeholders})`,
+    guestIds,
+  );
+  db.run(
+    `UPDATE queue_items SET added_by_guest_id = NULL
+     WHERE party_id = ? AND added_by_guest_id IN (${placeholders})`,
+    [partyId, ...guestIds],
+  );
+  db.run(
+    `DELETE FROM guests WHERE party_id = ? AND id IN (${placeholders})`,
+    [partyId, ...guestIds],
+  );
+  return guestIds.length;
+}
+
+/** Remove inactive guests with no queue contributions (e.g. stale load-test sessions). */
+export function purgeStalePartyGuests(
+  db: Db,
+  partyId: string,
+  maxAgeMs = STALE_GUEST_MAX_AGE_MS,
+): number {
+  const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
+  const stale = db
+    .query(
+      `SELECT g.id FROM guests g
+       WHERE g.party_id = ?
+         AND COALESCE(g.last_seen_at, g.created_at) < ?
+         AND NOT EXISTS (
+           SELECT 1 FROM queue_items qi
+           WHERE qi.party_id = g.party_id
+             AND qi.added_by_guest_id = g.id
+             AND qi.from_seed = 0
+         )`,
+    )
+    .all(partyId, cutoff) as { id: string }[];
+
+  return deleteGuestsAndRelatedData(
+    db,
+    partyId,
+    stale.map((row) => row.id),
+  );
+}
+
 /** Remove all guests and their votes/vetoes/rate limits; queue songs stay. */
 export function clearPartyGuests(db: Db, partyId: string): number {
   const countRow = db
@@ -278,25 +336,14 @@ export function clearPartyGuests(db: Db, partyId: string): number {
   const count = countRow.count;
   if (count === 0) return 0;
 
-  db.run(
-    `DELETE FROM votes WHERE guest_id IN (SELECT id FROM guests WHERE party_id = ?)`,
-    [partyId],
+  const guestIds = db
+    .query(`SELECT id FROM guests WHERE party_id = ?`)
+    .all(partyId) as { id: string }[];
+  return deleteGuestsAndRelatedData(
+    db,
+    partyId,
+    guestIds.map((row) => row.id),
   );
-  db.run(
-    `DELETE FROM vetoes WHERE guest_id IN (SELECT id FROM guests WHERE party_id = ?)`,
-    [partyId],
-  );
-  db.run(
-    `DELETE FROM rate_limit_events WHERE guest_id IN (SELECT id FROM guests WHERE party_id = ?)`,
-    [partyId],
-  );
-  db.run(
-    `UPDATE queue_items SET added_by_guest_id = NULL
-     WHERE party_id = ? AND added_by_guest_id IS NOT NULL`,
-    [partyId],
-  );
-  db.run(`DELETE FROM guests WHERE party_id = ?`, [partyId]);
-  return count;
 }
 
 /** Remove boost flags from a guest's active queue items and restore their boost allowance. */

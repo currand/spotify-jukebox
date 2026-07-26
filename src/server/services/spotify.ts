@@ -1,6 +1,7 @@
 import type { Config } from "../config";
 import { debugLog } from "../debug";
 import { recordSpotifyApiCall } from "./spotify-metrics";
+import { acquireSpotifyApiBudgetSlot } from "./spotify-api-budget";
 import { decrypt, encrypt } from "../crypto";
 import type { Db } from "../db/schema";
 import type { SpotifyTrack } from "@/shared/types";
@@ -246,6 +247,12 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
     const method = init?.method ?? "GET";
     const started = Date.now();
     debugLog("spotify", "→", method, path);
+
+    await acquireSpotifyApiBudgetSlot({
+      onWait: (waitMs) => {
+        debugLog("spotify", "throttled", { waitMs, path });
+      },
+    });
 
     const token = await refreshTokenIfNeeded();
     if (!token) throw new Error("NOT_CONNECTED");

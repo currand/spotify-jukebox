@@ -134,6 +134,9 @@ export function getSpotifyRetryAfterMs(error: unknown): number {
   return 5000;
 }
 
+/** Minimum backoff — must exceed sync tick interval (10s) so ticks actually skip API calls. */
+export const MIN_SPOTIFY_BACKOFF_MS = 15_000;
+
 /** Combine Spotify Retry-After with exponential backoff on repeated 429s. */
 export function computeRateLimitBackoffMs(
   spotifyRetryAfterMs: number,
@@ -143,7 +146,11 @@ export function computeRateLimitBackoffMs(
     60_000,
     1000 * 2 ** Math.max(0, consecutiveHits - 1),
   );
-  return Math.max(spotifyRetryAfterMs, exponentialMs);
+  return Math.max(
+    MIN_SPOTIFY_BACKOFF_MS,
+    spotifyRetryAfterMs,
+    exponentialMs,
+  );
 }
 
 export function formatSpotifyErrorForUser(error: unknown): string | null {

@@ -22,6 +22,12 @@ export function GuestAdminList({
           </button>
         ) : null}
       </div>
+      {guests.length > 0 ? (
+        <p className="small guest-admin-hint">
+          Load tests create new sessions each run — use Clear all guests before
+          re-running simulations to avoid duplicate entries.
+        </p>
+      ) : null}
       {guests.length === 0 ? (
         <p className="small">No guests yet. Share the join link to get started.</p>
       ) : (

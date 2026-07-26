@@ -9,8 +9,11 @@ import {
   normalizeRateLimits,
   prefetchArtistCatalogsForTests,
   searchPartyCatalog,
+  seedArtistTracksCacheForTests,
+  seedSearchCacheForTests,
   SpotifySearchRateLimitedError,
 } from "../../src/server/services/spotify-search";
+import { SpotifyApiError } from "../../src/server/services/spotify-errors";
 import { DEFAULT_RATE_LIMITS } from "@/shared/types";
 
 const mockTrack = (id: string, name: string, artist = "Artist", artistId = "artist-1") => ({
@@ -142,6 +145,61 @@ describe("searchPartyCatalog", () => {
     const cached = getCachedTrackMetadata("spotify:track:seed-1");
     expect(cached?.name).toBe("Seed Song");
     expect(cached?.artistName).toBe("Band");
+  });
+
+  test("serves expired cache on Spotify 429", async () => {
+    clearSpotifySearchCacheForTests();
+    seedSearchCacheForTests("party-1", "abba", {
+      tracks: [{
+        id: "t1",
+        uri: "spotify:track:t1",
+        name: "Dancing Queen",
+        artistName: "ABBA",
+        albumArtUrl: null,
+      }],
+      artists: [{ id: "abba", name: "ABBA", imageUrl: null }],
+    });
+
+    const spotify = {
+      searchCatalog: async () => {
+        throw new SpotifyApiError("SPOTIFY_429:{}", 429, 5000);
+      },
+      searchArtistTracks: async () => [],
+    };
+    const db = { query: () => ({ get: () => null }), run: () => {} } as never;
+
+    const result = await searchPartyCatalog(
+      spotify as never,
+      db,
+      "party-1",
+      "abba",
+      null,
+      DEFAULT_RATE_LIMITS,
+    );
+
+    expect(result.tracks[0]?.name).toBe("Dancing Queen");
+  });
+
+  test("throws SpotifySearchRateLimitedError when Spotify 429 and no cache", async () => {
+    clearSpotifySearchCacheForTests();
+    const spotify = {
+      searchCatalog: async () => {
+        throw new SpotifyApiError("SPOTIFY_429:{}", 429, 8000);
+      },
+      searchArtistTracks: async () => [],
+    };
+    const db = { query: () => ({ get: () => null }), run: () => {} } as never;
+
+    await expect(
+      searchPartyCatalog(
+        spotify as never,
+        db,
+        "party-1",
+        "abba",
+        null,
+        DEFAULT_RATE_LIMITS,
+      ),
+    ).rejects.toMatchObject({ retryAfterMs: 8000 });
   });
 });
 
@@ -278,5 +336,62 @@ describe("artist catalog prefetch", () => {
     );
 
     expect(credited.map((t) => t.id)).toEqual(["a"]);
+  });
+
+  test("serves expired artist cache on Spotify 429", async () => {
+    clearSpotifySearchCacheForTests();
+    seedArtistTracksCacheForTests("party-1", "artist-1", [
+      {
+        id: "a",
+        uri: "spotify:track:a",
+        name: "Real Hit",
+        artistName: "ABBA",
+        albumArtUrl: null,
+      },
+    ]);
+
+    const spotify = {
+      searchArtistTracks: async () => {
+        throw new SpotifyApiError("SPOTIFY_429:{}", 429, 5000);
+      },
+    };
+    const db = { query: () => ({ get: () => null }), run: () => {} } as never;
+
+    const tracks = await getPartyArtistTracks(
+      spotify as never,
+      db,
+      "party-1",
+      "artist-1",
+      "ABBA",
+      "all",
+      null,
+      DEFAULT_RATE_LIMITS,
+    );
+
+    expect(tracks).toHaveLength(1);
+    expect(tracks[0]?.name).toBe("Real Hit");
+  });
+
+  test("throws SpotifySearchRateLimitedError for artist tracks when uncached and rate limited", async () => {
+    clearSpotifySearchCacheForTests();
+    const spotify = {
+      searchArtistTracks: async () => {
+        throw new SpotifyApiError("SPOTIFY_429:{}", 429, 6000);
+      },
+    };
+    const db = { query: () => ({ get: () => null }), run: () => {} } as never;
+
+    await expect(
+      getPartyArtistTracks(
+        spotify as never,
+        db,
+        "party-1",
+        "artist-1",
+        "ABBA",
+        "all",
+        null,
+        DEFAULT_RATE_LIMITS,
+      ),
+    ).rejects.toBeInstanceOf(SpotifySearchRateLimitedError);
   });
 });
