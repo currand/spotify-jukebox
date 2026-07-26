@@ -7,13 +7,19 @@ import {
   guestSessionMiddleware,
   setGuestCookie,
 } from "../middleware/session";
-import { isDuplicateTitle } from "@/shared/dedup";
-import { touchGuestLastSeen, countGuestActiveSongs, getGuestMySongs } from "../services/guests";
+import { isDuplicateTrack } from "@/shared/dedup";
+import {
+  findSimilarNamedGuest,
+  reclaimGuestSession,
+  touchGuestLastSeen,
+  countGuestActiveSongs,
+  getGuestMySongs,
+} from "../services/guests";
 import { getClientIp } from "../client-ip";
 import {
   computeQueueEtag,
   getBoostLane,
-  getDedupTitles,
+  getDedupTracks,
   getNormalUpcoming,
   getNextUpcomingItem,
   getQueueItems,
@@ -190,7 +196,10 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
     const party = getPartyBySlug(db, slug);
     if (!party) return c.json({ error: "Party not found", code: "NOT_FOUND" }, 404);
 
-    const body = (await c.req.json()) as { displayName: string };
+    const body = (await c.req.json()) as {
+      displayName: string;
+      confirmReclaim?: boolean;
+    };
     const name = body.displayName?.trim().slice(0, MAX_DISPLAY_NAME_LENGTH);
     if (!name) {
       return c.json(
@@ -198,6 +207,39 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
         400,
       );
     }
+
+    const similar = findSimilarNamedGuest(db, party.id, name, guest.id);
+    if (similar) {
+      if (!body.confirmReclaim) {
+        return c.json(
+          {
+            error: `Someone named "${similar.display_name}" is already here`,
+            code: "NAME_TAKEN",
+            displayName: similar.display_name,
+          },
+          409,
+        );
+      }
+      const clientIp = getClientIp(c);
+      if (!similar.last_ip || similar.last_ip !== clientIp) {
+        return c.json(
+          {
+            error: "Could not verify that name — pick a different one",
+            code: "NAME_RECLAIM_DENIED",
+          },
+          403,
+        );
+      }
+      const reclaimed = reclaimGuestSession(db, guest.id, similar.id);
+      setGuestCookie(c, slug, reclaimed.sessionToken, config.secureCookies);
+      return c.json({
+        id: reclaimed.id,
+        displayName: reclaimed.displayName,
+        boostUsed: reclaimed.boostUsed,
+        sessionToken: config.isProduction ? undefined : reclaimed.sessionToken,
+      });
+    }
+
     db.run(`UPDATE guests SET display_name = ? WHERE id = ?`, [name, guest.id]);
     return c.json({ displayName: name });
   });
@@ -231,11 +273,38 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
 
     const nowPlaying = items.find((i) => i.status === "playing");
     const nextItem = getNextUpcomingItem(items);
+    const guest = getGuest(c);
+    const upvotedItemIds = new Set<string>();
+    const downvotedItemIds = new Set<string>();
+    if (guest && items.length > 0) {
+      const placeholders = items.map(() => "?").join(", ");
+      const itemIds = items.map((i) => i.id);
+      const votes = db
+        .query(
+          `SELECT queue_item_id FROM votes
+           WHERE guest_id = ? AND queue_item_id IN (${placeholders})`,
+        )
+        .all(guest.id, ...itemIds) as { queue_item_id: string }[];
+      for (const vote of votes) {
+        upvotedItemIds.add(vote.queue_item_id);
+      }
+      const vetoes = db
+        .query(
+          `SELECT queue_item_id FROM vetoes
+           WHERE guest_id = ? AND queue_item_id IN (${placeholders})`,
+        )
+        .all(guest.id, ...itemIds) as { queue_item_id: string }[];
+      for (const veto of vetoes) {
+        downvotedItemIds.add(veto.queue_item_id);
+      }
+    }
     const toGuestQueueItemView = (row: (typeof items)[number]) => ({
       ...toQueueItemView(row),
       guestUpvoteBlocked: isGuestUpvoteBlocked(items, row.id),
       guestBoostBlocked: isGuestBoostBlocked(items, row.id),
       guestVetoBlocked: isGuestVetoBlocked(items, row.id),
+      guestHasUpvoted: upvotedItemIds.has(row.id),
+      guestHasDownvoted: downvotedItemIds.has(row.id),
     });
     const boostLane = getBoostLane(items).map(toGuestQueueItemView);
     const upcoming = getNormalUpcoming(items).map(toGuestQueueItemView);
@@ -248,7 +317,7 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
       upcoming,
       boostLane,
       nextItemId: nextItem?.id ?? null,
-      dedupTitles: getDedupTitles(db, party.id),
+      dedupTracks: getDedupTracks(db, party.id),
       party: {
         id: party.id,
         slug: party.slug,
@@ -799,8 +868,11 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
       }
     }
 
-    const titles = getDedupTitles(db, party.id);
-    if (isDuplicateTitle(trackInfo.name, titles)) {
+    const tracks = getDedupTracks(db, party.id);
+    if (isDuplicateTrack(
+      { trackName: trackInfo.name, artistName: trackInfo.artistName },
+      tracks,
+    )) {
       return c.json(
         { error: "This song is already in the queue", code: "DUPLICATE" },
         409,
@@ -840,8 +912,11 @@ export async function addTrackToParty(
   guestId: string | null,
   fromSeed = false,
 ): Promise<string> {
-  const titles = getDedupTitles(db, partyId);
-  if (isDuplicateTitle(track.name, titles)) {
+  const tracks = getDedupTracks(db, partyId);
+  if (isDuplicateTrack(
+    { trackName: track.name, artistName: track.artistName },
+    tracks,
+  )) {
     throw new Error("DUPLICATE");
   }
   const id = newId();

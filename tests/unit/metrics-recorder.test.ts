@@ -9,6 +9,7 @@ import {
   METRICS_SNAPSHOT_INTERVAL_MS,
   resetMetricsRecorderForTests,
   startMetricsRecorder,
+  summarizeMetricsSnapshotsByMinute,
 } from "../../src/server/services/metrics-recorder";
 import {
   clearSpotifyMetricsForTests,
@@ -94,6 +95,54 @@ describe("metrics recorder", () => {
   });
 
   test("interval snapshots use configured cadence", () => {
-    expect(METRICS_SNAPSHOT_INTERVAL_MS).toBe(5000);
+    expect(METRICS_SNAPSHOT_INTERVAL_MS).toBe(10_000);
+  });
+
+  test("summarizes interval snapshots into one row per minute", () => {
+    const sessionId = "session-a";
+    const summarized = summarizeMetricsSnapshotsByMinute([
+      {
+        id: 3,
+        sessionId,
+        recordedAt: "2026-01-01T12:00:50.000Z",
+        reason: "interval",
+        partyId: null,
+        rateLimitCount: 0,
+        apiCallsTotal: 30,
+        apiCallsLast5m: 8,
+        syncRetryAfterMs: null,
+      },
+      {
+        id: 2,
+        sessionId,
+        recordedAt: "2026-01-01T12:00:20.000Z",
+        reason: "interval",
+        partyId: null,
+        rateLimitCount: 0,
+        apiCallsTotal: 24,
+        apiCallsLast5m: 6,
+        syncRetryAfterMs: null,
+      },
+      {
+        id: 1,
+        sessionId,
+        recordedAt: "2026-01-01T12:00:05.000Z",
+        reason: "startup",
+        partyId: null,
+        rateLimitCount: 0,
+        apiCallsTotal: 0,
+        apiCallsLast5m: 0,
+        syncRetryAfterMs: null,
+      },
+    ]);
+
+    expect(summarized).toHaveLength(2);
+    expect(summarized.find((entry) => entry.reason === "startup")?.id).toBe(1);
+    const minute = summarized.find((entry) => entry.reason === "interval");
+    expect(minute?.recordedAt).toBe("2026-01-01T12:00:00.000Z");
+    expect(minute?.sampleCount).toBe(2);
+    expect(minute?.id).toBe(3);
+    expect(minute?.apiCallsLast5m).toBe(8);
+    expect(minute?.apiCallsTotal).toBe(30);
   });
 });

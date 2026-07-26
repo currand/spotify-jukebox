@@ -12,8 +12,10 @@ import {
   bumpSyncGeneration,
   deletePartyCascade,
   getBoostLane,
-  getDedupTitles,
+  getAdminReorderableNormal,
+  getDedupTracks,
   getNormalUpcoming,
+  getNextUpcomingItem,
   getPartyExportTracks,
   getPlayOrder,
   getQueueItems,
@@ -320,8 +322,9 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
       | "interval"
       | "rate_limit"
       | undefined;
+    const granularity = c.req.query("granularity") === "raw" ? "raw" : "minute";
     const limit = Math.min(1000, Math.max(1, Number(c.req.query("limit") ?? 500)));
-    const snapshots = listMetricsSnapshots(db, sessionId, { reason, limit });
+    const snapshots = listMetricsSnapshots(db, sessionId, { reason, limit, granularity });
     if (snapshots.length === 0) {
       const exists = db
         .query(`SELECT id FROM metrics_sessions WHERE id = ?`)
@@ -462,12 +465,14 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     const partyId = c.req.param("id");
     const items = getQueueItems(db, partyId, ["pending", "queued", "playing"]);
     const nowPlaying = items.find((i) => i.status === "playing");
+    const nextItem = getNextUpcomingItem(items);
     return c.json({
       nowPlaying: nowPlaying ? toQueueItemView(nowPlaying) : null,
       upcomingOrder: getUpcomingPlayOrder(items).map(toQueueItemView),
       boostLane: getBoostLane(items).map(toQueueItemView),
       upcoming: getNormalUpcoming(items).map(toQueueItemView),
-      dedupTitles: getDedupTitles(db, partyId),
+      dedupTracks: getDedupTracks(db, partyId),
+      nextItemId: nextItem?.id ?? null,
     });
   });
 
@@ -477,18 +482,23 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
       await forcePartySync(db, spotify, partyId);
     } catch (e) {
       if (e instanceof PartySyncError) {
-        return c.json({ error: e.message, code: e.code }, e.status);
+        return c.json(
+          { error: e.message, code: e.code },
+          e.status as 400 | 403 | 404 | 409 | 429 | 500 | 503,
+        );
       }
       throw e;
     }
     const items = getQueueItems(db, partyId, ["pending", "queued", "playing"]);
     const nowPlaying = items.find((i) => i.status === "playing");
+    const nextItem = getNextUpcomingItem(items);
     return c.json({
       nowPlaying: nowPlaying ? toQueueItemView(nowPlaying) : null,
       upcomingOrder: getUpcomingPlayOrder(items).map(toQueueItemView),
       boostLane: getBoostLane(items).map(toQueueItemView),
       upcoming: getNormalUpcoming(items).map(toQueueItemView),
-      dedupTitles: getDedupTitles(db, partyId),
+      dedupTracks: getDedupTracks(db, partyId),
+      nextItemId: nextItem?.id ?? null,
     });
   });
 
@@ -628,10 +638,10 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
       }
       case "move_up":
       case "move_down": {
-        const normal = getNormalUpcoming(getQueueItems(db, partyId));
+        const normal = getAdminReorderableNormal(getQueueItems(db, partyId));
         const index = normal.findIndex((i) => i.id === itemId);
         if (index < 0) {
-          return c.json({ error: "Not in normal queue", code: "INVALID" }, 400);
+          return c.json({ error: "Not reorderable", code: "INVALID" }, 400);
         }
         const swapIdx = body.action === "move_up" ? index - 1 : index + 1;
         if (swapIdx < 0 || swapIdx >= normal.length) {
@@ -641,15 +651,14 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
         const b = normal[swapIdx]!;
         const orderA = a.manual_order ?? index;
         const orderB = b.manual_order ?? swapIdx;
-        db.run(`UPDATE queue_items SET manual_order = ?, status = 'pending' WHERE id = ?`, [
+        db.run(`UPDATE queue_items SET manual_order = ? WHERE id = ?`, [
           orderB,
           a.id,
         ]);
-        db.run(`UPDATE queue_items SET manual_order = ?, status = 'pending' WHERE id = ?`, [
+        db.run(`UPDATE queue_items SET manual_order = ? WHERE id = ?`, [
           orderA,
           b.id,
         ]);
-        resetQueuedToPending(db, partyId);
         bumpSyncGeneration(db, partyId);
         break;
       }
@@ -684,9 +693,14 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     const partyId = c.req.param("id");
     const playing = db
       .query(
-        `SELECT id FROM queue_items WHERE party_id = ? AND status = 'playing' LIMIT 1`,
+        `SELECT id, track_name, spotify_uri, status FROM queue_items WHERE party_id = ? AND status = 'playing' LIMIT 1`,
       )
-      .get(partyId) as { id: string } | null;
+      .get(partyId) as {
+      id: string;
+      track_name: string;
+      spotify_uri: string;
+      status: string;
+    } | null;
     if (playing) markFinished(db, playing.id, "skipped");
     try {
       await spotify.skipNext();

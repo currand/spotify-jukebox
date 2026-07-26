@@ -64,17 +64,17 @@ export interface SpotifyClient {
 
 function mapTrack(raw: {
   uri: string;
-  id: string;
+  id?: string;
   name: string;
   artists: { id?: string; name: string }[];
-  album: { images: { url: string }[] };
+  album?: { images: { url: string }[] };
 }): SpotifyTrack {
   return {
     uri: raw.uri,
-    id: raw.id,
+    id: raw.id ?? raw.uri.split(":").pop() ?? raw.uri,
     name: raw.name,
     artists: raw.artists,
-    album: raw.album,
+    album: raw.album ?? { images: [] },
   };
 }
 
@@ -294,6 +294,13 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
       );
     }
     return data;
+  }
+
+  /** POST endpoints that succeed with an empty 200/204 body (queue add, skip, etc.). */
+  async function apiVoid(path: string, init?: RequestInit): Promise<void> {
+    const res = await spotifyFetch(path, init);
+    if (res.status === 204 || res.status === 200) return;
+    if (!res.ok) await throwSpotifyError(res);
   }
 
   async function getPlayerSnapshotFromCurrentlyPlaying(): Promise<PlayerSnapshot | null> {
@@ -522,13 +529,13 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
     },
 
     async addToQueue(uri) {
-      await api(`/me/player/queue?uri=${encodeURIComponent(uri)}`, {
+      await apiVoid(`/me/player/queue?uri=${encodeURIComponent(uri)}`, {
         method: "POST",
       });
     },
 
     async skipNext() {
-      await api("/me/player/next", { method: "POST" });
+      await apiVoid("/me/player/next", { method: "POST" });
     },
 
     async getPlaybackState() {
@@ -573,7 +580,7 @@ export function trackFromSpotify(track: SpotifyTrack) {
     uri: track.uri,
     name: track.name,
     artistName: track.artists.map((a) => a.name).join(", "),
-    albumArtUrl: track.album.images[0]?.url ?? null,
+    albumArtUrl: track.album?.images?.[0]?.url ?? null,
   };
 }
 

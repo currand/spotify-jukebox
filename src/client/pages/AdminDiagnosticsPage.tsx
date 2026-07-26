@@ -27,6 +27,13 @@ function formatTime(at: number | null): string {
   return new Date(at).toLocaleTimeString();
 }
 
+function formatMinuteTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString();
 }
@@ -242,7 +249,7 @@ export function AdminDiagnosticsPage() {
       try {
         setError(null);
         const data = await api<{ snapshots: MetricsSnapshotSummary[] }>(
-          `/host/metrics/sessions/${selectedSessionId}/snapshots?limit=300`,
+          `/host/metrics/sessions/${selectedSessionId}/snapshots?limit=180&granularity=minute`,
         );
         setSnapshots(data.snapshots);
         const preferred =
@@ -335,7 +342,7 @@ export function AdminDiagnosticsPage() {
         <p className="small">
           {viewMode === "live" ? (
             <>
-              Recording every 5s into session{" "}
+              Recording every 10s (shown by minute) into session{" "}
               <code>{currentSession?.id ?? liveDiagnostics?.sessionId ?? "…"}</code>
               {currentSession
                 ? ` · ${currentSession.snapshotCount} snapshots`
@@ -361,11 +368,11 @@ export function AdminDiagnosticsPage() {
 
       {viewMode === "history" && snapshots.length > 0 && (
         <section className="card diagnostics-snapshot-picker">
-          <h2>Snapshots</h2>
+          <h2>Timeline (1-minute summaries)</h2>
           <div className="diagnostics-snapshot-list">
             {snapshots.map((snapshot) => (
               <button
-                key={snapshot.id}
+                key={`${snapshot.id}-${snapshot.recordedAt}`}
                 type="button"
                 className={`diagnostics-snapshot-chip${
                   snapshot.id === selectedSnapshotId
@@ -374,10 +381,14 @@ export function AdminDiagnosticsPage() {
                 }${snapshot.reason === "rate_limit" ? " diagnostics-snapshot-chip--429" : ""}`}
                 onClick={() => setSelectedSnapshotId(snapshot.id)}
               >
-                <span>{formatTime(new Date(snapshot.recordedAt).getTime())}</span>
+                <span>{formatMinuteTime(snapshot.recordedAt)}</span>
                 <span className="diagnostics-snapshot-chip-meta">
-                  {reasonLabel(snapshot.reason)} · {snapshot.apiCallsLast5m}/5m ·{" "}
-                  {snapshot.rateLimitCount}×429
+                  {reasonLabel(snapshot.reason)}
+                  {snapshot.sampleCount != null && snapshot.sampleCount > 1
+                    ? ` · ${snapshot.sampleCount} samples`
+                    : ""}
+                  {" · "}
+                  {snapshot.apiCallsLast5m}/5m · {snapshot.rateLimitCount}×429
                 </span>
               </button>
             ))}

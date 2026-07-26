@@ -1,9 +1,10 @@
 import * as React from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import type { PartyView, QueueSnapshot } from "@/shared/types";
 import { api, apiOptional } from "../http";
 import { AdminNav } from "../components/AdminNav";
 import { SpotifyAttribution } from "../components/SpotifyAttribution";
+import { useAutoFullscreen } from "../hooks/useAutoFullscreen";
 import {
   NowPlayingBanner,
   ReadOnlyQueueRow,
@@ -17,6 +18,10 @@ interface PartyFull extends PartyView {
 }
 
 export function AdminDisplayPage() {
+  const [searchParams] = useSearchParams();
+  const kiosk = searchParams.get("fullscreen") === "1";
+  useAutoFullscreen(kiosk);
+
   const [party, setParty] = React.useState<PartyFull | null>(null);
   const [queue, setQueue] = React.useState<QueueSnapshot | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -52,24 +57,30 @@ export function AdminDisplayPage() {
 
   if (!party) {
     return (
-      <div className="app admin-display-page">
-        <Link to="/admin" className="admin-back-link">
-          ← Back to admin
-        </Link>
+      <div className={`app admin-display-page${kiosk ? " admin-display-page--kiosk" : ""}`}>
+        {!kiosk && (
+          <Link to="/admin" className="admin-back-link">
+            ← Back to admin
+          </Link>
+        )}
         <p>{error ?? "No active party — create one in admin first."}</p>
       </div>
     );
   }
 
   return (
-    <div className="app admin-display-page">
-      <Link to="/admin" className="admin-back-link">
-        ← Back to admin
-      </Link>
-      <AdminNav
-        guestCount={party.guestCount ?? 0}
-        partyActive
-      />
+    <div className={`app admin-display-page${kiosk ? " admin-display-page--kiosk" : ""}`}>
+      {!kiosk && (
+        <Link to="/admin" className="admin-back-link">
+          ← Back to admin
+        </Link>
+      )}
+      {!kiosk && (
+        <AdminNav
+          guestCount={party.guestCount ?? 0}
+          partyActive
+        />
+      )}
 
       <div className="admin-display-layout">
         <aside className="admin-display-qr-panel" aria-label="Join QR code">

@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { getDedupTitles, markFinished } from "../../src/server/services/queue";
+import { getDedupTracks, markFinished } from "../../src/server/services/queue";
 import type { Db } from "../../src/server/db/schema";
 
 function testDb(): Db {
@@ -33,6 +33,7 @@ function insertItem(
   overrides: {
     id: string;
     track_name: string;
+    artist_name?: string;
     status: string;
     finished_at?: string | null;
   },
@@ -40,26 +41,37 @@ function insertItem(
   db.run(
     `INSERT INTO queue_items (
       id, party_id, spotify_uri, track_name, artist_name, status, added_at, finished_at
-    ) VALUES (?, 'party', 'uri', ?, 'artist', ?, '2026-01-01T00:00:00.000Z', ?)`,
-    [overrides.id, overrides.track_name, overrides.status, overrides.finished_at ?? null],
+    ) VALUES (?, 'party', 'uri', ?, ?, ?, '2026-01-01T00:00:00.000Z', ?)`,
+    [
+      overrides.id,
+      overrides.track_name,
+      overrides.artist_name ?? "artist",
+      overrides.status,
+      overrides.finished_at ?? null,
+    ],
   );
 }
 
-describe("getDedupTitles", () => {
+describe("getDedupTracks", () => {
   test("excludes removed songs so they can be re-added", () => {
     const db = testDb();
     insertItem(db, { id: "1", track_name: "Removed Song", status: "skipped", finished_at: "2026-01-02T00:00:00.000Z" });
-    insertItem(db, { id: "2", track_name: "Played Song", status: "played", finished_at: "2026-01-03T00:00:00.000Z" });
-    insertItem(db, { id: "3", track_name: "Active Song", status: "pending" });
+    insertItem(db, { id: "2", track_name: "Played Song", artist_name: "Band", status: "played", finished_at: "2026-01-03T00:00:00.000Z" });
+    insertItem(db, { id: "3", track_name: "Active Song", artist_name: "Band", status: "pending" });
 
-    expect(getDedupTitles(db, "party")).toEqual(["Active Song", "Played Song"]);
+    expect(getDedupTracks(db, "party")).toEqual([
+      { trackName: "Active Song", artistName: "Band" },
+      { trackName: "Played Song", artistName: "Band" },
+    ]);
   });
 
   test("still blocks re-adding vetoed songs", () => {
     const db = testDb();
-    insertItem(db, { id: "1", track_name: "Vetoed Song", status: "vetoed", finished_at: "2026-01-02T00:00:00.000Z" });
+    insertItem(db, { id: "1", track_name: "Vetoed Song", artist_name: "Band", status: "vetoed", finished_at: "2026-01-02T00:00:00.000Z" });
 
-    expect(getDedupTitles(db, "party")).toEqual(["Vetoed Song"]);
+    expect(getDedupTracks(db, "party")).toEqual([
+      { trackName: "Vetoed Song", artistName: "Band" },
+    ]);
   });
 });
 

@@ -4,6 +4,7 @@ import {
   adoptSpotifyTrack,
   bumpSyncGeneration,
   getQueueItems,
+  getSpotifyBufferItem,
   getUpcomingPlayOrder,
   markFinished,
   type QueueItemRow,
@@ -21,8 +22,7 @@ import {
   isSpotifyReauthRequired,
 } from "./spotify-errors";
 
-const SYNC_INTERVAL_ACTIVE_MS = 5000;
-const SYNC_INTERVAL_IDLE_MS = 20000;
+const SYNC_INTERVAL_MS = 10_000;
 const SYNC_INTERVAL_NO_PARTY_MS = 60_000;
 
 const RESTRICTED_DEVICE_HINT =
@@ -73,33 +73,203 @@ export function partyHasPendingBufferWork(db: Db, partyId: string): boolean {
   return getQueueItems(db, partyId).some((item) => item.status === "pending");
 }
 
+export function partyHasActiveQueueItems(db: Db, partyId: string): boolean {
+  return getQueueItems(db, partyId).some(
+    (item) => item.status === "playing" || item.status === "queued",
+  );
+}
+
 export { hasActiveParty };
 
 export function getSyncIntervalMs(
-  db: Db,
+  _db: Db,
   party: { id: string; sync_generation: number } | null,
 ): number {
   if (!party) return SYNC_INTERVAL_NO_PARTY_MS;
-  if (partyNeedsSpotifyQueueSync(db, party.id, party.sync_generation)) {
-    return SYNC_INTERVAL_ACTIVE_MS;
-  }
-  if (partyHasPendingBufferWork(db, party.id)) {
-    return SYNC_INTERVAL_ACTIVE_MS;
-  }
-  return SYNC_INTERVAL_IDLE_MS;
+  return SYNC_INTERVAL_MS;
 }
 
 export function isUriBufferedInSpotify(
   uri: string,
   queueData: SpotifyQueueSnapshot,
+  items: QueueItemRow[] = [],
 ): boolean {
-  if (queueData.currentlyPlaying?.uri === uri) return true;
+  if (queueData.currentlyPlaying?.uri === uri) {
+    if (items.length > 0 && isTerminalQueueUri(items, uri)) return false;
+    return true;
+  }
+  if (items.length > 0 && isTerminalQueueUri(items, uri)) return false;
   return queueData.queue.some((track) => track.uri === uri);
 }
 
+/**
+ * Spotify pads short queues by repeating a prefix (often to ~20 entries).
+ * Infer the real queue length from the shortest repeating prefix.
+ */
+export function inferPaddedSpotifyQueueLength(queue: SpotifyTrack[]): number {
+  if (queue.length <= 1) return queue.length;
+  for (
+    let patternLen = 1;
+    patternLen <= Math.min(4, Math.floor(queue.length / 2));
+    patternLen++
+  ) {
+    const pattern = queue.slice(0, patternLen).map((t) => t.uri);
+    let isRepeating = true;
+    for (let i = patternLen; i < queue.length; i++) {
+      if (queue[i]!.uri !== pattern[i % patternLen]) {
+        isRepeating = false;
+        break;
+      }
+    }
+    if (isRepeating) return patternLen;
+  }
+  return queue.length;
+}
+
+export function dedupeSpotifyQueueTracks(
+  queue: SpotifyTrack[],
+  playingUri: string | null,
+): SpotifyTrack[] {
+  const seen = new Set<string>();
+  const deduped: SpotifyTrack[] = [];
+  for (const track of queue) {
+    if (playingUri && track.uri === playingUri) continue;
+    if (seen.has(track.uri)) continue;
+    seen.add(track.uri);
+    deduped.push(track);
+  }
+  return deduped;
+}
+
+const TERMINAL_STATUSES: QueueItemRow["status"][] = ["played", "skipped", "vetoed"];
+
+/** True when this URI already finished in the virtual queue (Spotify padding may still report it). */
+export function isTerminalQueueUri(items: QueueItemRow[], uri: string): boolean {
+  return items.some(
+    (i) => i.spotify_uri === uri && TERMINAL_STATUSES.includes(i.status),
+  );
+}
+
+/** True when this URI already played — skip stale pending duplicates, not re-queues after skip. */
+export function isPlayedQueueUri(items: QueueItemRow[], uri: string): boolean {
+  return items.some((i) => i.spotify_uri === uri && i.status === "played");
+}
+
+/** Prefer active managed row when duplicate URIs exist (e.g. skipped + queued). */
+export function findActiveQueueItemByUri(
+  items: QueueItemRow[],
+  uri: string,
+): QueueItemRow | undefined {
+  const matching = items.filter((i) => i.spotify_uri === uri);
+  if (matching.length === 0) return undefined;
+  for (const status of ["playing", "queued", "pending"] as const) {
+    const row = matching.find((i) => i.status === status);
+    if (row) return row;
+  }
+  return undefined;
+}
+
+function queueItemToCurrentlyPlaying(item: QueueItemRow) {
+  return {
+    uri: item.spotify_uri,
+    id: item.spotify_uri.split(":").pop() ?? item.spotify_uri,
+    name: item.track_name,
+    artists: [{ name: item.artist_name }],
+    album: {
+      images: item.album_art_url ? [{ url: item.album_art_url }] : [],
+    },
+  };
+}
+
+/** Collapse Spotify queue API padding and drop phantom buffer tracks. */
+export function normalizeSpotifyQueueSnapshot(
+  queueData: SpotifyQueueSnapshot,
+  items: QueueItemRow[] = [],
+): SpotifyQueueSnapshot {
+  const raw = queueData.queue;
+  if (raw.length === 0) return queueData;
+
+  const playingUri = queueData.currentlyPlaying?.uri ?? null;
+  const realLength = inferPaddedSpotifyQueueLength(raw);
+  let queue = dedupeSpotifyQueueTracks(raw.slice(0, realLength), playingUri);
+
+  const isHomogeneousPadding =
+    raw.length >= 3 && new Set(raw.map((t) => t.uri)).size === 1;
+
+  if (isHomogeneousPadding && queue.length === 1) {
+    const uri = queue[0]!.uri;
+    const managed = items.some(
+      (i) =>
+        i.spotify_uri === uri &&
+        ["pending", "queued", "playing"].includes(i.status),
+    );
+    if (!managed) {
+      queue = [];
+    }
+  }
+
+  if (items.length > 0) {
+    queue = queue.filter((track) => !isTerminalQueueUri(items, track.uri));
+  }
+
+  let currentlyPlaying = queueData.currentlyPlaying;
+  if (currentlyPlaying?.uri && items.length > 0 && isTerminalQueueUri(items, currentlyPlaying.uri)) {
+    currentlyPlaying = null;
+  }
+
+  return { ...queueData, currentlyPlaying, queue };
+}
+
 /** Whether Spotify already has a track waiting in its upcoming queue. */
-export function isSpotifyBufferOccupied(queueData: SpotifyQueueSnapshot): boolean {
-  return queueData.queue.length > 0;
+export function getSpotifyBufferTrack(
+  queueData: SpotifyQueueSnapshot,
+  items: QueueItemRow[] = [],
+): SpotifyTrack | null {
+  const playingUri = queueData.currentlyPlaying?.uri;
+  for (const track of queueData.queue) {
+    if (playingUri && track.uri === playingUri) continue;
+    if (items.length > 0 && isTerminalQueueUri(items, track.uri)) continue;
+    return track;
+  }
+  return null;
+}
+
+export function getSpotifyQueueTailTracks(
+  queueData: SpotifyQueueSnapshot,
+  items: QueueItemRow[] = [],
+): SpotifyTrack[] {
+  const playingUri = queueData.currentlyPlaying?.uri;
+  const buffer = getSpotifyBufferTrack(queueData, items);
+  const skipUris = new Set<string>();
+  if (playingUri) skipUris.add(playingUri);
+  if (buffer?.uri) skipUris.add(buffer.uri);
+
+  const tail: SpotifyTrack[] = [];
+  const seen = new Set<string>();
+  for (const track of queueData.queue) {
+    if (skipUris.has(track.uri) || seen.has(track.uri)) continue;
+    if (items.length > 0 && isTerminalQueueUri(items, track.uri)) continue;
+    seen.add(track.uri);
+    tail.push(track);
+  }
+  return tail;
+}
+
+export function isSpotifyBufferOccupied(
+  queueData: SpotifyQueueSnapshot,
+  items: QueueItemRow[] = [],
+): boolean {
+  if (getSpotifyBufferTrack(queueData, items) != null) return true;
+
+  const dbQueued = items.some((item) => item.status === "queued");
+  if (!dbQueued) return false;
+
+  const apiHasQueueData =
+    queueData.queue.length > 0 || queueData.currentlyPlaying != null;
+  if (!apiHasQueueData) return true;
+
+  const expectedBuffer = getSpotifyBufferItem(items);
+  return expectedBuffer?.status === "queued";
 }
 
 /** @deprecated Prefer isSpotifyBufferOccupied — kept for tests inspecting jukebox URIs in Spotify. */
@@ -122,14 +292,15 @@ export function getVirtualNextToBuffer(
   items: QueueItemRow[],
   queueData: SpotifyQueueSnapshot,
 ): QueueItemRow | null {
-  if (isSpotifyBufferOccupied(queueData)) {
+  if (isSpotifyBufferOccupied(queueData, items)) {
     return null;
   }
 
   for (const item of getUpcomingPlayOrder(items)) {
     if (item.status === "playing" || item.status === "queued") continue;
     if (!["pending"].includes(item.status)) continue;
-    if (isUriBufferedInSpotify(item.spotify_uri, queueData)) continue;
+    if (isPlayedQueueUri(items, item.spotify_uri)) continue;
+    if (isUriBufferedInSpotify(item.spotify_uri, queueData, items)) continue;
     return item;
   }
   return null;
@@ -141,14 +312,26 @@ export function reconcileSpotifyBufferStatuses(
   partyId: string,
   items: QueueItemRow[],
   queueData: SpotifyQueueSnapshot,
+  options?: { aggressive?: boolean },
 ): void {
-  const bufferTrack = queueData.queue[0] ?? null;
+  const bufferTrack = getSpotifyBufferTrack(queueData, items);
 
   if (!bufferTrack) {
-    for (const item of items) {
-      if (item.status === "queued") {
-        db.run(`UPDATE queue_items SET status = 'pending' WHERE id = ?`, [item.id]);
+    const apiHasQueueData =
+      queueData.queue.length > 0 || queueData.currentlyPlaying != null;
+    if (!apiHasQueueData) {
+      return;
+    }
+    if (!options?.aggressive) {
+      const expectedBuffer = getSpotifyBufferItem(items);
+      if (expectedBuffer?.status === "queued") {
+        return;
       }
+    }
+    for (const item of items) {
+      if (item.status !== "queued") continue;
+      if (isUriBufferedInSpotify(item.spotify_uri, queueData, items)) continue;
+      db.run(`UPDATE queue_items SET status = 'pending' WHERE id = ?`, [item.id]);
     }
     return;
   }
@@ -173,12 +356,13 @@ export function reconcileSpotifyQueueTail(
   db: Db,
   partyId: string,
   queueData: SpotifyQueueSnapshot,
+  items: QueueItemRow[] = [],
 ): void {
-  for (let i = 1; i < queueData.queue.length; i++) {
+  for (const track of getSpotifyQueueTailTracks(queueData, items)) {
     adoptSpotifyTrack(
       db,
       partyId,
-      trackFromSpotify(queueData.queue[i]!),
+      trackFromSpotify(track),
       "pending",
     );
   }
@@ -189,38 +373,54 @@ export function shouldSkipTerminalPlayback(match: QueueItemRow): boolean {
   return match.status === "vetoed" || match.status === "skipped";
 }
 
-/** Merge player snapshot into queue data when the queue API omits now playing. */
+/** Resolve now playing from the player snapshot — authoritative over the queue API. */
+export function currentlyPlayingFromSnapshot(
+  snapshot: PlayerSnapshot,
+  items: QueueItemRow[],
+  queueData: SpotifyQueueSnapshot,
+): SpotifyTrack | null {
+  if (!snapshot.currentUri) return null;
+
+  const active = findActiveQueueItemByUri(items, snapshot.currentUri);
+  if (active) return queueItemToCurrentlyPlaying(active);
+
+  if (queueData.currentlyPlaying?.uri === snapshot.currentUri) {
+    return queueData.currentlyPlaying;
+  }
+
+  const meta = items.find((item) => item.spotify_uri === snapshot.currentUri);
+  if (meta) return queueItemToCurrentlyPlaying(meta);
+
+  return {
+    uri: snapshot.currentUri,
+    id: snapshot.currentUri.split(":").pop() ?? snapshot.currentUri,
+    name: "Unknown track",
+    artists: [{ name: "Unknown" }],
+    album: { images: [] },
+  };
+}
+
+/** Merge player snapshot into queue data when the queue API omits or stale-reports now playing. */
 export function buildEffectiveQueueSnapshot(
   queueData: SpotifyQueueSnapshot,
   snapshot: PlayerSnapshot,
   items: QueueItemRow[],
 ): SpotifyQueueSnapshot {
+  if (snapshot.currentUri) {
+    const fromSnapshot = currentlyPlayingFromSnapshot(snapshot, items, queueData);
+    if (fromSnapshot) {
+      return {
+        ...queueData,
+        currentlyPlaying: fromSnapshot,
+      };
+    }
+  }
+
   if (queueData.currentlyPlaying?.uri) {
     return queueData;
   }
 
-  const uri = snapshot.currentUri;
-  if (!uri) {
-    return queueData;
-  }
-
-  const match = items.find((item) => item.spotify_uri === uri);
-  if (!match) {
-    return queueData;
-  }
-
-  return {
-    ...queueData,
-    currentlyPlaying: {
-      uri: match.spotify_uri,
-      id: match.spotify_uri.split(":").pop() ?? match.spotify_uri,
-      name: match.track_name,
-      artists: [{ name: match.artist_name }],
-      album: {
-        images: match.album_art_url ? [{ url: match.album_art_url }] : [],
-      },
-    },
-  };
+  return queueData;
 }
 
 export function getSyncState(): SyncState {
@@ -459,6 +659,7 @@ export async function forcePartySync(
     };
     try {
       queueData = await spotify.getQueue();
+      queueData = normalizeSpotifyQueueSnapshot(queueData, items);
     } catch (e) {
       if (isSpotifyRateLimitError(e)) {
         markRateLimited(e);
@@ -486,33 +687,33 @@ export async function forcePartySync(
 
     const effective = buildEffectiveQueueSnapshot(queueData, snapshot, items);
 
-    if (snapshot.deviceActive || effective.currentlyPlaying?.uri) {
-      await reconcilePlayingState(
-        db,
-        partyId,
-        items,
-        effective,
-        snapshot.isPlaying,
-        spotify,
-        snapshot.deviceName,
-      );
-    }
+    await reconcilePlayingState(
+      db,
+      partyId,
+      items,
+      effective,
+      snapshot.isPlaying,
+      spotify,
+      snapshot.deviceName,
+    );
 
     if (queueConfirmed) {
       const afterPlaying = getQueueItems(db, partyId);
-      reconcileSpotifyBufferStatuses(db, partyId, afterPlaying, queueData);
-      reconcileSpotifyQueueTail(db, partyId, queueData);
+      reconcileSpotifyBufferStatuses(db, partyId, afterPlaying, effective, {
+        aggressive: true,
+      });
+      reconcileSpotifyQueueTail(db, partyId, effective, afterPlaying);
     }
 
-    if (snapshot.deviceActive) {
+    if (snapshot.deviceActive || snapshot.currentUri) {
       const refreshed = getQueueItems(db, partyId);
       await fillSpotifyBufferIfEmpty(
         db,
         partyId,
         refreshed,
         spotify,
-        queueData,
-        snapshot.deviceName,
+        effective,
+        snapshot,
       );
     }
     partyLastSyncedGeneration.set(partyId, refreshedParty.sync_generation);
@@ -588,7 +789,7 @@ async function runSyncTick(db: Db, spotify: SpotifyClient): Promise<void> {
       return;
     }
 
-    if (!snapshot.deviceActive) return;
+    if (!snapshot.deviceActive && !snapshot.currentUri) return;
 
     try {
       await withPartySyncLock(party.id, () =>
@@ -609,40 +810,42 @@ async function runPartySync(
   snapshot: PlayerSnapshot,
 ): Promise<void> {
   const items = getQueueItems(db, party.id);
-  const needsQueue =
-    partyHasPendingBufferWork(db, party.id) ||
-    partyNeedsSpotifyQueueSync(db, party.id, party.sync_generation);
 
-  let queueData: SpotifyQueueSnapshot = { currentlyPlaying: null, queue: [] };
-  let queueApiAvailable = !needsQueue;
+  let queueData: SpotifyQueueSnapshot = {
+    currentlyPlaying: null,
+    queue: [],
+    available: false,
+  };
+  let queueApiAvailable = false;
 
-  if (needsQueue) {
-    try {
-      queueData = await spotify.getQueue();
-      queueApiAvailable = true;
-      debugLog("sync", "queue fetched", {
-        currentlyPlaying: queueData.currentlyPlaying?.uri ?? null,
-        queueLength: queueData.queue.length,
-      });
-    } catch (e) {
-      if (isSpotifyRateLimitError(e)) {
-        markRateLimited(e);
-        queueApiAvailable = false;
-        debugLog("sync", "queue rate limited");
-      } else if (isQueueControlError(e)) {
-        markDeviceRestricted(snapshot.deviceName);
-        queueApiAvailable = false;
-        debugLog("sync", "queue control error", e);
-      } else {
-        debugLog("sync", "queue error", e);
-        throw e;
-      }
+  try {
+    queueData = await spotify.getQueue();
+    queueData = normalizeSpotifyQueueSnapshot(queueData, items);
+    queueApiAvailable = true;
+    debugLog("sync", "queue fetched", {
+      currentlyPlaying: queueData.currentlyPlaying?.uri ?? null,
+      queueLength: queueData.queue.length,
+    });
+  } catch (e) {
+    if (isSpotifyRateLimitError(e)) {
+      markRateLimited(e);
+      queueApiAvailable = false;
+      debugLog("sync", "queue rate limited");
+    } else if (isQueueControlError(e)) {
+      markDeviceRestricted(snapshot.deviceName);
+      queueApiAvailable = false;
+      debugLog("sync", "queue control error", e);
+    } else {
+      debugLog("sync", "queue error", e);
+      throw e;
     }
-  } else {
-    debugLog("sync", "skipping queue fetch — idle");
   }
 
   const effective = buildEffectiveQueueSnapshot(queueData, snapshot, items);
+  const playing = items.find((item) => item.status === "playing");
+  const aggressiveBuffer =
+    partyNeedsSpotifyQueueSync(db, party.id, party.sync_generation) ||
+    Boolean(snapshot.currentUri && playing?.spotify_uri !== snapshot.currentUri);
 
   await reconcilePlayingState(
     db,
@@ -654,14 +857,16 @@ async function runPartySync(
     snapshot.deviceName,
   );
 
-  if (!needsQueue || !queueApiAvailable || syncState.deviceRestricted) {
+  if (!queueApiAvailable || syncState.deviceRestricted) {
     partyLastSyncedGeneration.set(party.id, party.sync_generation);
     return;
   }
 
   const afterPlaying = getQueueItems(db, party.id);
-  reconcileSpotifyBufferStatuses(db, party.id, afterPlaying, queueData);
-  reconcileSpotifyQueueTail(db, party.id, queueData);
+  reconcileSpotifyBufferStatuses(db, party.id, afterPlaying, effective, {
+    aggressive: aggressiveBuffer,
+  });
+  reconcileSpotifyQueueTail(db, party.id, effective, afterPlaying);
 
   const refreshed = getQueueItems(db, party.id);
   await fillSpotifyBufferIfEmpty(
@@ -669,9 +874,10 @@ async function runPartySync(
     party.id,
     refreshed,
     spotify,
-    queueData,
-    snapshot.deviceName,
+    effective,
+    snapshot,
   );
+
   partyLastSyncedGeneration.set(party.id, party.sync_generation);
 }
 
@@ -733,7 +939,7 @@ async function reconcilePlayingState(
   }
 
   const freshItems = getQueueItems(db, partyId);
-  let match = freshItems.find((i) => i.spotify_uri === current.uri);
+  let match = findActiveQueueItemByUri(freshItems, current.uri);
 
   if (!match) {
     const id = adoptSpotifyTrack(db, partyId, trackFromSpotify(current), "playing");
@@ -751,12 +957,7 @@ async function reconcilePlayingState(
   }
 
   if (match.status === "played") {
-    db.run(
-      `UPDATE queue_items SET status = 'pending'
-       WHERE party_id = ? AND status = 'playing' AND id != ?`,
-      [partyId, match.id],
-    );
-    db.run(`UPDATE queue_items SET status = 'playing' WHERE id = ?`, [match.id]);
+    await skipCurrentTrack(spotify, deviceName);
     return;
   }
 
@@ -775,14 +976,24 @@ async function fillSpotifyBufferIfEmpty(
   items: QueueItemRow[],
   spotify: SpotifyClient,
   queueData: SpotifyQueueSnapshot,
-  deviceName: string | null,
+  snapshot: PlayerSnapshot,
 ): Promise<void> {
-  if (isSpotifyBufferOccupied(queueData)) {
+  const bufferOccupied = isSpotifyBufferOccupied(queueData, items);
+  const next = getVirtualNextToBuffer(items, queueData);
+
+  if (bufferOccupied) {
     return;
   }
 
-  const next = getVirtualNextToBuffer(items, queueData);
   if (!next) return;
+
+  if (snapshot.currentUri && snapshot.currentUri === next.spotify_uri) {
+    return;
+  }
+
+  if (items.some((i) => i.spotify_uri === next.spotify_uri && i.status === "queued")) {
+    return;
+  }
 
   try {
     await spotify.addToQueue(next.spotify_uri);
@@ -793,7 +1004,7 @@ async function fillSpotifyBufferIfEmpty(
       return;
     }
     if (isQueueControlError(e)) {
-      markDeviceRestricted(deviceName);
+      markDeviceRestricted(snapshot.deviceName);
       return;
     }
     throw e;

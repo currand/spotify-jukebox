@@ -10,7 +10,7 @@ import type {
   TrackInfo,
 } from "@/shared/types";
 import { DEFAULT_RATE_LIMITS } from "@/shared/types";
-import { isTrackInPartyQueue } from "@/shared/queue-match";
+import { getSearchTrackQueueState } from "@/shared/queue-match";
 import { api, apiOptional } from "../http";
 import { AdminNav } from "../components/AdminNav";
 import { SpotifyAttribution } from "../components/SpotifyAttribution";
@@ -67,6 +67,10 @@ export function AdminPage() {
   const [useImportHistory, setUseImportHistory] = React.useState(false);
   const [showHistoryList, setShowHistoryList] = React.useState(false);
   const artistLoadRef = React.useRef(0);
+  const scrollPendingRef = React.useRef<string | null>(null);
+  const [highlightedItemId, setHighlightedItemId] = React.useState<string | null>(
+    null,
+  );
   const [hostSetupToken, setHostSetupToken] = React.useState(() => {
     try {
       return sessionStorage.getItem("jukebox_host_setup_token") ?? "";
@@ -224,6 +228,19 @@ export function AdminPage() {
     await load();
   }
 
+  function clearHostSearch() {
+    setResults(null);
+    setShowSearchResults(false);
+    setSelectedArtist(null);
+    setArtistFilter(null);
+    setQuery("");
+  }
+
+  function scrollToQueueItem(itemId: string) {
+    clearHostSearch();
+    scrollPendingRef.current = itemId;
+  }
+
   async function hostSearch(searchQuery?: string) {
     if (!party) return;
     const trimmed = (searchQuery ?? query).trim();
@@ -338,8 +355,27 @@ export function AdminPage() {
     ...(queue?.boostLane ?? []),
     ...(queue?.upcoming ?? []),
   ];
-  const upNext = upcomingOrdered[0] ?? null;
-  const laterQueue = upcomingOrdered.slice(1);
+  const upNext =
+    queue?.nextItemId != null
+      ? upcomingOrdered.find((item) => item.id === queue.nextItemId) ?? null
+      : upcomingOrdered[0] ?? null;
+  const laterQueue = upcomingOrdered.filter((item) => item.id !== upNext?.id);
+  const reorderableIds = laterQueue
+    .filter((item) => !item.spotifyLocked && item.status !== "queued")
+    .map((item) => item.id);
+
+  React.useEffect(() => {
+    if (showSearchResults || !scrollPendingRef.current) return;
+    const itemId = scrollPendingRef.current;
+    scrollPendingRef.current = null;
+    requestAnimationFrame(() => {
+      document
+        .getElementById(`queue-item-${itemId}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightedItemId(itemId);
+      window.setTimeout(() => setHighlightedItemId(null), 2000);
+    });
+  }, [showSearchResults]);
 
   return (
     <div className="app admin-page">
@@ -491,19 +527,19 @@ export function AdminPage() {
               />
             </div>
             <label className="form-field">
-              <span>Vetoes to skip a song</span>
+              <span>Downvotes to skip a song</span>
               <input
                 type="number"
                 min={1}
                 max={20}
-                title="How many guest vetoes remove a track from the queue"
+                title="How many guest downvotes remove a track from the queue"
                 value={form.vetoThreshold}
                 onChange={(e) =>
                   setForm({ ...form, vetoThreshold: Number(e.target.value) })
                 }
               />
               <span className="small">
-                How many guests must veto before a track is skipped.
+                How many guests must downvote before a track is skipped.
               </span>
             </label>
             <details className="admin-advanced">
@@ -559,7 +595,7 @@ export function AdminPage() {
               className="party-qr"
             />
             <p className="small">
-              <a href="/admin/display" target="_blank" rel="noreferrer">
+              <a href="/admin/display?fullscreen=1" target="_blank" rel="noreferrer">
                 Open display view
               </a>{" "}
               for a TV-friendly queue + QR screen.
@@ -704,31 +740,56 @@ export function AdminPage() {
                     />
                   </div>
                 )}
-                {results.tracks.map((t) => (
-                  <SearchTrackRow
-                    key={`${artistFilter ?? "none"}-${t.uri}`}
-                    track={t}
-                    inQueue={queue ? isTrackInPartyQueue(t, queue) : false}
-                    onAdd={() => void hostAdd(t)}
-                  />
-                ))}
+                {results.tracks.map((t) => {
+                  const queueState = queue
+                    ? getSearchTrackQueueState(t, queue)
+                    : { blockedReason: null, queueItemId: null };
+                  return (
+                    <SearchTrackRow
+                      key={`${artistFilter ?? "none"}-${t.uri}`}
+                      track={t}
+                      blockedReason={queueState.blockedReason}
+                      queueItemId={queueState.queueItemId}
+                      onAdd={() => void hostAdd(t)}
+                      onGoToQueue={scrollToQueueItem}
+                    />
+                  );
+                })}
               </>
             )}
           </div>
 
-          {queue?.nowPlaying && <NowPlayingBanner item={queue.nowPlaying} />}
+          {queue?.nowPlaying && (
+            <NowPlayingBanner
+              item={queue.nowPlaying}
+              highlightedItemId={highlightedItemId}
+            />
+          )}
 
-          {!showSearchResults && upNext && <UpNextLockedSection item={upNext} />}
+          {!showSearchResults && upNext && (
+            <UpNextLockedSection
+              item={upNext}
+              highlightedItemId={highlightedItemId}
+            />
+          )}
 
           {!showSearchResults &&
-            laterQueue.map((item) => (
-              <AdminQueueRow
-                key={item.id}
-                item={item}
-                partyId={party.id}
-                onAction={hostAction}
-              />
-            ))}
+            laterQueue.map((item) => {
+              const reorderIdx = reorderableIds.indexOf(item.id);
+              return (
+                <AdminQueueRow
+                  key={item.id}
+                  item={item}
+                  partyId={party.id}
+                  onAction={hostAction}
+                  canMoveUp={reorderIdx > 0}
+                  canMoveDown={
+                    reorderIdx >= 0 && reorderIdx < reorderableIds.length - 1
+                  }
+                  highlightedItemId={highlightedItemId}
+                />
+              );
+            })}
 
           <div className="card admin-section">
             <h2>History</h2>

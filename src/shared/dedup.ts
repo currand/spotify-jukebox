@@ -45,3 +45,42 @@ export function isDuplicateTitle(
     return similarity(normalized, other) >= 0.85;
   });
 }
+
+import type { DedupTrack } from "./types";
+
+export function isDuplicateTrack(
+  candidate: DedupTrack,
+  existing: DedupTrack[],
+): boolean {
+  const title = normalizeTitle(candidate.trackName);
+  if (!title) return false;
+  const artist = normalizeTitle(candidate.artistName);
+  return existing.some((entry) => {
+    const otherTitle = normalizeTitle(entry.trackName);
+    if (!otherTitle) return false;
+    const otherArtist = normalizeTitle(entry.artistName);
+    const titleMatch =
+      title === otherTitle || similarity(title, otherTitle) >= 0.85;
+    if (!titleMatch) return false;
+    if (!artist || !otherArtist) return titleMatch;
+    return artist === otherArtist || similarity(artist, otherArtist) >= 0.85;
+  });
+}
+
+export function normalizeDisplayName(name: string): string {
+  return name.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+export function isDuplicateDisplayName(
+  candidate: string,
+  existing: string[],
+): boolean {
+  const normalized = normalizeDisplayName(candidate);
+  if (!normalized) return false;
+  return existing.some((name) => {
+    const other = normalizeDisplayName(name);
+    if (!other) return false;
+    if (normalized === other) return true;
+    return similarity(normalized, other) >= 0.85;
+  });
+}

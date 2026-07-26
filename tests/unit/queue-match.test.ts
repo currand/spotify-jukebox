@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { isTrackInPartyQueue } from "../../src/shared/queue-match";
+import {
+  findActiveQueueItem,
+  getSearchTrackQueueState,
+  isTrackInPartyQueue,
+} from "../../src/shared/queue-match";
 import type { QueueItemView } from "../../src/shared/types";
 
 const item = (overrides: Partial<QueueItemView>): QueueItemView => ({
@@ -24,30 +28,45 @@ describe("isTrackInPartyQueue", () => {
     const queue = {
       nowPlaying: null,
       boostLane: [],
-      upcoming: [item({ spotifyUri: "spotify:track:abc" })],
-      dedupTitles: [],
+      upcoming: [item({ spotifyUri: "spotify:track:abc", id: "abc" })],
+      dedupTracks: [],
     };
     expect(
       isTrackInPartyQueue(
-        { uri: "spotify:track:abc", name: "Different Title" },
+        { uri: "spotify:track:abc", name: "Different Title", artistName: "X" },
         queue,
       ),
     ).toBe(true);
   });
 
-  test("matches recent history by fuzzy title", () => {
+  test("matches recent history by fuzzy title and artist", () => {
     const queue = {
       nowPlaying: null,
       boostLane: [],
       upcoming: [],
-      dedupTitles: ["Bohemian Rhapsody"],
+      dedupTracks: [{ trackName: "Bohemian Rhapsody", artistName: "Queen" }],
     };
     expect(
       isTrackInPartyQueue(
-        { uri: "spotify:track:new", name: "Bohemian Rhapsody" },
+        { uri: "spotify:track:new", name: "Bohemian Rhapsody", artistName: "Queen" },
         queue,
       ),
     ).toBe(true);
+  });
+
+  test("same title with different artist is not in queue", () => {
+    const queue = {
+      nowPlaying: null,
+      boostLane: [],
+      upcoming: [],
+      dedupTracks: [{ trackName: "Imagine", artistName: "John Lennon" }],
+    };
+    expect(
+      isTrackInPartyQueue(
+        { uri: "spotify:track:new", name: "Imagine", artistName: "A Perfect Circle" },
+        queue,
+      ),
+    ).toBe(false);
   });
 
   test("returns false for unrelated tracks", () => {
@@ -55,11 +74,11 @@ describe("isTrackInPartyQueue", () => {
       nowPlaying: null,
       boostLane: [],
       upcoming: [item({ trackName: "Other Song", spotifyUri: "spotify:track:other" })],
-      dedupTitles: ["Other Song"],
+      dedupTracks: [{ trackName: "Other Song", artistName: "Queen" }],
     };
     expect(
       isTrackInPartyQueue(
-        { uri: "spotify:track:new", name: "Never Gonna Give You Up" },
+        { uri: "spotify:track:new", name: "Never Gonna Give You Up", artistName: "Rick Astley" },
         queue,
       ),
     ).toBe(false);
@@ -70,13 +89,73 @@ describe("isTrackInPartyQueue", () => {
       nowPlaying: null,
       boostLane: [],
       upcoming: [],
-      dedupTitles: [],
+      dedupTracks: [],
     };
     expect(
       isTrackInPartyQueue(
-        { uri: "spotify:track:new", name: "Bohemian Rhapsody" },
+        { uri: "spotify:track:new", name: "Bohemian Rhapsody", artistName: "Queen" },
         queue,
       ),
     ).toBe(false);
+  });
+});
+
+describe("findActiveQueueItem", () => {
+  test("returns item when URI is in upcoming order", () => {
+    const upcomingItem = item({ id: "up", spotifyUri: "spotify:track:up" });
+    const queue = {
+      nowPlaying: null,
+      boostLane: [],
+      upcoming: [upcomingItem],
+      dedupTracks: [],
+    };
+    expect(
+      findActiveQueueItem({ uri: "spotify:track:up" }, queue)?.id,
+    ).toBe("up");
+  });
+
+  test("returns null for dedup-only history match", () => {
+    const queue = {
+      nowPlaying: null,
+      boostLane: [],
+      upcoming: [],
+      dedupTracks: [{ trackName: "Old Song", artistName: "Band" }],
+    };
+    expect(
+      findActiveQueueItem({ uri: "spotify:track:old" }, queue),
+    ).toBeNull();
+  });
+});
+
+describe("getSearchTrackQueueState", () => {
+  test("returns active state with queue item id", () => {
+    const upcomingItem = item({ id: "live", spotifyUri: "spotify:track:live" });
+    const queue = {
+      nowPlaying: null,
+      boostLane: [],
+      upcoming: [upcomingItem],
+      dedupTracks: [],
+    };
+    expect(
+      getSearchTrackQueueState(
+        { uri: "spotify:track:live", name: "Live", artistName: "Band" },
+        queue,
+      ),
+    ).toEqual({ blockedReason: "active", queueItemId: "live" });
+  });
+
+  test("returns history state without queue item id", () => {
+    const queue = {
+      nowPlaying: null,
+      boostLane: [],
+      upcoming: [],
+      dedupTracks: [{ trackName: "Played", artistName: "Band" }],
+    };
+    expect(
+      getSearchTrackQueueState(
+        { uri: "spotify:track:other", name: "Played", artistName: "Band" },
+        queue,
+      ),
+    ).toEqual({ blockedReason: "history", queueItemId: null });
   });
 });

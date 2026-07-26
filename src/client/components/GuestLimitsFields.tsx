@@ -91,7 +91,7 @@ export function GuestLimitsFields({
         </p>
       )}
       <label className="form-field">
-        <span>Vetoes to skip a song</span>
+        <span>Downvotes to skip a song</span>
         <input
           type="number"
           min={1}
@@ -115,8 +115,8 @@ export function GuestLimitsFields({
         onChange={(next) => patchLimit("upvote", next)}
       />
       <LimitRow
-        label="Vetoes"
-        hint="How many vetoes a guest can cast in the window."
+        label="Downvotes"
+        hint="How many downvotes a guest can cast in the window."
         value={rateLimits.veto}
         windowUnit="min"
         onChange={(next) => patchLimit("veto", next)}

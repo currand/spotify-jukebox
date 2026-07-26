@@ -8,8 +8,8 @@ import type { Db } from "../db/schema";
 import { newId } from "../crypto";
 import { setSpotifyRateLimitListener } from "./spotify-metrics";
 
-/** Match diagnostics page refresh cadence. */
-export const METRICS_SNAPSHOT_INTERVAL_MS = 5_000;
+/** Persist diagnostics at 10s — admin UI summarizes to 1-minute buckets. */
+export const METRICS_SNAPSHOT_INTERVAL_MS = 10_000;
 /** Minimum gap between rate-limit-triggered snapshots. */
 export const METRICS_RATE_LIMIT_SNAPSHOT_COOLDOWN_MS = 10_000;
 /** Max interval snapshots retained per session (older intervals pruned). */
@@ -189,13 +189,70 @@ function mapSnapshotSummary(row: {
   };
 }
 
+function minuteBucketKey(iso: string): string {
+  const date = new Date(iso);
+  date.setUTCSeconds(0, 0);
+  return date.toISOString();
+}
+
+/** Collapse 10s interval snapshots into one summary row per UTC minute. */
+export function summarizeMetricsSnapshotsByMinute(
+  snapshots: MetricsSnapshotSummary[],
+): MetricsSnapshotSummary[] {
+  const summarized: MetricsSnapshotSummary[] = [];
+  const intervalBuckets = new Map<string, MetricsSnapshotSummary[]>();
+
+  for (const snapshot of snapshots) {
+    if (snapshot.reason !== "interval") {
+      summarized.push(snapshot);
+      continue;
+    }
+    const key = minuteBucketKey(snapshot.recordedAt);
+    const bucket = intervalBuckets.get(key) ?? [];
+    bucket.push(snapshot);
+    intervalBuckets.set(key, bucket);
+  }
+
+  for (const [minuteIso, bucket] of intervalBuckets) {
+    const latest = bucket.reduce((newest, current) =>
+      new Date(current.recordedAt).getTime() > new Date(newest.recordedAt).getTime()
+        ? current
+        : newest,
+    );
+    summarized.push({
+      ...latest,
+      recordedAt: minuteIso,
+      rateLimitCount: Math.max(...bucket.map((entry) => entry.rateLimitCount)),
+      apiCallsLast5m: Math.max(...bucket.map((entry) => entry.apiCallsLast5m)),
+      apiCallsTotal: latest.apiCallsTotal,
+      syncRetryAfterMs: bucket.reduce<number | null>((peak, entry) => {
+        const value = entry.syncRetryAfterMs ?? 0;
+        if (value <= 0) return peak;
+        return peak == null ? value : Math.max(peak, value);
+      }, null),
+      sampleCount: bucket.length,
+    });
+  }
+
+  return summarized.sort(
+    (a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime(),
+  );
+}
+
 export function listMetricsSnapshots(
   db: Db,
   sessionId: string,
-  options?: { reason?: MetricsSnapshotReason; limit?: number },
+  options?: {
+    reason?: MetricsSnapshotReason;
+    limit?: number;
+    granularity?: "raw" | "minute";
+  },
 ): MetricsSnapshotSummary[] {
   const limit = options?.limit ?? 500;
   const reason = options?.reason;
+  const granularity = options?.granularity ?? "raw";
+  const rawLimit =
+    granularity === "minute" ? Math.min(10_000, limit * 6) : limit;
 
   const rows = reason
     ? (db
@@ -206,7 +263,7 @@ export function listMetricsSnapshots(
            ORDER BY recorded_at DESC
            LIMIT ?`,
         )
-        .all(sessionId, reason, limit) as {
+        .all(sessionId, reason, rawLimit) as {
         id: number;
         session_id: string;
         recorded_at: string;
@@ -222,7 +279,7 @@ export function listMetricsSnapshots(
            ORDER BY recorded_at DESC
            LIMIT ?`,
         )
-        .all(sessionId, limit) as {
+        .all(sessionId, rawLimit) as {
         id: number;
         session_id: string;
         recorded_at: string;
@@ -231,7 +288,11 @@ export function listMetricsSnapshots(
         payload: string;
       }[]);
 
-  return rows.map(mapSnapshotSummary);
+  const snapshots = rows.map(mapSnapshotSummary);
+  if (granularity !== "minute") {
+    return snapshots;
+  }
+  return summarizeMetricsSnapshotsByMinute(snapshots).slice(0, limit);
 }
 
 export function getMetricsSnapshot(

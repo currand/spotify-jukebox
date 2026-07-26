@@ -69,6 +69,10 @@ export interface QueueItemView {
   guestBoostBlocked?: boolean;
   /** Guest UI: veto blocked — already in Spotify buffer */
   guestVetoBlocked?: boolean;
+  /** Guest UI: current guest already upvoted this track */
+  guestHasUpvoted?: boolean;
+  /** Guest UI: current guest already downvoted this track */
+  guestHasDownvoted?: boolean;
   /** Track is canonical in Spotify's queue and cannot be reordered by guests */
   spotifyLocked?: boolean;
 }
@@ -152,13 +156,19 @@ export interface HostSpotifyStatus {
   lastSyncedAt: number | null;
 }
 
+export interface DedupTrack {
+  trackName: string;
+  artistName: string;
+}
+
 export interface QueueSnapshot {
   nowPlaying: QueueItemView | null;
   /** Full upcoming play order (boost lane, then normal; queued track pinned first). */
   upcomingOrder: QueueItemView[];
   upcoming: QueueItemView[];
   boostLane: QueueItemView[];
-  dedupTitles: string[];
+  dedupTracks: DedupTrack[];
+  nextItemId?: string | null;
 }
 
 export interface QueueResponse extends QueueSnapshot {
@@ -286,4 +296,6 @@ export interface MetricsSnapshotSummary {
   apiCallsTotal: number;
   apiCallsLast5m: number;
   syncRetryAfterMs: number | null;
+  /** Raw 10s snapshots rolled into this minute bucket (interval summaries only). */
+  sampleCount?: number;
 }

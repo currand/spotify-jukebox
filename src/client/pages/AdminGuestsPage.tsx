@@ -46,7 +46,7 @@ export function AdminGuestsPage() {
     const label = guest.displayName ?? "this guest";
     if (
       !confirm(
-        `Reset limits for ${label}?\n\nThey can add, upvote, veto, and boost again. Any active boosts on their songs are removed so the queue can resync.`,
+        `Reset limits for ${label}?\n\nThey can add, upvote, downvote, and boost again. Any active boosts on their songs are removed so the queue can resync.`,
       )
     ) {
       return;
@@ -80,7 +80,7 @@ export function AdminGuestsPage() {
     if (!party) return;
     if (
       !confirm(
-        `Remove all ${guests.length} guest(s)?\n\nTheir sessions, votes, and vetoes will be cleared. Songs they added stay in the queue.`,
+        `Remove all ${guests.length} guest(s)?\n\nTheir sessions, votes, and downvotes will be cleared. Songs they added stay in the queue.`,
       )
     ) {
       return;

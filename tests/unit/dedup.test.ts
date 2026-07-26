@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isDuplicateTitle, normalizeTitle } from "../../src/shared/dedup";
+import { isDuplicateDisplayName, isDuplicateTitle, isDuplicateTrack, normalizeTitle } from "../../src/shared/dedup";
 import { compareNormalQueue, isGuestBoostBlocked, isGuestUpvoteBlocked, isGuestVetoBlocked, type QueueItemRow } from "../../src/server/services/queue";
 
 describe("dedup", () => {
@@ -10,6 +10,26 @@ describe("dedup", () => {
   test("detects fuzzy duplicates", () => {
     expect(isDuplicateTitle("Bohemian Rhapsody", ["Bohemian Rhapsody"])).toBe(true);
     expect(isDuplicateTitle("Bohemian Rhapsody", ["Totally Different"])).toBe(false);
+  });
+
+  test("detects duplicate tracks by title and artist", () => {
+    expect(
+      isDuplicateTrack(
+        { trackName: "Imagine", artistName: "John Lennon" },
+        [{ trackName: "Imagine", artistName: "John Lennon" }],
+      ),
+    ).toBe(true);
+    expect(
+      isDuplicateTrack(
+        { trackName: "Imagine", artistName: "A Perfect Circle" },
+        [{ trackName: "Imagine", artistName: "John Lennon" }],
+      ),
+    ).toBe(false);
+  });
+
+  test("detects duplicate display names case-insensitively", () => {
+    expect(isDuplicateDisplayName("Bob", ["bob"])).toBe(true);
+    expect(isDuplicateDisplayName("Alice", ["Bob"])).toBe(false);
   });
 });
 

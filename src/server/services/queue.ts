@@ -54,6 +54,10 @@ export function getQueueItems(
     .all(partyId) as QueueItemRow[];
 }
 
+function isIdleSeed(row: QueueItemRow): boolean {
+  return row.from_seed === 1 && row.upvote_count === 0 && row.is_boosted === 0;
+}
+
 export function compareNormalQueue(a: QueueItemRow, b: QueueItemRow): number {
   if (a.manual_order != null && b.manual_order != null) {
     return a.manual_order - b.manual_order;
@@ -63,6 +67,9 @@ export function compareNormalQueue(a: QueueItemRow, b: QueueItemRow): number {
   if (a.upvote_count !== b.upvote_count) {
     return b.upvote_count - a.upvote_count;
   }
+  const aIdle = isIdleSeed(a);
+  const bIdle = isIdleSeed(b);
+  if (aIdle !== bIdle) return aIdle ? 1 : -1;
   return a.added_at.localeCompare(b.added_at);
 }
 
@@ -85,6 +92,13 @@ export function getNormalUpcoming(items: QueueItemRow[]): QueueItemRow[] {
         (i.status === "pending" || i.status === "queued"),
     )
     .sort(compareNormalQueue);
+}
+
+/** Normal upcoming tracks the admin may reorder (excludes Spotify buffer and tail). */
+export function getAdminReorderableNormal(items: QueueItemRow[]): QueueItemRow[] {
+  return getNormalUpcoming(items).filter(
+    (i) => i.status !== "queued" && i.from_spotify !== 1,
+  );
 }
 
 /** Play order: now playing and Spotify-buffered track are canonical; rest is virtual. */
@@ -211,13 +225,16 @@ export function adoptSpotifyTrack(
 ): string {
   const existing = db
     .query(
-      `SELECT id FROM queue_items
+      `SELECT id, status FROM queue_items
        WHERE party_id = ? AND spotify_uri = ?
          AND status IN ('pending', 'queued', 'playing')`,
     )
-    .get(partyId, track.uri) as { id: string } | null;
+    .get(partyId, track.uri) as { id: string; status: QueueItemStatus } | null;
 
   if (existing) {
+    if (existing.status === "playing" && status !== "playing") {
+      return existing.id;
+    }
     db.run(`UPDATE queue_items SET status = ? WHERE id = ?`, [status, existing.id]);
     return existing.id;
   }
@@ -289,21 +306,27 @@ export function nextBoostPosition(db: Db, partyId: string): number {
   return (row.maxPos ?? -1) + 1;
 }
 
-export function getDedupTitles(db: Db, partyId: string): string[] {
+export function getDedupTracks(
+  db: Db,
+  partyId: string,
+): { trackName: string; artistName: string }[] {
   const active = db
     .query(
-      `SELECT track_name FROM queue_items
+      `SELECT track_name, artist_name FROM queue_items
        WHERE party_id = ? AND status IN ('pending', 'queued', 'playing')`,
     )
-    .all(partyId) as { track_name: string }[];
+    .all(partyId) as { track_name: string; artist_name: string }[];
   const recent = db
     .query(
-      `SELECT track_name FROM queue_items
+      `SELECT track_name, artist_name FROM queue_items
        WHERE party_id = ? AND status IN ('played', 'vetoed')
        ORDER BY finished_at DESC LIMIT 20`,
     )
-    .all(partyId) as { track_name: string }[];
-  return [...active, ...recent].map((r) => r.track_name);
+    .all(partyId) as { track_name: string; artist_name: string }[];
+  return [...active, ...recent].map((r) => ({
+    trackName: r.track_name,
+    artistName: r.artist_name,
+  }));
 }
 
 export function markPriorItemsPlayed(

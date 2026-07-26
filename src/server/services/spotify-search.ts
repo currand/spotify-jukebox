@@ -42,6 +42,7 @@ export function artistsToPrefetch(
   tracks: { artists: { id?: string }[] }[],
   limit = ARTIST_PREFETCH_COUNT,
 ): PrefetchArtistTarget[] {
+  const artistNames = new Map(artists.map((artist) => [artist.id, artist.name]));
   const trackCounts = new Map<string, { name: string; count: number }>();
   for (const track of tracks) {
     for (const artist of track.artists) {
@@ -51,7 +52,7 @@ export function artistsToPrefetch(
         current.count += 1;
       } else {
         trackCounts.set(artist.id, {
-          name: artist.name,
+          name: artistNames.get(artist.id) ?? "Unknown",
           count: 1,
         });
       }

@@ -50,7 +50,7 @@ export function GuestAdminList({
               <div className="guest-admin-stats">
                 <span>{guest.songsAdded.length} added</span>
                 <span>{guest.upvoteCount} upvotes</span>
-                <span>{guest.vetoCount} vetoes</span>
+                <span>{guest.vetoCount} downvotes</span>
                 <span>
                   {guest.boostCount} boost{guest.boostCount === 1 ? "" : "s"}
                 </span>

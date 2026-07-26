@@ -2,8 +2,10 @@ import * as React from "react";
 import { Link, useParams } from "react-router-dom";
 import type { GuestMySongsResponse, PartyView } from "@/shared/types";
 import { GuestNav } from "../components/GuestNav";
-import { BoostBadge, formatApiError, TrackTitle } from "../components/QueueUi";
-import { OpenInSafariHint } from "../components/OpenInSafariHint";
+import { GuestNamePrompt } from "../components/GuestNamePrompt";
+import { BoostBadge, formatApiError, TrackTitle, UpvoteCount, DownvoteCount } from "../components/QueueUi";
+import { usePopup } from "../hooks/usePopup";
+import { boostApiMessage } from "../utils/queue-action-messages";
 import { api, joinParty } from "../http";
 
 function statusLabel(status: string): string {
@@ -13,7 +15,7 @@ function statusLabel(status: string): string {
     case "skipped":
       return "Removed";
     case "vetoed":
-      return "Vetoed";
+      return "Downvoted";
     default:
       return status;
   }
@@ -22,32 +24,38 @@ function statusLabel(status: string): string {
 export function GuestMySongsPage() {
   const { slug = "" } = useParams<{ slug: string }>();
   const [joined, setJoined] = React.useState(false);
+  const [me, setMe] = React.useState<{ displayName: string | null } | null>(
+    null,
+  );
   const [party, setParty] = React.useState<PartyView | null>(null);
   const [songs, setSongs] = React.useState<GuestMySongsResponse | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
-  const [notice, setNotice] = React.useState<string | null>(null);
+  const [joinError, setJoinError] = React.useState<string | null>(null);
+  const { showPopup, PopupHost } = usePopup();
 
   const load = React.useCallback(async () => {
     if (!slug) return;
     try {
-      setError(null);
       const data = await api<GuestMySongsResponse>(`/parties/${slug}/me/songs`);
       setSongs(data);
       const partyInfo = await api<PartyView>(`/parties/${slug}`);
       setParty(partyInfo);
     } catch (e) {
-      setError(formatApiError(e));
+      showPopup(formatApiError(e), "error");
     }
-  }, [slug]);
+  }, [slug, showPopup]);
 
   React.useEffect(() => {
     void (async () => {
       try {
         await joinParty(slug);
         setJoined(true);
+        const profile = await api<{ displayName: string | null }>(
+          `/parties/${slug}/me`,
+        );
+        setMe(profile);
         await load();
       } catch {
-        setError("Could not join party");
+        setJoinError("Could not join party");
       }
     })();
   }, [slug, load]);
@@ -62,44 +70,39 @@ export function GuestMySongsPage() {
 
   async function boost(itemId: string) {
     try {
-      setError(null);
-      setNotice(null);
       await api(`/parties/${slug}/queue/${itemId}/boost`, {
         method: "POST",
         body: "{}",
       });
-      setNotice("Song boosted");
+      showPopup("Song boosted", "success");
       await load();
     } catch (e) {
-      setError(formatApiError(e));
+      const message = boostApiMessage(e);
+      showPopup(message ?? formatApiError(e), message ? "info" : "error");
     }
   }
 
   async function unboost(itemId: string) {
     try {
-      setError(null);
-      setNotice(null);
       await api(`/parties/${slug}/me/songs/${itemId}/unboost`, {
         method: "POST",
         body: "{}",
       });
-      setNotice("Boost removed");
+      showPopup("Boost removed", "success");
       await load();
     } catch (e) {
-      setError(formatApiError(e));
+      showPopup(formatApiError(e), "error");
     }
   }
 
   async function removeSong(itemId: string, trackName: string) {
     if (!confirm(`Remove “${trackName}” from the queue?`)) return;
     try {
-      setError(null);
-      setNotice(null);
       await api(`/parties/${slug}/me/songs/${itemId}`, { method: "DELETE" });
-      setNotice(`Removed “${trackName}”`);
+      showPopup(`Removed “${trackName}”`, "success");
       await load();
     } catch (e) {
-      setError(formatApiError(e));
+      showPopup(formatApiError(e), "error");
     }
   }
 
@@ -133,7 +136,7 @@ export function GuestMySongsPage() {
               </h3>
               <p>
                 {song.artistName}
-                {title === "Played" || title === "Vetoed"
+                {title === "Played" || title === "Downvoted"
                   ? ` · ${statusLabel(song.status)}`
                   : null}
               </p>
@@ -148,16 +151,26 @@ export function GuestMySongsPage() {
     return (
       <div className="app">
         <p>Joining party…</p>
-        {error && <p className="error">{error}</p>}
+        {joinError && <p className="error">{joinError}</p>}
       </div>
+    );
+  }
+
+  if (!me?.displayName) {
+    return (
+      <GuestNamePrompt
+        slug={slug}
+        onSaved={(profile) => {
+          setMe(profile);
+          void load();
+        }}
+      />
     );
   }
 
   return (
     <div className="app guest-my-songs-page">
       <h1>{party?.name ?? "Jukebox"}</h1>
-
-      <OpenInSafariHint joinUrl={window.location.href} />
 
       <GuestNav
         slug={slug}
@@ -167,9 +180,6 @@ export function GuestMySongsPage() {
       {partyOff && (
         <div className="banner off">Party is paused — view only.</div>
       )}
-
-      {error && <p className="error">{error}</p>}
-      {notice && <p className="toast-ok">{notice}</p>}
 
       <div className="card">
         <h2>My Songs</h2>
@@ -197,7 +207,8 @@ export function GuestMySongsPage() {
             <div className="track-meta">
               <TrackTitle name={song.trackName} boosted={song.isBoosted} />
               <p>
-                {song.artistName} · ↑{song.upvoteCount} · ✕{song.vetoCount}
+                {song.artistName} · <UpvoteCount count={song.upvoteCount} /> ·{" "}
+                <DownvoteCount count={song.vetoCount} />
               </p>
               {song.queuePosition && (
                 <p className="guest-my-song-position">{song.queuePosition}</p>
@@ -236,8 +247,9 @@ export function GuestMySongsPage() {
 
         {renderHistorySection("Removed", removedHistory)}
         {renderHistorySection("Played", playedHistory)}
-        {renderHistorySection("Vetoed", vetoedHistory)}
+        {renderHistorySection("Downvoted", vetoedHistory)}
       </div>
+      <PopupHost />
     </div>
   );
 }

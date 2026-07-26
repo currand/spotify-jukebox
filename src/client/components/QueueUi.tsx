@@ -1,5 +1,55 @@
 import * as React from "react";
+import { queueItemAnchorId } from "@/shared/queue-match";
+import type { SearchQueueBlockReason } from "@/shared/queue-match";
 import type { QueueItemView, TrackInfo } from "@/shared/types";
+
+export function ThumbsUpIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      className="thumbs-up-icon"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z" />
+    </svg>
+  );
+}
+
+export function UpvoteCount({ count }: { count: number }) {
+  return (
+    <span className="upvote-count">
+      <ThumbsUpIcon />
+      <span>{count}</span>
+    </span>
+  );
+}
+
+export function ThumbsDownIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      className="thumbs-down-icon"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 .55.45 1 1 1h5.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23 16 16.83V3zM17 1v12h4V1h-4z" />
+    </svg>
+  );
+}
+
+export function DownvoteCount({ count }: { count: number }) {
+  return (
+    <span className="downvote-count">
+      <ThumbsDownIcon />
+      <span>{count}</span>
+    </span>
+  );
+}
 
 export function BoostBadge() {
   return <span className="boost-badge">Boosted</span>;
@@ -20,9 +70,25 @@ export function TrackTitle({
   );
 }
 
-export function NowPlayingBanner({ item }: { item: QueueItemView }) {
+function queueItemHighlightClass(
+  itemId: string,
+  highlightedItemId?: string | null,
+): string {
+  return highlightedItemId === itemId ? " queue-item--highlight" : "";
+}
+
+export function NowPlayingBanner({
+  item,
+  highlightedItemId,
+}: {
+  item: QueueItemView;
+  highlightedItemId?: string | null;
+}) {
   return (
-    <div className="banner playing now-playing">
+    <div
+      id={queueItemAnchorId(item.id)}
+      className={`banner playing now-playing${queueItemHighlightClass(item.id, highlightedItemId)}`}
+    >
       <div className="now-playing-inner">
         {item.albumArtUrl ? (
           <img src={item.albumArtUrl} alt="" className="now-playing-art" />
@@ -35,20 +101,25 @@ export function NowPlayingBanner({ item }: { item: QueueItemView }) {
             <span className="track-title-name">{item.trackName}</span>
             {item.isBoosted ? <BoostBadge /> : null}
           </div>
-          <div className="now-playing-sub">
-            {item.artistName} · {item.addedBy}
-          </div>
+          <div className="now-playing-sub">{item.artistName} · {item.addedBy}</div>
         </div>
       </div>
     </div>
   );
 }
 
-export function UpNextLockedSection({ item }: { item: QueueItemView }) {
+export function UpNextLockedSection({
+  item,
+  highlightedItemId,
+}: {
+  item: QueueItemView;
+  highlightedItemId?: string | null;
+}) {
   const buffered = item.status === "queued";
   return (
     <section
-      className={`up-next-locked${buffered ? " up-next-locked--buffered" : ""}${item.isBoosted ? " up-next-locked--boosted" : ""}`}
+      id={queueItemAnchorId(item.id)}
+      className={`up-next-locked${buffered ? " up-next-locked--buffered" : ""}${item.isBoosted ? " up-next-locked--boosted" : ""}${queueItemHighlightClass(item.id, highlightedItemId)}`}
     >
       <h2 className="up-next-locked-heading">Up next</h2>
       <p className="small up-next-locked-note">
@@ -59,8 +130,8 @@ export function UpNextLockedSection({ item }: { item: QueueItemView }) {
         <div className="track-meta">
           <TrackTitle name={item.trackName} boosted={item.isBoosted} />
           <p>
-            {item.artistName} · {item.addedBy} · ↑{item.upvoteCount} · ✕
-            {item.vetoCount}
+            {item.artistName} · {item.addedBy} · <UpvoteCount count={item.upvoteCount} /> ·{" "}
+            <DownvoteCount count={item.vetoCount} />
           </p>
         </div>
       </div>
@@ -70,15 +141,21 @@ export function UpNextLockedSection({ item }: { item: QueueItemView }) {
 
 export function SearchTrackRow({
   track,
-  inQueue,
+  blockedReason,
+  queueItemId,
   addDisabled,
   onAdd,
+  onGoToQueue,
 }: {
   track: TrackInfo;
-  inQueue: boolean;
+  blockedReason?: SearchQueueBlockReason;
+  queueItemId?: string | null;
   addDisabled?: boolean;
   onAdd: () => void;
+  onGoToQueue?: (itemId: string) => void;
 }) {
+  const inQueue = blockedReason != null;
+
   return (
     <div
       className={`track card search-track${inQueue ? " search-track--in-queue" : ""}`}
@@ -88,8 +165,16 @@ export function SearchTrackRow({
         <h3>{track.name}</h3>
         <p>{track.artistName}</p>
       </div>
-      {inQueue ? (
-        <span className="search-in-queue">In queue</span>
+      {blockedReason === "active" && queueItemId && onGoToQueue ? (
+        <button
+          type="button"
+          className="search-in-queue search-in-queue--link"
+          onClick={() => onGoToQueue(queueItemId)}
+        >
+          In queue
+        </button>
+      ) : blockedReason === "history" ? (
+        <span className="search-in-queue search-in-queue--history">Already played</span>
       ) : (
         <button type="button" disabled={addDisabled} onClick={onAdd}>
           Add
@@ -129,7 +214,7 @@ export function ReadOnlyQueueRow({ item }: { item: QueueItemView }) {
           {!item.spotifyLocked && (
             <>
               {" "}
-              · ↑{item.upvoteCount} · ✕{item.vetoCount}
+              · <UpvoteCount count={item.upvoteCount} /> · <DownvoteCount count={item.vetoCount} />
             </>
           )}
         </p>
@@ -142,22 +227,29 @@ export function AdminQueueRow({
   item,
   onAction,
   partyId,
+  canMoveUp = true,
+  canMoveDown = true,
+  highlightedItemId,
 }: {
   item: QueueItemView;
   partyId: string;
   onAction: (path: string, method?: string, body?: unknown) => Promise<void>;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
+  highlightedItemId?: string | null;
 }) {
   const locked = item.spotifyLocked || item.status === "queued";
 
   return (
     <div
-      className={`track card${item.isBoosted ? " track--boosted" : ""}${locked ? " track--spotify-locked" : ""}`}
+      id={queueItemAnchorId(item.id)}
+      className={`track card${item.isBoosted ? " track--boosted" : ""}${locked ? " track--spotify-locked" : ""}${queueItemHighlightClass(item.id, highlightedItemId)}`}
     >
       {item.albumArtUrl && <img src={item.albumArtUrl} alt="" />}
       <div className="track-meta">
         <TrackTitle name={item.trackName} boosted={item.isBoosted} />
         <p>
-          {item.artistName} · {item.addedBy} · ↑{item.upvoteCount}
+          {item.artistName} · {item.addedBy} · <UpvoteCount count={item.upvoteCount} />
           {locked ? " · Locked in Spotify" : ""}
         </p>
       </div>
@@ -177,6 +269,8 @@ export function AdminQueueRow({
           </button>
           <button
             className="secondary"
+            disabled={!canMoveUp}
+            title={!canMoveUp ? "Already at top of reorderable queue" : undefined}
             onClick={() =>
               void onAction(
                 `/host/parties/${partyId}/queue/${item.id}`,
@@ -189,6 +283,8 @@ export function AdminQueueRow({
           </button>
           <button
             className="secondary"
+            disabled={!canMoveDown}
+            title={!canMoveDown ? "Already at bottom of reorderable queue" : undefined}
             onClick={() =>
               void onAction(
                 `/host/parties/${partyId}/queue/${item.id}`,
@@ -268,6 +364,9 @@ export function formatApiError(error: unknown): string {
   }
   if (msg.includes("Display name required")) {
     return "Enter your name before adding songs.";
+  }
+  if (msg.includes("Could not verify that name")) {
+    return "We couldn't verify that name — pick a different one.";
   }
   if (msg.includes("Rate limited") || msg.includes("Search rate limited")) {
     return "Slow down — try again in a moment.";

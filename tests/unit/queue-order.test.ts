@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
+  compareNormalQueue,
+  getAdminReorderableNormal,
   getNextUpcomingItem,
   getPlayOrder,
   getSpotifyBufferItem,
@@ -145,5 +147,63 @@ describe("guest buffer locks", () => {
     expect(isGuestBoostBlocked(items, "tail")).toBe(true);
     expect(isGuestVetoBlocked(items, "tail")).toBe(true);
     expect(isGuestUpvoteBlocked(items, "normal")).toBe(false);
+  });
+});
+
+describe("getAdminReorderableNormal", () => {
+  test("excludes queued buffer and Spotify tail tracks", () => {
+    const queued = base({ id: "queued", status: "queued" });
+    const tail = base({
+      id: "tail",
+      status: "pending",
+      from_spotify: 1,
+      added_at: "2026-01-02T00:00:00.000Z",
+    });
+    const normal = base({
+      id: "normal",
+      added_at: "2026-01-03T00:00:00.000Z",
+    });
+    const items = [queued, tail, normal];
+
+    expect(getAdminReorderableNormal(items).map((i) => i.id)).toEqual([
+      "normal",
+    ]);
+  });
+});
+
+describe("compareNormalQueue idle seed priority", () => {
+  test("guest add ranks above idle seed with same upvotes", () => {
+    const guestAdd = base({
+      id: "guest",
+      from_seed: 0,
+      added_at: "2026-01-02T00:00:00.000Z",
+    });
+    const idleSeed = base({
+      id: "seed",
+      from_seed: 1,
+      added_at: "2026-01-01T00:00:00.000Z",
+    });
+    expect([idleSeed, guestAdd].sort(compareNormalQueue).map((i) => i.id)).toEqual([
+      "guest",
+      "seed",
+    ]);
+  });
+
+  test("seed with upvotes stays above guest add with zero upvotes", () => {
+    const guestAdd = base({
+      id: "guest",
+      from_seed: 0,
+      added_at: "2026-01-02T00:00:00.000Z",
+    });
+    const votedSeed = base({
+      id: "seed",
+      from_seed: 1,
+      upvote_count: 2,
+      added_at: "2026-01-01T00:00:00.000Z",
+    });
+    expect([guestAdd, votedSeed].sort(compareNormalQueue).map((i) => i.id)).toEqual([
+      "seed",
+      "guest",
+    ]);
   });
 });

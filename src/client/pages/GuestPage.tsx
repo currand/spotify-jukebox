@@ -1,19 +1,32 @@
 import * as React from "react";
 import { useParams } from "react-router-dom";
 import type { QueueItemView, QueueResponse, SearchResult, TrackInfo } from "@/shared/types";
-import { isTrackInPartyQueue } from "@/shared/queue-match";
+import { getSearchTrackQueueState } from "@/shared/queue-match";
 import {
   formatApiError,
   NowPlayingBanner,
   SearchFilterChips,
   SearchNav,
   SearchTrackRow,
+  ThumbsUpIcon,
   TrackTitle,
   UpNextLockedSection,
+  UpvoteCount,
+  DownvoteCount,
+  ThumbsDownIcon,
 } from "../components/QueueUi";
 import { GuestNav } from "../components/GuestNav";
+import { GuestNamePrompt } from "../components/GuestNamePrompt";
+import { usePopup } from "../hooks/usePopup";
+import {
+  boostApiMessage,
+  boostBlockedMessage,
+  downvoteApiMessage,
+  downvoteBlockedMessage,
+  upvoteApiMessage,
+  upvoteBlockedMessage,
+} from "../utils/queue-action-messages";
 import { api, guestFetchHeaders, joinParty } from "../http";
-import { OpenInSafariHint } from "../components/OpenInSafariHint";
 import { SpotifyAttribution } from "../components/SpotifyAttribution";
 
 export function GuestPage() {
@@ -25,8 +38,6 @@ type SearchView = "idle" | "results" | "artist";
 type ArtistFilter = "songs" | "top-tracks";
 
 function GuestApp({ slug }: { slug: string }) {
-  const [name, setName] = React.useState("");
-  const [joined, setJoined] = React.useState(false);
   const [me, setMe] = React.useState<{
     id: string;
     displayName: string | null;
@@ -45,11 +56,16 @@ function GuestApp({ slug }: { slug: string }) {
   const [artistFilter, setArtistFilter] = React.useState<ArtistFilter | null>(
     null,
   );
-  const [error, setError] = React.useState<string | null>(null);
-  const [notice, setNotice] = React.useState<string | null>(null);
+  const [joinError, setJoinError] = React.useState<string | null>(null);
   const [searching, setSearching] = React.useState(false);
+  const { showPopup, PopupHost } = usePopup();
+  const [joined, setJoined] = React.useState(false);
+  const [highlightedItemId, setHighlightedItemId] = React.useState<string | null>(
+    null,
+  );
   const etagRef = React.useRef<string | null>(null);
   const artistLoadRef = React.useRef(0);
+  const scrollPendingRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
     void (async () => {
@@ -58,9 +74,8 @@ function GuestApp({ slug }: { slug: string }) {
         setJoined(true);
         const profile = await api<typeof me>(`/parties/${slug}/me`);
         setMe(profile);
-        if (profile?.displayName) setName(profile.displayName);
       } catch {
-        setError("Could not join party");
+        setJoinError("Could not join party");
       }
     })();
   }, [slug]);
@@ -95,12 +110,7 @@ function GuestApp({ slug }: { slug: string }) {
     return () => clearInterval(id);
   }, [joined, slug, queue?.party.status]);
 
-  async function saveName() {
-    await api(`/parties/${slug}/me`, {
-      method: "PATCH",
-      body: JSON.stringify({ displayName: name.trim() }),
-    });
-    const profile = await api<typeof me>(`/parties/${slug}/me`);
+  function onNameSaved(profile: NonNullable<typeof me>) {
     setMe(profile);
   }
 
@@ -110,20 +120,22 @@ function GuestApp({ slug }: { slug: string }) {
     setSelectedArtist(null);
     setArtistFilter(null);
     setQuery("");
-    setNotice(null);
+  }
+
+  function scrollToQueueItem(itemId: string) {
+    clearSearch();
+    scrollPendingRef.current = itemId;
   }
 
   async function search(searchQuery?: string) {
     const trimmed = (searchQuery ?? query).trim();
     if (trimmed.length < 3) {
-      setError("Enter at least 3 characters to search.");
+      showPopup("Enter at least 3 characters to search.", "info");
       return;
     }
     if (searchQuery) setQuery(searchQuery);
     if (searching) return;
     setSearching(true);
-    setError(null);
-    setNotice(null);
     try {
       const data = await api<SearchResult>(
         `/parties/${slug}/search?q=${encodeURIComponent(trimmed)}`,
@@ -133,7 +145,7 @@ function GuestApp({ slug }: { slug: string }) {
       setSelectedArtist(null);
       setArtistFilter(null);
     } catch (e) {
-      setError(formatApiError(e));
+      showPopup(formatApiError(e), "error");
     } finally {
       setSearching(false);
     }
@@ -145,8 +157,6 @@ function GuestApp({ slug }: { slug: string }) {
     filter: ArtistFilter,
   ) {
     const loadId = ++artistLoadRef.current;
-    setError(null);
-    setNotice(null);
     setSelectedArtist({ id, name });
     setArtistFilter(filter);
     setSearchView("artist");
@@ -168,14 +178,12 @@ function GuestApp({ slug }: { slug: string }) {
       });
     } catch (e) {
       if (loadId !== artistLoadRef.current) return;
-      setError(formatApiError(e));
+      showPopup(formatApiError(e), "error");
     }
   }
 
   async function addTrack(track: TrackInfo) {
     try {
-      setError(null);
-      setNotice(null);
       await api(`/parties/${slug}/queue`, {
         method: "POST",
         body: JSON.stringify({
@@ -188,26 +196,46 @@ function GuestApp({ slug }: { slug: string }) {
       etagRef.current = null;
       const profile = await api<typeof me>(`/parties/${slug}/me`);
       setMe(profile);
-      setNotice(`Added “${track.name}”`);
+      showPopup(`Added “${track.name}” to the queue`, "success");
     } catch (e) {
-      setError(formatApiError(e));
+      showPopup(formatApiError(e), "error");
     }
   }
 
   async function act(path: string) {
     try {
-      setError(null);
       await api(path, { method: "POST", body: "{}" });
       etagRef.current = null;
       const profile = await api<typeof me>(`/parties/${slug}/me`);
       setMe(profile);
     } catch (e) {
-      setError(formatApiError(e));
+      if (path.endsWith("/upvote")) {
+        const message = upvoteApiMessage(e);
+        if (message) {
+          showPopup(message, "info");
+          return;
+        }
+      }
+      if (path.endsWith("/veto")) {
+        const message = downvoteApiMessage(e);
+        if (message) {
+          showPopup(message, "info");
+          return;
+        }
+      }
+      if (path.endsWith("/boost")) {
+        const message = boostApiMessage(e);
+        if (message) {
+          showPopup(message, "info");
+          return;
+        }
+      }
+      showPopup(formatApiError(e), "error");
     }
   }
 
-  const canMutate = Boolean(me?.displayName);
   const partyOff = queue?.party.status !== "on";
+  const canMutate = !partyOff;
   const showingSearch = searchView !== "idle" && results;
 
   const upcomingOrdered = queue?.upcomingOrder ?? [
@@ -221,92 +249,75 @@ function GuestApp({ slug }: { slug: string }) {
   const later = upcomingOrdered.filter((item) => item.id !== upNext?.id);
   const hasLater = later.length > 0;
 
+  React.useEffect(() => {
+    if (showingSearch || !scrollPendingRef.current) return;
+    const itemId = scrollPendingRef.current;
+    scrollPendingRef.current = null;
+    requestAnimationFrame(() => {
+      document
+        .getElementById(`queue-item-${itemId}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightedItemId(itemId);
+      window.setTimeout(() => setHighlightedItemId(null), 2000);
+    });
+  }, [showingSearch]);
+
   if (!joined) {
     return (
       <div className="app">
         <p>Joining party…</p>
-        {error && <p className="error">{error}</p>}
+        {joinError && <p className="error">{joinError}</p>}
       </div>
     );
+  }
+
+  if (!me?.displayName) {
+    return <GuestNamePrompt slug={slug} onSaved={onNameSaved} />;
   }
 
   return (
     <div className="app">
       <h1>{queue?.party.name ?? "Jukebox"}</h1>
 
-      <OpenInSafariHint joinUrl={window.location.href} />
-
       <GuestNav
         slug={slug}
         activeSongCount={me?.activeSongCount ?? 0}
       />
 
-      {!me?.displayName && (
-        <div className="card">
-          <h2>Enter your name</h2>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Display name"
-          />
-          <div style={{ marginTop: "0.75rem" }}>
-            <button onClick={() => void saveName()} disabled={!name.trim()}>
-              Continue
-            </button>
-          </div>
-        </div>
-      )}
-
       {partyOff && (
         <div className="banner off">Party is paused — queue is view only.</div>
       )}
 
-      {error && <p className="error">{error}</p>}
-
-      {queue?.nowPlaying && <NowPlayingBanner item={queue.nowPlaying} />}
-
-      {upNext && !showingSearch && <UpNextLockedSection item={upNext} />}
-
-      {!queue?.nowPlaying && !upNext && (
-          <div className="banner warn">Add something!</div>
-        )}
-
-      {me?.quota && (
-        <p className="small">
-          Adds left: {me.quota.add} · Upvotes: {me.quota.upvote} · Vetoes:{" "}
-          {me.quota.veto}
-        </p>
-      )}
-
-      {showingSearch && (
-        <SearchNav
-          label={searchView === "artist" ? "Back to search" : "Back to queue"}
-          onBack={() => {
-            if (searchView === "artist") {
-              void search();
-            } else {
-              clearSearch();
-            }
-          }}
-        />
-      )}
-
-      <div className="card">
-        <div className="row">
+      <div className="card guest-search-hero">
+        <h2 className="guest-search-heading">Search</h2>
+        <div className="row guest-search-row">
           <input
+            className="guest-search-input"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search songs or artists"
             onKeyDown={(e) => e.key === "Enter" && void search()}
           />
           <button
+            className="guest-search-button"
             onClick={() => void search()}
-            disabled={!canMutate || partyOff || searching || query.trim().length < 3}
+            disabled={partyOff || searching || query.trim().length < 3}
           >
             {searching ? "Searching…" : "Search"}
           </button>
         </div>
-        {notice && <p className="toast-ok">{notice}</p>}
+        {showingSearch && (
+          <SearchNav
+            label={searchView === "artist" ? "Back to search" : "Back to queue"}
+            onBack={() => {
+              if (searchView === "artist") {
+                void search();
+              } else {
+                clearSearch();
+              }
+            }}
+          />
+        )}
         {showingSearch && (
           <div style={{ marginTop: "1rem" }}>
             {searchView === "results" && results.artists.length > 0 && (
@@ -373,18 +384,50 @@ function GuestApp({ slug }: { slug: string }) {
                 />
               </div>
             )}
-            {results.tracks.map((t) => (
-              <SearchTrackRow
-                key={`${artistFilter ?? "none"}-${t.uri}`}
-                track={t}
-                inQueue={queue ? isTrackInPartyQueue(t, queue) : false}
-                addDisabled={!canMutate || partyOff}
-                onAdd={() => void addTrack(t)}
-              />
-            ))}
+            {results.tracks.map((t) => {
+              const queueState = queue
+                ? getSearchTrackQueueState(t, queue)
+                : { blockedReason: null, queueItemId: null };
+              return (
+                <SearchTrackRow
+                  key={`${artistFilter ?? "none"}-${t.uri}`}
+                  track={t}
+                  blockedReason={queueState.blockedReason}
+                  queueItemId={queueState.queueItemId}
+                  addDisabled={partyOff}
+                  onAdd={() => void addTrack(t)}
+                  onGoToQueue={scrollToQueueItem}
+                />
+              );
+            })}
           </div>
         )}
       </div>
+
+      {queue?.nowPlaying && (
+        <NowPlayingBanner
+          item={queue.nowPlaying}
+          highlightedItemId={highlightedItemId}
+        />
+      )}
+
+      {upNext && !showingSearch && (
+        <UpNextLockedSection
+          item={upNext}
+          highlightedItemId={highlightedItemId}
+        />
+      )}
+
+      {!queue?.nowPlaying && !upNext && (
+          <div className="banner warn">Add something!</div>
+        )}
+
+      {me?.quota && (
+        <p className="small">
+          Adds left: {me.quota.add} · Upvotes: {me.quota.upvote} · Downvotes:{" "}
+          {me.quota.veto}
+        </p>
+      )}
 
       {!showingSearch && hasLater && (
         <section>
@@ -394,15 +437,20 @@ function GuestApp({ slug }: { slug: string }) {
               key={item.id}
               item={item}
               guestId={me?.id}
-              canMutate={canMutate && !partyOff}
+              canMutate={canMutate}
               boostUsed={me?.boostUsed ?? true}
+              upvotesLeft={me?.quota?.upvote}
+              downvotesLeft={me?.quota?.veto}
+              showPopup={showPopup}
               onAction={act}
               slug={slug}
+              highlightedItemId={highlightedItemId}
             />
           ))}
         </section>
       )}
       <SpotifyAttribution />
+      <PopupHost />
     </div>
   );
 }
@@ -412,6 +460,9 @@ function QueueRowActions({
   guestId,
   canMutate,
   boostUsed,
+  upvotesLeft,
+  downvotesLeft,
+  showPopup,
   onAction,
   slug,
 }: {
@@ -419,68 +470,85 @@ function QueueRowActions({
   guestId?: string;
   canMutate: boolean;
   boostUsed: boolean;
+  upvotesLeft?: number;
+  downvotesLeft?: number;
+  showPopup: (message: string, kind?: "success" | "error" | "info") => void;
   onAction: (path: string) => Promise<void>;
   slug: string;
 }) {
   const isOwn = guestId != null && item.addedByGuestId === guestId;
-  const upNextPending =
-    item.guestUpvoteBlocked &&
-    item.status === "pending" &&
-    !item.guestVetoBlocked;
+  const upvoteDisabled =
+    !canMutate ||
+    item.guestUpvoteBlocked ||
+    isOwn ||
+    item.guestHasUpvoted === true ||
+    upvotesLeft === 0;
+  const downvoteDisabled =
+    !canMutate ||
+    item.guestVetoBlocked ||
+    item.guestHasDownvoted === true ||
+    downvotesLeft === 0;
+  const boostDisabled =
+    !canMutate ||
+    boostUsed ||
+    item.isBoosted ||
+    item.guestBoostBlocked;
 
-  async function veto() {
-    if (isOwn && !confirm("You're about to veto a song you added. Continue?")) {
+  async function downvote() {
+    if (downvoteDisabled) {
+      showPopup(downvoteBlockedMessage(item, canMutate, downvotesLeft), "info");
+      return;
+    }
+    if (isOwn && !confirm("You're about to downvote a song you added. Continue?")) {
       return;
     }
     await onAction(`/parties/${slug}/queue/${item.id}/veto`);
   }
 
+  function handleUpvote() {
+    if (upvoteDisabled) {
+      showPopup(
+        upvoteBlockedMessage(item, canMutate, isOwn, upvotesLeft),
+        "info",
+      );
+      return;
+    }
+    void onAction(`/parties/${slug}/queue/${item.id}/upvote`);
+  }
+
+  function handleBoost() {
+    if (boostDisabled) {
+      showPopup(boostBlockedMessage(item, canMutate, boostUsed), "info");
+      return;
+    }
+    void onAction(`/parties/${slug}/queue/${item.id}/boost`);
+  }
+
   return (
     <>
-      {!isOwn && (
-        <button
-          className="secondary"
-          disabled={!canMutate || item.guestUpvoteBlocked}
-          title={
-            item.guestUpvoteBlocked
-              ? upNextPending
-                ? "Up next — upvotes are locked"
-                : "Already queued in Spotify — upvotes are locked"
-              : undefined
-          }
-          onClick={() =>
-            void onAction(`/parties/${slug}/queue/${item.id}/upvote`)
-          }
-        >
-          Upvote
-        </button>
-      )}
       <button
-        className="secondary"
-        disabled={!canMutate || item.guestVetoBlocked}
-        title={
-          item.guestVetoBlocked
-            ? "Already queued in Spotify — vetoes are locked"
-            : undefined
-        }
-        onClick={() => void veto()}
+        type="button"
+        className={`secondary upvote-action${upvoteDisabled ? " upvote-action--disabled" : ""}`}
+        aria-label="Upvote"
+        aria-disabled={upvoteDisabled}
+        onClick={handleUpvote}
       >
-        Veto
+        <ThumbsUpIcon />
       </button>
       <button
-        disabled={
-          !canMutate || boostUsed || item.isBoosted || item.guestBoostBlocked
-        }
-        title={
-          item.guestBoostBlocked
-            ? upNextPending
-              ? "Up next — boost is locked"
-              : item.status === "queued"
-                ? "Already queued in Spotify — boost is locked"
-                : undefined
-            : undefined
-        }
-        onClick={() => void onAction(`/parties/${slug}/queue/${item.id}/boost`)}
+        type="button"
+        className={`secondary downvote-action${downvoteDisabled ? " downvote-action--disabled" : ""}`}
+        aria-label="Downvote"
+        aria-disabled={downvoteDisabled}
+        onClick={() => void downvote()}
+      >
+        <ThumbsDownIcon />
+      </button>
+      <button
+        type="button"
+        className={`boost-action${boostDisabled ? " boost-action--disabled" : ""}`}
+        aria-disabled={boostDisabled}
+        onClick={handleBoost}
       >
         Boost
       </button>
@@ -493,24 +561,35 @@ function QueueRow({
   guestId,
   canMutate,
   boostUsed,
+  upvotesLeft,
+  downvotesLeft,
+  showPopup,
   onAction,
   slug,
+  highlightedItemId,
 }: {
   item: QueueItemView;
   guestId?: string;
   canMutate: boolean;
   boostUsed: boolean;
+  upvotesLeft?: number;
+  downvotesLeft?: number;
+  showPopup: (message: string, kind?: "success" | "error" | "info") => void;
   onAction: (path: string) => Promise<void>;
   slug: string;
+  highlightedItemId?: string | null;
 }) {
   return (
-    <div className={`track card${item.isBoosted ? " track--boosted" : ""}`}>
+    <div
+      id={`queue-item-${item.id}`}
+      className={`track card${item.isBoosted ? " track--boosted" : ""}${highlightedItemId === item.id ? " queue-item--highlight" : ""}`}
+    >
       {item.albumArtUrl && <img src={item.albumArtUrl} alt="" />}
       <div className="track-meta">
         <TrackTitle name={item.trackName} boosted={item.isBoosted} />
         <p>
-          {item.artistName} · {item.addedBy} · ↑{item.upvoteCount} · ✕
-          {item.vetoCount}
+          {item.artistName} · {item.addedBy} · <UpvoteCount count={item.upvoteCount} /> ·{" "}
+          <DownvoteCount count={item.vetoCount} />
         </p>
       </div>
       <div className="actions">
@@ -519,6 +598,9 @@ function QueueRow({
           guestId={guestId}
           canMutate={canMutate}
           boostUsed={boostUsed}
+          upvotesLeft={upvotesLeft}
+          downvotesLeft={downvotesLeft}
+          showPopup={showPopup}
           onAction={onAction}
           slug={slug}
         />

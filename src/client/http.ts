@@ -6,6 +6,17 @@ import {
 
 const API = "/api/v1";
 
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+    readonly displayName?: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 function guestSessionHeaders(): Record<string, string> {
   const slug = partySlugFromPath();
   if (!slug) return {};
@@ -31,8 +42,9 @@ export async function api<T>(
     const err = (await res.json().catch(() => ({}))) as {
       error?: string;
       code?: string;
+      displayName?: string;
     };
-    throw new Error(err.error ?? res.statusText);
+    throw new ApiError(err.error ?? res.statusText, err.code, err.displayName);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;

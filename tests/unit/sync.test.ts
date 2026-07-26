@@ -2,10 +2,16 @@ import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import {
   buildEffectiveQueueSnapshot,
+  dedupeSpotifyQueueTracks,
+  findActiveQueueItemByUri,
   getManagedSpotifyQueueUris,
+  getSpotifyBufferTrack,
   getSyncIntervalMs,
   getVirtualNextToBuffer,
+  inferPaddedSpotifyQueueLength,
+  isSpotifyBufferOccupied,
   isUriBufferedInSpotify,
+  normalizeSpotifyQueueSnapshot,
   partyHasPendingBufferWork,
   partyNeedsSpotifyQueueSync,
   reconcileSpotifyBufferStatuses,
@@ -46,6 +52,115 @@ const base = (overrides: Partial<QueueItemRow>): QueueItemRow => ({
   added_at: "2026-01-01T00:00:00.000Z",
   finished_at: null,
   ...overrides,
+});
+
+describe("normalizeSpotifyQueueSnapshot", () => {
+  test("treats homogeneous padded queue as empty when track is not managed", () => {
+    const phantom = spotifyTrack("spotify:track:7FXj7Qg3YorUxdrzvrcY25", "Phantom");
+    const normalized = normalizeSpotifyQueueSnapshot(
+      {
+        currentlyPlaying: spotifyTrack("spotify:track:1mea3bSkSGXuIRvnydlB5b", "Viva La Vida"),
+        queue: Array.from({ length: 10 }, () => phantom),
+      },
+      [],
+    );
+    expect(normalized.queue).toEqual([]);
+    expect(getSpotifyBufferTrack(normalized)).toBeNull();
+  });
+
+  test("keeps padded queue when the track is in the virtual queue", () => {
+    const buffered = spotifyTrack("spotify:track:buffered");
+    const normalized = normalizeSpotifyQueueSnapshot(
+      {
+        currentlyPlaying: spotifyTrack("spotify:track:now"),
+        queue: Array.from({ length: 10 }, () => buffered),
+      },
+      [base({ spotify_uri: "spotify:track:buffered", status: "queued" })],
+    );
+    expect(normalized.queue).toHaveLength(1);
+    expect(normalized.queue[0]?.uri).toBe("spotify:track:buffered");
+  });
+
+  test("collapses alternating padded queue to two real tracks", () => {
+    const a = spotifyTrack("spotify:track:a");
+    const b = spotifyTrack("spotify:track:b");
+    const padded = [a, b, a, b, a, b, a, b];
+    expect(inferPaddedSpotifyQueueLength(padded)).toBe(2);
+    expect(dedupeSpotifyQueueTracks(padded, null)).toEqual([a, b]);
+  });
+
+  test("drops terminal tracks from padded alternating queue", () => {
+    const flyMe = spotifyTrack("spotify:track:7FXj7Qg3YorUxdrzvrcY25", "Fly Me");
+    const myWay = spotifyTrack("spotify:track:3spdoTYpuCpmq19tuD0bOe", "My Way");
+    const padded = [flyMe, myWay, flyMe, myWay, flyMe, myWay];
+    const items = [
+      base({ spotify_uri: "spotify:track:7FXj7Qg3YorUxdrzvrcY25", status: "played" }),
+      base({ id: "2", spotify_uri: "spotify:track:3spdoTYpuCpmq19tuD0bOe", status: "playing" }),
+      base({ id: "3", spotify_uri: "spotify:track:5Xak5fmy089t0FYmh3VJiY", status: "pending", track_name: "Black" }),
+    ];
+    const normalized = normalizeSpotifyQueueSnapshot(
+      { currentlyPlaying: myWay, queue: padded },
+      items,
+    );
+    expect(normalized.queue).toEqual([]);
+    expect(getSpotifyBufferTrack(normalized, items)).toBeNull();
+    expect(getVirtualNextToBuffer(items, normalized)?.track_name).toBe("Black");
+  });
+
+  test("skips pending row when same URI already played elsewhere", () => {
+    const flyMeUri = "spotify:track:7FXj7Qg3YorUxdrzvrcY25";
+    const items = [
+      base({ spotify_uri: flyMeUri, status: "played", track_name: "Fly Me" }),
+      base({
+        id: "2",
+        spotify_uri: "spotify:track:5Xak5fmy089t0FYmh3VJiY",
+        status: "playing",
+        track_name: "Black",
+      }),
+      base({
+        id: "dup",
+        spotify_uri: flyMeUri,
+        status: "pending",
+        track_name: "Fly Me duplicate",
+      }),
+      base({
+        id: "4",
+        spotify_uri: "spotify:track:2bku1YWarHpKlxVC2FB9dH",
+        status: "pending",
+        track_name: "Sabbath",
+      }),
+    ];
+    const queueData = {
+      currentlyPlaying: spotifyTrack("spotify:track:5Xak5fmy089t0FYmh3VJiY", "Black"),
+      queue: [],
+    };
+    expect(getVirtualNextToBuffer(items, queueData)?.track_name).toBe("Sabbath");
+  });
+
+  test("buffers pending re-queue when same URI was skipped but not played", () => {
+    const evenFlowUri = "spotify:track:6QewNVIDKdSl8Y3ycuHIei";
+    const items = [
+      base({ spotify_uri: evenFlowUri, status: "skipped", track_name: "Even Flow" }),
+      base({
+        id: "2",
+        spotify_uri: "spotify:track:70C4NyhjD5OZUMzvWZ3njJ",
+        status: "playing",
+        track_name: "Piano Man",
+      }),
+      base({
+        id: "3",
+        spotify_uri: evenFlowUri,
+        status: "pending",
+        track_name: "Even Flow",
+        added_at: "2026-01-03T00:00:00.000Z",
+      }),
+    ];
+    const queueData = {
+      currentlyPlaying: spotifyTrack("spotify:track:70C4NyhjD5OZUMzvWZ3njJ", "Piano Man"),
+      queue: [],
+    };
+    expect(getVirtualNextToBuffer(items, queueData)?.track_name).toBe("Even Flow");
+  });
 });
 
 describe("isUriBufferedInSpotify", () => {
@@ -188,11 +303,120 @@ describe("reconcileSpotifyBufferStatuses", () => {
     expect(row.from_spotify).toBe(1);
   });
 
+  test("skips queue head when it duplicates currently playing", () => {
+    const now = {
+      uri: "spotify:track:now",
+      id: "now",
+      name: "Now Playing",
+      artists: [{ name: "Artist" }],
+      album: { images: [] },
+    };
+    expect(
+      getSpotifyBufferTrack({
+        currentlyPlaying: now,
+        queue: [now, { ...now, name: "Still duplicate" }],
+      }),
+    ).toBeNull();
+    expect(
+      getSpotifyBufferTrack({
+        currentlyPlaying: now,
+        queue: [
+          now,
+          {
+            uri: "spotify:track:next",
+            id: "next",
+            name: "Next",
+            artists: [{ name: "Artist" }],
+            album: { images: [] },
+          },
+        ],
+      })?.uri,
+    ).toBe("spotify:track:next");
+  });
+
+  test("does not demote playing track when Spotify queue duplicates now playing", () => {
+    const db = testDb();
+    db.run(
+      `INSERT INTO queue_items (id, party_id, spotify_uri, track_name, artist_name, status, from_seed, added_at)
+       VALUES ('playing', 'p', 'spotify:track:now', 'Now', 'Artist', 'playing', 0, '2026-01-01T00:00:00.000Z')`,
+    );
+    const now = {
+      uri: "spotify:track:now",
+      id: "now",
+      name: "Now Playing",
+      artists: [{ name: "Artist" }],
+      album: { images: [] },
+    };
+    reconcileSpotifyBufferStatuses(db, "p", [base({ id: "playing", spotify_uri: "spotify:track:now", status: "playing" })], {
+      currentlyPlaying: now,
+      queue: [now],
+    });
+    const row = db
+      .query(`SELECT status FROM queue_items WHERE id = ?`)
+      .get("playing") as { status: string };
+    expect(row.status).toBe("playing");
+  });
+
+  test("does not demote queued rows when Spotify reports empty buffer", () => {
+    const db = testDb();
+    db.run(
+      `INSERT INTO queue_items (id, party_id, spotify_uri, track_name, artist_name, status, from_seed, added_at)
+       VALUES ('buffered', 'p', 'spotify:track:even', 'Even Flow', 'Artist', 'queued', 0, '2026-01-01T00:00:00.000Z')`,
+    );
+    reconcileSpotifyBufferStatuses(
+      db,
+      "p",
+      [base({ id: "buffered", spotify_uri: "spotify:track:even", status: "queued" })],
+      { currentlyPlaying: null, queue: [] },
+    );
+    const row = db
+      .query(`SELECT status FROM queue_items WHERE id = ?`)
+      .get("buffered") as { status: string };
+    expect(row.status).toBe("queued");
+  });
+
+  test("demotes stale queued rows when Spotify reports now playing but no buffer", () => {
+    const db = testDb();
+    db.run(
+      `INSERT INTO queue_items (id, party_id, spotify_uri, track_name, artist_name, status, from_seed, added_at)
+       VALUES ('wrong', 'p', 'spotify:track:brown', 'Brown Eyed Girl', 'Artist', 'queued', 0, '2026-01-01T00:00:00.000Z')`,
+    );
+    db.run(
+      `INSERT INTO queue_items (id, party_id, spotify_uri, track_name, artist_name, status, from_seed, added_at)
+       VALUES ('next', 'p', 'spotify:track:rich', 'Rich Girl', 'Artist', 'pending', 0, '2026-01-02T00:00:00.000Z')`,
+    );
+    reconcileSpotifyBufferStatuses(
+      db,
+      "p",
+      [
+        base({ id: "wrong", spotify_uri: "spotify:track:brown", status: "queued" }),
+        base({ id: "next", spotify_uri: "spotify:track:rich", status: "pending" }),
+      ],
+      {
+        currentlyPlaying: spotifyTrack("spotify:track:myway", "My Way"),
+        queue: [],
+      },
+      { aggressive: true },
+    );
+    const wrong = db
+      .query(`SELECT status FROM queue_items WHERE id = ?`)
+      .get("wrong") as { status: string };
+    expect(wrong.status).toBe("pending");
+  });
+
   test("imports Spotify queue tail tracks as locked pending rows", () => {
     const db = testDb();
+    const now = {
+      uri: "spotify:track:now",
+      id: "now",
+      name: "Now",
+      artists: [{ name: "A" }],
+      album: { images: [] },
+    };
     reconcileSpotifyQueueTail(db, "p", {
-      currentlyPlaying: null,
+      currentlyPlaying: now,
       queue: [
+        now,
         {
           uri: "spotify:track:buffer",
           id: "buf",
@@ -276,6 +500,25 @@ describe("getVirtualNextToBuffer", () => {
     });
     expect(next?.id).toBe("normal");
   });
+
+  test("returns null when jukebox queued buffer is not visible in Spotify API", () => {
+    const buffered = base({
+      id: "buffered",
+      spotify_uri: "spotify:track:even",
+      status: "queued",
+    });
+    const next = base({
+      id: "next",
+      spotify_uri: "spotify:track:animal",
+      status: "pending",
+    });
+    expect(
+      getVirtualNextToBuffer([buffered, next], {
+        currentlyPlaying: spotifyTrack("spotify:track:now"),
+        queue: [],
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("shouldSkipTerminalPlayback", () => {
@@ -311,6 +554,119 @@ describe("buildEffectiveQueueSnapshot", () => {
     expect(effective.currentlyPlaying?.uri).toBe("spotify:track:live");
     expect(effective.currentlyPlaying?.name).toBe("Live Track");
   });
+
+  test("prefers active duplicate row over skipped sibling for player snapshot", () => {
+    const evenFlowUri = "spotify:track:6QewNVIDKdSl8Y3ycuHIei";
+    const items = [
+      base({ spotify_uri: evenFlowUri, status: "skipped", track_name: "Even Flow" }),
+      base({
+        id: "2",
+        spotify_uri: evenFlowUri,
+        status: "queued",
+        track_name: "Even Flow",
+      }),
+    ];
+    const effective = buildEffectiveQueueSnapshot(
+      { currentlyPlaying: null, queue: [] },
+      {
+        deviceActive: true,
+        isPlaying: true,
+        deviceRestricted: false,
+        deviceName: "Phone",
+        currentUri: evenFlowUri,
+      },
+      items,
+    );
+    expect(effective.currentlyPlaying?.uri).toBe(evenFlowUri);
+    expect(findActiveQueueItemByUri(items, evenFlowUri)?.status).toBe("queued");
+  });
+
+  test("player snapshot wins over stale queue API currently playing", () => {
+    const items = [
+      base({
+        id: "piano",
+        spotify_uri: "spotify:track:70C4NyhjD5OZUMzvWZ3njJ",
+        status: "played",
+        track_name: "Piano Man",
+      }),
+      base({
+        id: "even",
+        spotify_uri: "spotify:track:6QewNVIDKdSl8Y3ycuHIei",
+        status: "queued",
+        track_name: "Even Flow",
+      }),
+    ];
+    const effective = buildEffectiveQueueSnapshot(
+      {
+        currentlyPlaying: spotifyTrack("spotify:track:70C4NyhjD5OZUMzvWZ3njJ", "Piano Man"),
+        queue: [],
+      },
+      {
+        deviceActive: true,
+        isPlaying: true,
+        deviceRestricted: false,
+        deviceName: "Phone",
+        currentUri: "spotify:track:6QewNVIDKdSl8Y3ycuHIei",
+      },
+      items,
+    );
+    expect(effective.currentlyPlaying?.name).toBe("Even Flow");
+  });
+
+  test("uses player snapshot when track only exists as played in the virtual queue", () => {
+    const myWayUri = "spotify:track:3spdoTYpuCpmq19tuD0bOe";
+    const items = [
+      base({
+        id: "played",
+        spotify_uri: myWayUri,
+        status: "played",
+        track_name: "My Way",
+      }),
+      base({
+        id: "other",
+        spotify_uri: "spotify:track:other",
+        status: "playing",
+        track_name: "Other Song",
+      }),
+    ];
+    const effective = buildEffectiveQueueSnapshot(
+      { currentlyPlaying: null, queue: [] },
+      {
+        deviceActive: true,
+        isPlaying: true,
+        deviceRestricted: false,
+        deviceName: "Phone",
+        currentUri: myWayUri,
+      },
+      items,
+    );
+    expect(effective.currentlyPlaying?.uri).toBe(myWayUri);
+    expect(effective.currentlyPlaying?.name).toBe("My Way");
+    expect(findActiveQueueItemByUri(items, myWayUri)).toBeUndefined();
+  });
+});
+
+describe("isSpotifyBufferOccupied", () => {
+  test("trusts in-flight queued row when Spotify queue API is empty", () => {
+    expect(
+      isSpotifyBufferOccupied(
+        { currentlyPlaying: null, queue: [] },
+        [base({ status: "queued", spotify_uri: "spotify:track:even" })],
+      ),
+    ).toBe(true);
+  });
+
+  test("trusts canonical queued buffer when Spotify queue API omits it", () => {
+    expect(
+      isSpotifyBufferOccupied(
+        {
+          currentlyPlaying: spotifyTrack("spotify:track:now"),
+          queue: [],
+        },
+        [base({ status: "queued", spotify_uri: "spotify:track:even" })],
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("sync pacing helpers", () => {
@@ -320,5 +676,11 @@ describe("sync pacing helpers", () => {
 
   test("uses long interval when party is null", () => {
     expect(getSyncIntervalMs({} as Db, null)).toBe(60_000);
+  });
+
+  test("uses 10s interval when party is active", () => {
+    expect(
+      getSyncIntervalMs({} as Db, { id: "party-a", sync_generation: 0 }),
+    ).toBe(10_000);
   });
 });

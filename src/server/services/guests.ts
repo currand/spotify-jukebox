@@ -1,5 +1,6 @@
 import type { Db } from "../db/schema";
 import type { GuestAdminView, GuestMySongView, QueueItemStatus } from "@/shared/types";
+import { isDuplicateDisplayName } from "@/shared/dedup";
 import {
   getNextUpcomingItem,
   getQueueItems,
@@ -150,6 +151,69 @@ export function touchGuestLastSeen(
 }
 
 const NAMED_GUEST_SQL = `display_name IS NOT NULL AND TRIM(display_name) != ''`;
+
+interface NamedGuestRow {
+  id: string;
+  display_name: string;
+  last_ip: string | null;
+  session_token: string;
+  boost_used: number;
+}
+
+/** Find another guest with a case-insensitive / fuzzy matching display name. */
+export function findSimilarNamedGuest(
+  db: Db,
+  partyId: string,
+  name: string,
+  excludeGuestId: string,
+): NamedGuestRow | null {
+  const rows = db
+    .query(
+      `SELECT id, display_name, last_ip, session_token, boost_used FROM guests
+       WHERE party_id = ? AND ${NAMED_GUEST_SQL} AND id != ?`,
+    )
+    .all(partyId, excludeGuestId) as NamedGuestRow[];
+
+  const match = rows.find((row) =>
+    isDuplicateDisplayName(name, [row.display_name]),
+  );
+  return match ?? null;
+}
+
+/** Delete the anonymous guest and return the existing guest's session for reclaim. */
+export function reclaimGuestSession(
+  db: Db,
+  newGuestId: string,
+  existingGuestId: string,
+): {
+  id: string;
+  displayName: string;
+  boostUsed: boolean;
+  sessionToken: string;
+} {
+  db.run(`DELETE FROM votes WHERE guest_id = ?`, [newGuestId]);
+  db.run(`DELETE FROM vetoes WHERE guest_id = ?`, [newGuestId]);
+  db.run(`DELETE FROM rate_limit_events WHERE guest_id = ?`, [newGuestId]);
+  db.run(`DELETE FROM guests WHERE id = ?`, [newGuestId]);
+
+  const existing = db
+    .query(
+      `SELECT id, display_name, session_token, boost_used FROM guests WHERE id = ?`,
+    )
+    .get(existingGuestId) as {
+    id: string;
+    display_name: string;
+    session_token: string;
+    boost_used: number;
+  };
+
+  return {
+    id: existing.id,
+    displayName: existing.display_name,
+    boostUsed: existing.boost_used === 1,
+    sessionToken: existing.session_token,
+  };
+}
 
 export function countNamedPartyGuests(db: Db, partyId: string): number {
   const row = db
