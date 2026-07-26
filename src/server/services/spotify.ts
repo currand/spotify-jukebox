@@ -6,6 +6,16 @@ import type { Db } from "../db/schema";
 import type { SpotifyTrack } from "@/shared/types";
 import { resolveSpotifyRateLimitMs, SpotifyApiError } from "./spotify-errors";
 
+type SpotifyRateLimitHandler = (error: unknown) => void;
+let spotifyRateLimitHandler: SpotifyRateLimitHandler | null = null;
+
+/** Register global backoff when any Spotify API call returns 429. */
+export function setSpotifyRateLimitHandler(
+  handler: SpotifyRateLimitHandler | null,
+): void {
+  spotifyRateLimitHandler = handler;
+}
+
 export interface PlayerSnapshot {
   deviceActive: boolean;
   isPlaying: boolean;
@@ -272,13 +282,17 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
       retryAfter: res.headers.get("Retry-After"),
       body: body.slice(0, 500),
     });
-    throw new SpotifyApiError(
+    const error = new SpotifyApiError(
       `SPOTIFY_${res.status}:${body}`,
       res.status,
       res.status === 429
         ? resolveSpotifyRateLimitMs(res.headers.get("Retry-After"), body, res.status)
         : null,
     );
+    if (res.status === 429) {
+      spotifyRateLimitHandler?.(error);
+    }
+    throw error;
   }
 
   async function api<T>(path: string, init?: RequestInit): Promise<T> {

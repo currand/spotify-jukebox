@@ -9,7 +9,12 @@ import {
   markFinished,
   type QueueItemRow,
 } from "./queue";
-import { trackFromSpotify, type PlayerSnapshot, type SpotifyClient } from "./spotify";
+import {
+  setSpotifyRateLimitHandler,
+  trackFromSpotify,
+  type PlayerSnapshot,
+  type SpotifyClient,
+} from "./spotify";
 import type { SpotifyTrack } from "@/shared/types";
 import { debugLog } from "../debug";
 import {
@@ -87,6 +92,18 @@ export function getSyncIntervalMs(
 ): number {
   if (!party) return SYNC_INTERVAL_NO_PARTY_MS;
   return SYNC_INTERVAL_MS;
+}
+
+/** Delay until the next sync tick — waits out Spotify backoff when active. */
+export function getNextSyncDelayMs(
+  db: Db,
+  party: { id: string; sync_generation: number } | null,
+): number {
+  if (isRateLimited()) {
+    const remainingMs = Math.max(0, (syncState.rateLimitedUntil ?? 0) - Date.now());
+    return Math.max(remainingMs, 1000);
+  }
+  return getSyncIntervalMs(db, party);
 }
 
 export function isUriBufferedInSpotify(
@@ -449,7 +466,12 @@ function rateLimitMessage(retryAfterMs: number): string {
 }
 
 function markRateLimited(error: unknown): void {
-  consecutiveRateLimitHits++;
+  const now = Date.now();
+  const backoffActive =
+    syncState.rateLimitedUntil != null && now < syncState.rateLimitedUntil;
+  if (!backoffActive) {
+    consecutiveRateLimitHits++;
+  }
   const retryAfterMs = computeRateLimitBackoffMs(
     getSpotifyRetryAfterMs(error),
     consecutiveRateLimitHits,
@@ -569,10 +591,11 @@ function handleQueueSyncError(e: unknown): void {
 }
 
 export function startSyncWorker(db: Db, spotify: SpotifyClient): void {
+  setSpotifyRateLimitHandler(applySpotifyRateLimit);
   const tick = async () => {
     await runSyncTick(db, spotify);
     const party = getActiveParty(db);
-    syncWorkerTimer = setTimeout(() => void tick(), getSyncIntervalMs(db, party));
+    syncWorkerTimer = setTimeout(() => void tick(), getNextSyncDelayMs(db, party));
   };
   void tick();
 }
@@ -739,6 +762,16 @@ async function withPartySyncLock(
 async function runSyncTick(db: Db, spotify: SpotifyClient): Promise<void> {
   clearRateLimitIfExpired();
 
+  if (isRateLimited()) {
+    const remainingMs = (syncState.rateLimitedUntil ?? 0) - Date.now();
+    syncState = {
+      ...syncState,
+      spotifyReachable: true,
+      lastError: rateLimitMessage(remainingMs),
+    };
+    return;
+  }
+
   const party = getActiveParty(db);
   if (!party) {
     return;
@@ -757,15 +790,6 @@ async function runSyncTick(db: Db, spotify: SpotifyClient): Promise<void> {
         lastSyncedAt: syncState.lastSyncedAt,
       };
       return;
-    }
-
-    if (isRateLimited()) {
-      const remainingMs = (syncState.rateLimitedUntil ?? 0) - Date.now();
-      syncState = {
-        ...syncState,
-        spotifyReachable: true,
-        lastError: rateLimitMessage(remainingMs),
-      };
     }
 
     let snapshot: PlayerSnapshot;
@@ -1009,4 +1033,25 @@ async function fillSpotifyBufferIfEmpty(
     }
     throw e;
   }
+}
+
+/** @internal test helper */
+export function resetSyncStateForTests(): void {
+  if (syncWorkerTimer) {
+    clearTimeout(syncWorkerTimer);
+    syncWorkerTimer = null;
+  }
+  setSpotifyRateLimitHandler(null);
+  syncState = {
+    deviceActive: false,
+    spotifyReachable: true,
+    deviceRestricted: false,
+    deviceName: null,
+    lastError: null,
+    rateLimitedUntil: null,
+    lastSyncedAt: null,
+  };
+  consecutiveRateLimitHits = 0;
+  partySyncInFlight.clear();
+  partyLastSyncedGeneration.clear();
 }
