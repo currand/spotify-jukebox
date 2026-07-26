@@ -485,6 +485,12 @@ function markRateLimited(error: unknown): void {
     rateLimitedUntil,
     lastError: rateLimitMessage(remainingMs),
   };
+  debugLog("sync", "markRateLimited", {
+    consecutiveRateLimitHits,
+    retryAfterMs,
+    rateLimitedUntil,
+    remainingMs,
+  });
 }
 
 /** Apply Spotify 429 backoff from any API caller (sync worker, status poll, etc.). */
@@ -495,6 +501,9 @@ export function applySpotifyRateLimit(error: unknown): void {
 
 function clearRateLimitIfExpired(): void {
   if (syncState.rateLimitedUntil && Date.now() >= syncState.rateLimitedUntil) {
+    debugLog("sync", "rateLimitCleared", {
+      wasUntil: syncState.rateLimitedUntil,
+    });
     consecutiveRateLimitHits = 0;
     syncState = {
       ...syncState,
@@ -508,6 +517,11 @@ function clearRateLimitIfExpired(): void {
 
 function isRateLimited(): boolean {
   return syncState.rateLimitedUntil != null && Date.now() < syncState.rateLimitedUntil;
+}
+
+/** Whether outbound Spotify calls should be deferred (search prefetch, etc.). */
+export function isSpotifyRateLimited(): boolean {
+  return isRateLimited();
 }
 
 function applyPlayerSnapshot(snapshot: PlayerSnapshot): void {
@@ -762,7 +776,15 @@ async function withPartySyncLock(
 async function runSyncTick(db: Db, spotify: SpotifyClient): Promise<void> {
   clearRateLimitIfExpired();
 
-  if (isRateLimited()) {
+  const rateLimited = isRateLimited();
+  debugLog("sync", "tick", {
+    rateLimited,
+    retryAfterMs: rateLimited
+      ? Math.max(0, (syncState.rateLimitedUntil ?? 0) - Date.now())
+      : null,
+  });
+
+  if (rateLimited) {
     const remainingMs = (syncState.rateLimitedUntil ?? 0) - Date.now();
     syncState = {
       ...syncState,

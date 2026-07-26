@@ -103,12 +103,17 @@ describe("isSpotifyRateLimitError", () => {
 });
 
 describe("computeRateLimitBackoffMs", () => {
-  test("uses Spotify retry-after when longer than exponential", () => {
+  test("enforces minimum backoff above sync tick interval", () => {
+    expect(computeRateLimitBackoffMs(5000, 1)).toBe(15_000);
+    expect(computeRateLimitBackoffMs(1000, 1)).toBe(15_000);
+  });
+
+  test("uses Spotify retry-after when longer than minimum and exponential", () => {
     expect(computeRateLimitBackoffMs(15000, 2)).toBe(15000);
   });
 
-  test("uses exponential backoff when longer than Spotify hint", () => {
-    expect(computeRateLimitBackoffMs(1000, 3)).toBe(4000);
+  test("uses exponential backoff when longer than Spotify hint and minimum", () => {
+    expect(computeRateLimitBackoffMs(1000, 5)).toBe(16_000);
   });
 
   test("caps exponential backoff at 60s", () => {
