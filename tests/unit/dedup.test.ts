@@ -1,10 +1,46 @@
 import { describe, expect, test } from "bun:test";
-import { isDuplicateDisplayName, isDuplicateTitle, isDuplicateTrack, normalizeTitle } from "../../src/shared/dedup";
-import { compareNormalQueue, isGuestBoostBlocked, isGuestUpvoteBlocked, isGuestVetoBlocked, type QueueItemRow } from "../../src/server/services/queue";
+import {
+  foldArtist,
+  foldTitle,
+  isDuplicateDisplayName,
+  isDuplicateTitle,
+  isDuplicateTrack,
+  normalizeTitle,
+} from "../../src/shared/dedup";
+import {
+  compareNormalQueue,
+  isGuestBoostBlocked,
+  isGuestUpvoteBlocked,
+  isGuestVetoBlocked,
+  type QueueItemRow,
+} from "../../src/server/services/queue";
 
 describe("dedup", () => {
   test("normalizeTitle strips punctuation", () => {
     expect(normalizeTitle("Hello, World!")).toBe("hello world");
+  });
+
+  test("foldTitle strips apostrophe and cosmetic remaster suffix", () => {
+    expect(foldTitle("Stayin' Alive")).toBe("stayinalive");
+    expect(foldTitle("Stayin Alive")).toBe("stayinalive");
+    expect(foldTitle("Stayin Alive (2007 Remaster)")).toBe("stayinalive");
+  });
+
+  test("foldTitle keeps live and remix suffixes distinct", () => {
+    expect(foldTitle("Song (Live)")).toBe("songlive");
+    expect(foldTitle("Song (Remix)")).toBe("songremix");
+    expect(foldTitle("Song")).toBe("song");
+  });
+
+  test("foldArtist normalizes articles and primary artist", () => {
+    expect(foldArtist("The Bee Gees")).toBe("beegees");
+    expect(foldArtist("Bee Gees")).toBe("beegees");
+    expect(foldArtist("Bee Gees, The")).toBe("beegees");
+  });
+
+  test("foldTitle folds accented characters", () => {
+    expect(foldTitle("Beyoncé")).toBe("beyonce");
+    expect(foldTitle("Beyonce")).toBe("beyonce");
   });
 
   test("detects fuzzy duplicates", () => {
@@ -12,7 +48,19 @@ describe("dedup", () => {
     expect(isDuplicateTitle("Bohemian Rhapsody", ["Totally Different"])).toBe(false);
   });
 
-  test("detects duplicate tracks by title and artist", () => {
+  test("detects duplicate tracks by folded title and artist", () => {
+    expect(
+      isDuplicateTrack(
+        { trackName: "Stayin Alive", artistName: "Bee Gees" },
+        [{ trackName: "Stayin' Alive", artistName: "The Bee Gees" }],
+      ),
+    ).toBe(true);
+    expect(
+      isDuplicateTrack(
+        { trackName: "Stayin Alive (2007 Remaster)", artistName: "Bee Gees" },
+        [{ trackName: "Stayin' Alive", artistName: "Bee Gees" }],
+      ),
+    ).toBe(true);
     expect(
       isDuplicateTrack(
         { trackName: "Imagine", artistName: "John Lennon" },
@@ -25,6 +73,33 @@ describe("dedup", () => {
         [{ trackName: "Imagine", artistName: "John Lennon" }],
       ),
     ).toBe(false);
+  });
+
+  test("duration guard rejects same fold with very different lengths", () => {
+    expect(
+      isDuplicateTrack(
+        { trackName: "Song", artistName: "Band", durationMs: 210_000 },
+        [{ trackName: "Song (Live)", artistName: "Band", durationMs: 360_000 }],
+      ),
+    ).toBe(false);
+  });
+
+  test("duration guard accepts same fold within tolerance", () => {
+    expect(
+      isDuplicateTrack(
+        { trackName: "Stayin Alive", artistName: "Bee Gees", durationMs: 285_000 },
+        [{ trackName: "Stayin' Alive (2007 Remaster)", artistName: "The Bee Gees", durationMs: 287_000 }],
+      ),
+    ).toBe(true);
+  });
+
+  test("duration guard skipped when either side lacks duration", () => {
+    expect(
+      isDuplicateTrack(
+        { trackName: "Stayin Alive", artistName: "Bee Gees" },
+        [{ trackName: "Stayin' Alive", artistName: "The Bee Gees", durationMs: 285_000 }],
+      ),
+    ).toBe(true);
   });
 
   test("detects duplicate display names case-insensitively", () => {
@@ -52,6 +127,7 @@ describe("queue sort", () => {
     from_spotify: 0,
     added_at: "2026-01-01T00:00:00.000Z",
     finished_at: null,
+    duration_ms: null,
     ...overrides,
   });
 
@@ -86,6 +162,7 @@ describe("guest action locks", () => {
     from_spotify: 0,
     added_at: "2026-01-01T00:00:00.000Z",
     finished_at: null,
+    duration_ms: null,
     ...overrides,
   });
 

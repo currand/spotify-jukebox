@@ -23,6 +23,10 @@ const testConfig: Config = {
   spotifyApiBudgetCount: 90,
   spotifyApiBudgetWindowMs: 30_000,
   spotifyDailyWarnCalls: 8000,
+  syncFastPoll: false,
+  syncEndWindowMs: 7000,
+  syncFallbackIntervalMs: 30_000,
+  syncIdleIntervalMs: 60_000,
 };
 
 function emptyDb(): Db {

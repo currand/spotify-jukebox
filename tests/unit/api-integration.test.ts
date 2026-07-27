@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS queue_items (
   status TEXT NOT NULL DEFAULT 'pending', is_boosted INTEGER NOT NULL DEFAULT 0,
   boost_position INTEGER, manual_order INTEGER, added_by_guest_id TEXT,
   added_at TEXT NOT NULL, finished_at TEXT,
-  from_seed INTEGER NOT NULL DEFAULT 0, from_spotify INTEGER NOT NULL DEFAULT 0
+  from_seed INTEGER NOT NULL DEFAULT 0, from_spotify INTEGER NOT NULL DEFAULT 0,
+  duration_ms INTEGER
 );
 CREATE TABLE IF NOT EXISTS votes (
   guest_id TEXT NOT NULL, queue_item_id TEXT NOT NULL, created_at TEXT NOT NULL,
@@ -77,7 +78,15 @@ function createMockSpotify(): SpotifyClient & {
   const state = {
     _searchResults: new Map<string, SpotifyTrack[]>(),
     _queueData: { currentlyPlaying: null as SpotifyTrack | null, queue: [] as SpotifyTrack[] },
-    _snapshot: { deviceActive: true, isPlaying: true, deviceRestricted: false, deviceName: "Test Speaker", currentUri: null } as PlayerSnapshot,
+    _snapshot: {
+      deviceActive: true,
+      isPlaying: true,
+      deviceRestricted: false,
+      deviceName: "Test Speaker",
+      currentUri: null,
+      progressMs: null,
+      durationMs: null,
+    } as PlayerSnapshot,
     _apiCalls: [] as string[],
     _should429: false,
   };
@@ -124,6 +133,12 @@ function createMockSpotify(): SpotifyClient & {
     async skipNext() {
       state._apiCalls.push("skipNext");
     },
+    async play() {
+      state._apiCalls.push("play");
+    },
+    async pause() {
+      state._apiCalls.push("pause");
+    },
     async getPlaybackState() {
       return { deviceActive: state._snapshot.deviceActive, isPlaying: state._snapshot.isPlaying, deviceRestricted: state._snapshot.deviceRestricted, deviceName: state._snapshot.deviceName };
     },
@@ -150,6 +165,10 @@ function testConfig(): Config {
     spotifyApiBudgetCount: 90,
     spotifyApiBudgetWindowMs: 30_000,
     spotifyDailyWarnCalls: 8000,
+    syncFastPoll: false,
+    syncEndWindowMs: 7000,
+    syncFallbackIntervalMs: 30_000,
+    syncIdleIntervalMs: 60_000,
   };
 }
 

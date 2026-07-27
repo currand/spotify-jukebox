@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS queue_items (
   status TEXT NOT NULL DEFAULT 'pending', is_boosted INTEGER NOT NULL DEFAULT 0,
   boost_position INTEGER, manual_order INTEGER, added_by_guest_id TEXT,
   added_at TEXT NOT NULL, finished_at TEXT,
-  from_seed INTEGER NOT NULL DEFAULT 0, from_spotify INTEGER NOT NULL DEFAULT 0
+  from_seed INTEGER NOT NULL DEFAULT 0, from_spotify INTEGER NOT NULL DEFAULT 0,
+  duration_ms INTEGER
 );
 `;
 

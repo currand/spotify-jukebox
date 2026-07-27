@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   findActiveQueueItem,
+  findActiveQueueItemByFold,
   getSearchTrackQueueState,
   isTrackInPartyQueue,
 } from "../../src/shared/queue-match";
@@ -12,6 +13,7 @@ const item = (overrides: Partial<QueueItemView>): QueueItemView => ({
   trackName: "Bohemian Rhapsody",
   artistName: "Queen",
   albumArtUrl: null,
+  durationMs: null,
   upvoteCount: 0,
   vetoCount: 0,
   status: "pending",
@@ -49,6 +51,21 @@ describe("isTrackInPartyQueue", () => {
     expect(
       isTrackInPartyQueue(
         { uri: "spotify:track:new", name: "Bohemian Rhapsody", artistName: "Queen" },
+        queue,
+      ),
+    ).toBe(true);
+  });
+
+  test("matches Bee Gees variants by fold", () => {
+    const queue = {
+      nowPlaying: null,
+      boostLane: [],
+      upcoming: [],
+      dedupTracks: [{ trackName: "Stayin' Alive", artistName: "The Bee Gees" }],
+    };
+    expect(
+      isTrackInPartyQueue(
+        { uri: "spotify:track:new", name: "Stayin Alive", artistName: "Bee Gees" },
         queue,
       ),
     ).toBe(true);
@@ -127,6 +144,29 @@ describe("findActiveQueueItem", () => {
   });
 });
 
+describe("findActiveQueueItemByFold", () => {
+  test("returns active item with different URI but same fold", () => {
+    const upcomingItem = item({
+      id: "bee",
+      spotifyUri: "spotify:track:album",
+      trackName: "Stayin' Alive",
+      artistName: "The Bee Gees",
+    });
+    const queue = {
+      nowPlaying: null,
+      boostLane: [],
+      upcoming: [upcomingItem],
+      dedupTracks: [],
+    };
+    expect(
+      findActiveQueueItemByFold(
+        { name: "Stayin Alive", artistName: "Bee Gees" },
+        queue,
+      )?.id,
+    ).toBe("bee");
+  });
+});
+
 describe("getSearchTrackQueueState", () => {
   test("returns active state with queue item id", () => {
     const upcomingItem = item({ id: "live", spotifyUri: "spotify:track:live" });
@@ -142,6 +182,31 @@ describe("getSearchTrackQueueState", () => {
         queue,
       ),
     ).toEqual({ blockedReason: "active", queueItemId: "live" });
+  });
+
+  test("returns active state for fold match with different URI", () => {
+    const upcomingItem = item({
+      id: "bee",
+      spotifyUri: "spotify:track:album",
+      trackName: "Stayin' Alive",
+      artistName: "The Bee Gees",
+    });
+    const queue = {
+      nowPlaying: null,
+      boostLane: [],
+      upcoming: [upcomingItem],
+      dedupTracks: [],
+    };
+    expect(
+      getSearchTrackQueueState(
+        {
+          uri: "spotify:track:compilation",
+          name: "Stayin Alive",
+          artistName: "Bee Gees",
+        },
+        queue,
+      ),
+    ).toEqual({ blockedReason: "active", queueItemId: "bee" });
   });
 
   test("returns history state without queue item id", () => {

@@ -746,6 +746,30 @@ export function AdminPage() {
               >
                 {syncing ? "Syncing…" : "Sync with Spotify"}
               </button>
+              <button
+                onClick={() => void hostAction(`/host/parties/${party.id}/play`)}
+                disabled={
+                  party.status !== "on" ||
+                  !status?.deviceActive ||
+                  status?.isPlaying === true
+                }
+              >
+                Start
+              </button>
+              <button
+                className="secondary"
+                onClick={() => void hostAction(`/host/parties/${party.id}/pause`)}
+                disabled={
+                  party.status !== "on" ||
+                  !status?.deviceActive ||
+                  status?.isPlaying !== true
+                }
+              >
+                Stop
+              </button>
+              <button onClick={() => void hostAction(`/host/parties/${party.id}/skip`)}>
+                Skip
+              </button>
               <button onClick={() => void hostAction(`/host/parties/${party.id}/queue/shuffle`)}>
                 Shuffle
               </button>
@@ -754,9 +778,6 @@ export function AdminPage() {
                 onClick={() => void hostAction(`/host/parties/${party.id}/queue/clear`)}
               >
                 Clear upcoming
-              </button>
-              <button onClick={() => void hostAction(`/host/parties/${party.id}/skip`)}>
-                Skip now playing
               </button>
             </div>
             <div className="row admin-search-row">

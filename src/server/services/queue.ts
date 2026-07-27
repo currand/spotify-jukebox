@@ -22,6 +22,7 @@ export interface QueueItemRow {
   from_spotify: number;
   added_at: string;
   finished_at: string | null;
+  duration_ms: number | null;
   guest_display_name?: string | null;
 }
 
@@ -325,23 +326,32 @@ export function nextBoostPosition(db: Db, partyId: string): number {
 export function getDedupTracks(
   db: Db,
   partyId: string,
-): { trackName: string; artistName: string }[] {
+): { trackName: string; artistName: string; durationMs: number | null }[] {
   const active = db
     .query(
-      `SELECT track_name, artist_name FROM queue_items
+      `SELECT track_name, artist_name, duration_ms FROM queue_items
        WHERE party_id = ? AND status IN ('pending', 'queued', 'playing')`,
     )
-    .all(partyId) as { track_name: string; artist_name: string }[];
+    .all(partyId) as {
+    track_name: string;
+    artist_name: string;
+    duration_ms: number | null;
+  }[];
   const recent = db
     .query(
-      `SELECT track_name, artist_name FROM queue_items
+      `SELECT track_name, artist_name, duration_ms FROM queue_items
        WHERE party_id = ? AND status IN ('played', 'vetoed')
        ORDER BY finished_at DESC LIMIT 20`,
     )
-    .all(partyId) as { track_name: string; artist_name: string }[];
+    .all(partyId) as {
+    track_name: string;
+    artist_name: string;
+    duration_ms: number | null;
+  }[];
   return [...active, ...recent].map((r) => ({
     trackName: r.track_name,
     artistName: r.artist_name,
+    durationMs: r.duration_ms,
   }));
 }
 
@@ -376,6 +386,7 @@ export function toQueueItemView(row: QueueItemRow) {
     trackName: row.track_name,
     artistName: row.artist_name,
     albumArtUrl: row.album_art_url,
+    durationMs: row.duration_ms,
     upvoteCount: row.upvote_count,
     vetoCount: row.veto_count,
     status: row.status,
@@ -462,6 +473,7 @@ export interface InsertQueueItemInput {
   name: string;
   artistName: string;
   albumArtUrl: string | null;
+  durationMs?: number | null;
   guestId: string | null;
   fromSeed?: boolean;
   fromSpotify?: boolean;
@@ -474,7 +486,11 @@ export function insertQueueItem(db: Db, input: InsertQueueItemInput): string {
       const tracks = getDedupTracks(db, input.partyId);
       if (
         isDuplicateTrack(
-          { trackName: input.name, artistName: input.artistName },
+          {
+            trackName: input.name,
+            artistName: input.artistName,
+            durationMs: input.durationMs,
+          },
           tracks,
         )
       ) {
@@ -486,8 +502,9 @@ export function insertQueueItem(db: Db, input: InsertQueueItemInput): string {
         `INSERT INTO queue_items (
           id, party_id, spotify_uri, track_name, artist_name, album_art_url,
           upvote_count, veto_count, status, is_boosted, boost_position,
-          manual_order, added_by_guest_id, from_seed, from_spotify, added_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'pending', 0, NULL, NULL, ?, ?, ?, ?)`,
+          manual_order, added_by_guest_id, from_seed, from_spotify, added_at,
+          duration_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'pending', 0, NULL, NULL, ?, ?, ?, ?, ?)`,
         [
           id,
           input.partyId,
@@ -499,6 +516,7 @@ export function insertQueueItem(db: Db, input: InsertQueueItemInput): string {
           input.fromSeed ? 1 : 0,
           input.fromSpotify ? 1 : 0,
           new Date().toISOString(),
+          input.durationMs ?? null,
         ],
       );
       return id;

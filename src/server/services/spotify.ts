@@ -34,6 +34,8 @@ export interface PlayerSnapshot {
   deviceRestricted: boolean;
   deviceName: string | null;
   currentUri: string | null;
+  progressMs: number | null;
+  durationMs: number | null;
 }
 
 export interface SpotifyClient {
@@ -75,6 +77,8 @@ export interface SpotifyClient {
   getQueue(): Promise<{ currentlyPlaying: SpotifyTrack | null; queue: SpotifyTrack[] }>;
   addToQueue(uri: string): Promise<void>;
   skipNext(): Promise<void>;
+  play(): Promise<void>;
+  pause(): Promise<void>;
   /** @deprecated use getPlayerSnapshot */
   getPlaybackState(): Promise<{
     deviceActive: boolean;
@@ -90,6 +94,7 @@ function mapTrack(raw: {
   name: string;
   artists: { id?: string; name: string }[];
   album?: { images: { url: string }[] };
+  duration_ms?: number;
 }): SpotifyTrack {
   return {
     uri: raw.uri,
@@ -97,6 +102,8 @@ function mapTrack(raw: {
     name: raw.name,
     artists: raw.artists,
     album: raw.album ?? { images: [] },
+    durationMs:
+      typeof raw.duration_ms === "number" ? raw.duration_ms : null,
   };
 }
 
@@ -171,7 +178,32 @@ function logSpotifySnapshot(label: string, snapshot: PlayerSnapshot): void {
     deviceRestricted: snapshot.deviceRestricted,
     deviceName: snapshot.deviceName,
     currentUri: snapshot.currentUri,
+    progressMs: snapshot.progressMs,
+    durationMs: snapshot.durationMs,
   });
+}
+
+function emptyPlayerSnapshot(): PlayerSnapshot {
+  return {
+    deviceActive: false,
+    isPlaying: false,
+    deviceRestricted: false,
+    deviceName: null,
+    currentUri: null,
+    progressMs: null,
+    durationMs: null,
+  };
+}
+
+function playbackTimingFromBody(data: {
+  progress_ms?: number;
+  item?: { uri: string; duration_ms?: number } | null;
+}): Pick<PlayerSnapshot, "progressMs" | "durationMs"> {
+  return {
+    progressMs: typeof data.progress_ms === "number" ? data.progress_ms : null,
+    durationMs:
+      typeof data.item?.duration_ms === "number" ? data.item.duration_ms : null,
+  };
 }
 
 async function readJsonBody<T>(res: Response): Promise<T | null> {
@@ -369,7 +401,8 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
 
     const data = await readJsonBody<{
       is_playing?: boolean;
-      item?: { uri: string; name?: string } | null;
+      progress_ms?: number;
+      item?: { uri: string; name?: string; duration_ms?: number } | null;
     }>(res);
     debugLog("spotify", "currently-playing body", summarizePlayerBody(data));
     if (!data?.item?.uri) {
@@ -382,6 +415,7 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
       deviceRestricted: false,
       deviceName: null,
       currentUri: data.item.uri,
+      ...playbackTimingFromBody(data),
     };
     logSpotifySnapshot("fallback snapshot", snapshot);
     return snapshot;
@@ -395,13 +429,7 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
       if (fallback) {
         return fallback;
       }
-      const empty = {
-        deviceActive: false,
-        isPlaying: false,
-        deviceRestricted: false,
-        deviceName: null,
-        currentUri: null,
-      };
+      const empty = emptyPlayerSnapshot();
       logSpotifySnapshot("no playback", empty);
       return empty;
     }
@@ -411,7 +439,8 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
 
     const data = await readJsonBody<{
       is_playing?: boolean;
-      item?: { uri: string; name?: string } | null;
+      progress_ms?: number;
+      item?: { uri: string; name?: string; duration_ms?: number } | null;
       device?: {
         id: string;
         name?: string;
@@ -422,12 +451,14 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
     debugLog("spotify", "/me/player body", summarizePlayerBody(data));
 
     if (!data) {
-      const restricted = {
+      const restricted: PlayerSnapshot = {
         deviceActive: true,
         isPlaying: false,
         deviceRestricted: true,
         deviceName: null,
         currentUri: null,
+        progressMs: null,
+        durationMs: null,
       };
       logSpotifySnapshot("opaque player response", restricted);
       return restricted;
@@ -439,12 +470,13 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
       isRestrictedDeviceType(device?.type) ||
       (device?.name?.toLowerCase().includes("airplay") ?? false);
 
-    const snapshot = {
+    const snapshot: PlayerSnapshot = {
       deviceActive: isPlaybackActive(device, data.item),
       isPlaying: Boolean(data.is_playing),
       deviceRestricted,
       deviceName: device?.name ?? null,
       currentUri: data.item?.uri ?? null,
+      ...playbackTimingFromBody(data),
     };
     logSpotifySnapshot("player snapshot", snapshot);
     return snapshot;
@@ -521,12 +553,13 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
             name: string;
             artists: { id: string; name: string }[];
             album: { images: { url: string }[] };
+            duration_ms?: number;
           }[];
         };
       }>(
         `/search?q=${encodeURIComponent(`artist:${name}`)}&type=track&limit=${limit}&offset=${offset}`,
       );
-      return data.tracks?.items ?? [];
+      return (data.tracks?.items ?? []).map(mapTrack);
     },
 
     async getPlaylistTracks(playlistId) {
@@ -591,6 +624,14 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
       await apiVoid("/me/player/next", { method: "POST" });
     },
 
+    async play() {
+      await apiVoid("/me/player/play", { method: "PUT" });
+    },
+
+    async pause() {
+      await apiVoid("/me/player/pause", { method: "PUT" });
+    },
+
     async getPlaybackState() {
       const snapshot = await getPlayerSnapshot();
       return {
@@ -650,6 +691,7 @@ export function trackFromSpotify(track: SpotifyTrack) {
     name: track.name,
     artistName: track.artists.map((a) => a.name).join(", "),
     albumArtUrl: track.album?.images?.[0]?.url ?? null,
+    durationMs: track.durationMs ?? null,
   };
 }
 

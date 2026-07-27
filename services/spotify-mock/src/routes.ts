@@ -172,6 +172,16 @@ export function createApp({ player, tracks, durationMs }: AppDeps) {
     return c.body(null, 204);
   });
 
+  app.put("/v1/me/player/play", (c) => {
+    player.play();
+    return c.body(null, 204);
+  });
+
+  app.put("/v1/me/player/pause", (c) => {
+    player.pause();
+    return c.body(null, 204);
+  });
+
   app.post("/mock/reset", (c) => {
     player.reset();
     return c.json({ ok: true });

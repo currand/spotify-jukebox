@@ -47,6 +47,7 @@ export interface TrackInfo {
   name: string;
   artistName: string;
   albumArtUrl: string | null;
+  durationMs?: number | null;
 }
 
 export interface QueueItemView {
@@ -55,6 +56,7 @@ export interface QueueItemView {
   trackName: string;
   artistName: string;
   albumArtUrl: string | null;
+  durationMs?: number | null;
   upvoteCount: number;
   vetoCount: number;
   status: QueueItemStatus;
@@ -150,6 +152,7 @@ export interface HostSpotifyStatus {
   authenticated: boolean;
   expiresAt: string | null;
   deviceActive: boolean;
+  isPlaying: boolean;
   spotifyReachable: boolean;
   deviceRestricted: boolean;
   deviceName: string | null;
@@ -162,6 +165,7 @@ export interface HostSpotifyStatus {
 export interface DedupTrack {
   trackName: string;
   artistName: string;
+  durationMs?: number | null;
 }
 
 export interface QueueSnapshot {
@@ -237,6 +241,7 @@ export interface SpotifyTrack {
   name: string;
   artists: { id?: string; name: string }[];
   album: { images: { url: string }[] };
+  durationMs?: number | null;
 }
 
 export interface HostDiagnosticsSearchEvent {

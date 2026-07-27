@@ -163,4 +163,16 @@ describe("mock player playback", () => {
     expect(player.getState().queue).toEqual([]);
     expect(player.getState().isPlaying).toBe(false);
   });
+
+  test("play and pause toggle playback without advancing", () => {
+    const player = createPlayerState({ tracks, durationMs: 180_000 });
+    player.addToQueue("spotify:track:1", byUri);
+    player.pause();
+
+    expect(player.getState().isPlaying).toBe(false);
+    expect(player.getState().currentlyPlaying?.uri).toBe("spotify:track:1");
+
+    player.play();
+    expect(player.getState().isPlaying).toBe(true);
+  });
 });

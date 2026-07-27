@@ -874,6 +874,7 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
         name: body.name,
         artistName: body.artistName,
         albumArtUrl: body.albumArtUrl ?? null,
+        durationMs: body.durationMs ?? null,
       };
     } else {
       const cached = getCachedTrackMetadata(body.uri);
@@ -909,6 +910,7 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
         name: trackInfo.name,
         artistName: trackInfo.artistName,
         albumArtUrl: trackInfo.albumArtUrl,
+        durationMs: trackInfo.durationMs ?? null,
         guestId: isHost ? null : guest!.id,
       });
       if (guest && !isHost) recordAction(db, guest.id, "add");
@@ -931,7 +933,13 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
 export async function addTrackToParty(
   db: Db,
   partyId: string,
-  track: { uri: string; name: string; artistName: string; albumArtUrl: string | null },
+  track: {
+    uri: string;
+    name: string;
+    artistName: string;
+    albumArtUrl: string | null;
+    durationMs?: number | null;
+  },
   guestId: string | null,
   fromSeed = false,
 ): Promise<string> {
@@ -942,6 +950,7 @@ export async function addTrackToParty(
       name: track.name,
       artistName: track.artistName,
       albumArtUrl: track.albumArtUrl,
+      durationMs: track.durationMs ?? null,
       guestId,
       fromSeed,
     });

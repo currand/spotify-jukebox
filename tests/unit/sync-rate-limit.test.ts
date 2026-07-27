@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { SpotifyApiError, MIN_SPOTIFY_BACKOFF_MS } from "../../src/server/services/spotify-errors";
 import {
   applySpotifyRateLimit,
+  computeAdaptiveSyncDelayMs,
+  configureSyncPolling,
   getNextSyncDelayMs,
   getSpotifyRateLimitRemainingMs,
   getSyncIntervalMs,
@@ -9,12 +11,22 @@ import {
   resetSyncStateForTests,
 } from "../../src/server/services/sync";
 
+function enableFastPollForTests(): void {
+  configureSyncPolling({
+    syncFastPoll: true,
+    syncEndWindowMs: 7000,
+    syncFallbackIntervalMs: 30_000,
+    syncIdleIntervalMs: 60_000,
+  });
+}
+
 describe("sync Spotify rate limit backoff", () => {
   afterEach(() => {
     resetSyncStateForTests();
   });
 
   test("applySpotifyRateLimit sets rateLimitedUntil from search/prefetch 429s", () => {
+    enableFastPollForTests();
     applySpotifyRateLimit(new SpotifyApiError("SPOTIFY_429:{}", 429, 8000));
 
     const sync = getSyncState();
@@ -26,6 +38,7 @@ describe("sync Spotify rate limit backoff", () => {
   });
 
   test("first 429 enforces minimum backoff even when Spotify Retry-After is 5s", () => {
+    enableFastPollForTests();
     applySpotifyRateLimit(new SpotifyApiError("SPOTIFY_429:{}", 429, 5000));
 
     const remaining = getSyncState().rateLimitedUntil! - Date.now();
@@ -36,6 +49,7 @@ describe("sync Spotify rate limit backoff", () => {
   });
 
   test("getNextSyncDelayMs waits for backoff instead of polling at 10s", () => {
+    enableFastPollForTests();
     applySpotifyRateLimit(new SpotifyApiError("SPOTIFY_429:{}", 429, 30_000));
 
     const delay = getNextSyncDelayMs({} as never, { id: "p", sync_generation: 1 });
@@ -47,6 +61,7 @@ describe("sync Spotify rate limit backoff", () => {
   });
 
   test("getNextSyncDelayMs uses normal interval when not rate limited", () => {
+    enableFastPollForTests();
     const delay = getNextSyncDelayMs({} as never, { id: "p", sync_generation: 1 });
     expect(delay).toBe(10_000);
   });

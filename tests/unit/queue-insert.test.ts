@@ -26,7 +26,8 @@ function testDb(): Db {
       from_seed INTEGER NOT NULL DEFAULT 0,
       from_spotify INTEGER NOT NULL DEFAULT 0,
       added_at TEXT NOT NULL,
-      finished_at TEXT
+      finished_at TEXT,
+      duration_ms INTEGER
     )
   `);
   db.run(`
@@ -84,5 +85,23 @@ describe("insertQueueItem", () => {
       [new Date().toISOString(), id],
     );
     expect(() => insertQueueItem(db, track)).toThrow(DuplicateQueueItemError);
+  });
+
+  test("dedup blocks Bee Gees title and artist variants", () => {
+    const db = testDb();
+    insertQueueItem(db, {
+      ...track,
+      uri: "spotify:track:album",
+      name: "Stayin' Alive",
+      artistName: "The Bee Gees",
+    });
+    expect(() =>
+      insertQueueItem(db, {
+        ...track,
+        uri: "spotify:track:compilation",
+        name: "Stayin Alive",
+        artistName: "Bee Gees",
+      }),
+    ).toThrow(DuplicateQueueItemError);
   });
 });

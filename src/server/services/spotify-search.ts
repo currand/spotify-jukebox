@@ -281,6 +281,7 @@ function mapSpotifyTrackToInfo(track: SpotifyTrack): TrackInfo {
     name: info.name,
     artistName: info.artistName,
     albumArtUrl: info.albumArtUrl,
+    durationMs: info.durationMs,
   };
   cacheTrackMetadata(mapped);
   return mapped;
@@ -481,6 +482,7 @@ async function fetchArtistTrackPages(
         name: track.name,
         artists: track.artists,
         album: track.album,
+        durationMs: track.durationMs ?? null,
       });
     }
     if (batch.length < 10) break;

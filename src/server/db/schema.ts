@@ -124,6 +124,7 @@ export function initDb(config: Config): Db {
     `ALTER TABLE guests ADD COLUMN last_ip TEXT`,
     `ALTER TABLE guests ADD COLUMN tutorial_seen INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE parties ADD COLUMN boost_cap INTEGER`,
+    `ALTER TABLE queue_items ADD COLUMN duration_ms INTEGER`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_party_active_uri
       ON queue_items(party_id, spotify_uri)
       WHERE status IN ('pending', 'queued', 'playing')`,

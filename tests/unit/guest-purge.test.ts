@@ -40,7 +40,8 @@ function testDb(): Db {
       from_seed INTEGER NOT NULL DEFAULT 0,
       from_spotify INTEGER NOT NULL DEFAULT 0,
       added_at TEXT NOT NULL,
-      finished_at TEXT
+      finished_at TEXT,
+      duration_ms INTEGER
     )
   `);
   db.run(`
