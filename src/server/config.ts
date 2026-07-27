@@ -1,10 +1,15 @@
 import type { AppEnv } from "./load-env";
 
+export type SpotifyMode = "live" | "mock";
+
 export interface Config {
   env: AppEnv;
   port: number;
   baseUrl: string;
   databasePath: string;
+  spotifyMode: SpotifyMode;
+  spotifyApiBaseUrl: string;
+  spotifyAccountsBaseUrl: string;
   spotifyClientId: string;
   spotifyClientSecret: string;
   spotifyRedirectUri: string;
@@ -102,21 +107,48 @@ function assertUrlPolicy(
   }
 }
 
+function parseSpotifyMode(env: AppEnv): SpotifyMode {
+  const raw = process.env.SPOTIFY_MODE?.trim().toLowerCase();
+  if (!raw || raw === "live") return "live";
+  if (raw === "mock") {
+    if (env === "production") {
+      throw new Error("SPOTIFY_MODE=mock is only allowed when JUKEBOX_ENV=development");
+    }
+    return "mock";
+  }
+  throw new Error("SPOTIFY_MODE must be live or mock");
+}
+
+function optionalEnv(name: string, fallback: string): string {
+  const value = process.env[name]?.trim();
+  return value ? value : fallback;
+}
+
 export function loadConfig(env: AppEnv): Config {
   const isProduction = env === "production";
+  const spotifyMode = parseSpotifyMode(env);
   const port = Number(process.env.PORT ?? 3000);
   // Dev UI on Vite (:5173); API/oauth callback on :3000. Prod uses one HTTPS URL.
   const baseUrl = isProduction
     ? requireEnv("BASE_URL", env)
     : (process.env.BASE_URL ?? "http://127.0.0.1:5173");
-  const spotifyRedirectUri = requireEnv("SPOTIFY_REDIRECT_URI", env);
+  const spotifyRedirectUri =
+    spotifyMode === "mock"
+      ? optionalEnv(
+          "SPOTIFY_REDIRECT_URI",
+          "http://127.0.0.1:3000/api/v1/host/spotify/callback",
+        )
+      : requireEnv("SPOTIFY_REDIRECT_URI", env);
   const allowInsecureHttp =
     process.env.ALLOW_INSECURE_HTTP === "1" ||
     process.env.ALLOW_INSECURE_HTTP === "true";
 
   assertUrlPolicy(env, baseUrl, spotifyRedirectUri, allowInsecureHttp);
 
-  const encryptionKey = requireEnv("ENCRYPTION_KEY", env);
+  const encryptionKey =
+    spotifyMode === "mock"
+      ? optionalEnv("ENCRYPTION_KEY", "dev-only-change-me")
+      : requireEnv("ENCRYPTION_KEY", env);
   if (isProduction && encryptionKey.startsWith("dev-only")) {
     throw new Error("Set a strong ENCRYPTION_KEY in .env.production");
   }
@@ -130,6 +162,15 @@ export function loadConfig(env: AppEnv): Config {
     ? requireEnv("HOST_SETUP_TOKEN", env)
     : (process.env.HOST_SETUP_TOKEN ?? null);
 
+  const spotifyApiBaseUrl = optionalEnv(
+    "SPOTIFY_API_BASE_URL",
+    "https://api.spotify.com/v1",
+  ).replace(/\/$/, "");
+  const spotifyAccountsBaseUrl = optionalEnv(
+    "SPOTIFY_ACCOUNTS_BASE_URL",
+    "https://accounts.spotify.com",
+  ).replace(/\/$/, "");
+
   return {
     env,
     port,
@@ -137,8 +178,17 @@ export function loadConfig(env: AppEnv): Config {
     databasePath:
       process.env.DATABASE_PATH ??
       (isProduction ? "/data/jukebox.db" : "./data/jukebox-dev.db"),
-    spotifyClientId: requireEnv("SPOTIFY_CLIENT_ID", env),
-    spotifyClientSecret: requireEnv("SPOTIFY_CLIENT_SECRET", env),
+    spotifyMode,
+    spotifyApiBaseUrl,
+    spotifyAccountsBaseUrl,
+    spotifyClientId:
+      spotifyMode === "mock"
+        ? optionalEnv("SPOTIFY_CLIENT_ID", "mock-client")
+        : requireEnv("SPOTIFY_CLIENT_ID", env),
+    spotifyClientSecret:
+      spotifyMode === "mock"
+        ? optionalEnv("SPOTIFY_CLIENT_SECRET", "mock-secret")
+        : requireEnv("SPOTIFY_CLIENT_SECRET", env),
     spotifyRedirectUri,
     encryptionKey,
     hostSetupToken,

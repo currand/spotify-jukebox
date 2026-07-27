@@ -1,0 +1,8 @@
+/** Shared base URL for endurance/load scripts. */
+export function resolveJukeboxBaseUrl(override?: string): string {
+  const raw =
+    override?.trim() ||
+    process.env.JUKEBOX_BASE_URL?.trim() ||
+    "https://jukebox.currannet.net";
+  return raw.replace(/\/$/, "");
+}

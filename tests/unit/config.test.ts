@@ -48,4 +48,34 @@ describe("loadConfig URL policy", () => {
       process.env = prev;
     }
   });
+
+  test("rejects mock mode in production", () => {
+    const prev = { ...process.env };
+    try {
+      process.env.SPOTIFY_MODE = "mock";
+      expect(() => loadConfig("production")).toThrow(/mock/i);
+    } finally {
+      process.env = prev;
+    }
+  });
+
+  test("allows mock mode in development with defaults", () => {
+    const prev = { ...process.env };
+    try {
+      delete process.env.SPOTIFY_CLIENT_ID;
+      delete process.env.SPOTIFY_CLIENT_SECRET;
+      delete process.env.SPOTIFY_REDIRECT_URI;
+      delete process.env.ENCRYPTION_KEY;
+      process.env.SPOTIFY_MODE = "mock";
+      process.env.SPOTIFY_API_BASE_URL = "http://127.0.0.1:8080/v1";
+      process.env.SPOTIFY_ACCOUNTS_BASE_URL = "http://127.0.0.1:8080";
+
+      const config = loadConfig("development");
+      expect(config.spotifyMode).toBe("mock");
+      expect(config.spotifyClientId).toBe("mock-client");
+      expect(config.spotifyApiBaseUrl).toBe("http://127.0.0.1:8080/v1");
+    } finally {
+      process.env = prev;
+    }
+  });
 });

@@ -11,7 +11,7 @@ import { createGuestRoutes } from "./routes/guest";
 import { createHostRoutes } from "./routes/host";
 import { probeGuardMiddleware } from "./middleware/probe-guard";
 import { initSpotifyApiBudget } from "./services/spotify-api-budget";
-import { createSpotifyClient } from "./services/spotify";
+import { createSpotifyClient, ensureMockHostCredentials } from "./services/spotify";
 import { startSyncWorker } from "./services/sync";
 import { isDebugEnabled } from "./debug";
 import {
@@ -27,6 +27,7 @@ initSpotifyApiBudget({
   windowMs: config.spotifyApiBudgetWindowMs,
 });
 const db = initDb(config);
+ensureMockHostCredentials(db, config);
 const spotify = createSpotifyClient(db, config);
 
 const app = new Hono();
@@ -64,7 +65,7 @@ app.get("/health", (c) => c.json({ ok: true }));
 
 const clientDir = join(import.meta.dir, "../../dist/client");
 
-if (config.env === "development") {
+if (config.env === "development" && config.spotifyMode !== "mock") {
   // API only on :3000 — UI runs on Vite :5173 (HMR breaks through a proxy)
   app.get("*", (c) => {
     const url = new URL(c.req.url);
@@ -93,7 +94,8 @@ startMetricsRecorder(db, () => {
   });
 });
 
-const bindHost = config.isProduction ? "0.0.0.0" : "127.0.0.1";
+const bindHost =
+  config.isProduction || config.spotifyMode === "mock" ? "0.0.0.0" : "127.0.0.1";
 if (process.env.DEBUG) {
   const namespaces = ["spotify", "sync"].filter(isDebugEnabled);
   console.log(

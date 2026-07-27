@@ -1,3 +1,12 @@
+# Jukebox runtime — one compose file, optional profiles:
+#
+#   bun run docker:up              # prod (profile: default)
+#   bun run docker:up:tunnel         # prod + cloudflared (profiles: default,tunnel)
+#   bun run docker:up:mock           # dev + spotify-mock (profile: mock)
+#   bun run docker:up:registry       # prod from JUKEBOX_IMAGE in .env
+#
+# Compose interpolation vars live in .env (see .env.example).
+
 services:
   jukebox:
     build:
@@ -16,6 +25,62 @@ services:
       JUKEBOX_ENV: production
       DATABASE_PATH: /data/jukebox.db
       PORT: 3000
+    profiles:
+      - default
+      - tunnel
+
+  jukebox-mock:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${JUKEBOX_IMAGE:-jukebox:local}
+    restart: unless-stopped
+    ports:
+      - "${JUKEBOX_PORT:-3000}:3000"
+    volumes:
+      - jukebox-mock-data:/data
+    env_file:
+      - .env.development
+    environment:
+      NODE_ENV: development
+      JUKEBOX_ENV: development
+      DATABASE_PATH: /data/jukebox.db
+      PORT: 3000
+      BASE_URL: http://127.0.0.1:3000
+      ALLOW_INSECURE_HTTP: "1"
+      SPOTIFY_MODE: mock
+      SPOTIFY_API_BASE_URL: http://spotify-mock:8080/v1
+      SPOTIFY_ACCOUNTS_BASE_URL: http://spotify-mock:8080
+      SPOTIFY_CLIENT_ID: mock-client
+      SPOTIFY_CLIENT_SECRET: mock-secret
+      SPOTIFY_REDIRECT_URI: http://127.0.0.1:3000/api/v1/host/spotify/callback
+      ENCRYPTION_KEY: dev-only-change-me
+    depends_on:
+      - spotify-mock
+    profiles:
+      - mock
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel run
+    env_file:
+      - .env.cloudflared
+    depends_on:
+      - jukebox
+    profiles:
+      - tunnel
+
+  spotify-mock:
+    build:
+      context: ./services/spotify-mock
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    profiles:
+      - mock
 
 volumes:
   jukebox-data:
+  jukebox-mock-data:

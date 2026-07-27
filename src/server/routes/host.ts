@@ -42,6 +42,9 @@ import { getSyncState, requestPartySync, forcePartySync, PartySyncError } from "
 import {
   getPartyById,
   isPartyOn,
+  listArchivedParties,
+  ResumePartyError,
+  resumeParty,
   PARTY_OFF_RESPONSE,
 } from "../services/party";
 import {
@@ -96,6 +99,18 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     if (!assertHostSetupToken(c)) {
       return c.text("Forbidden", 403);
     }
+    if (config.spotifyMode === "mock") {
+      storeHostTokens(
+        db,
+        config,
+        "mock-access-token",
+        "mock-refresh-token",
+        86400 * 365,
+      );
+      const session = createHostSession(db);
+      setHostCookie(c, session, config.secureCookies);
+      return c.redirect(`${config.baseUrl}/admin`);
+    }
     const state = randomToken();
     db.run(`INSERT INTO oauth_states (state, created_at) VALUES (?, ?)`, [
       state,
@@ -108,7 +123,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
       scope: SPOTIFY_SCOPES,
       state,
     });
-    return c.redirect(`https://accounts.spotify.com/authorize?${params}`);
+    return c.redirect(`${config.spotifyAccountsBaseUrl}/authorize?${params}`);
   });
 
   app.get("/host/spotify/callback", async (c) => {
@@ -128,7 +143,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     }
     db.run(`DELETE FROM oauth_states WHERE state = ?`, [state]);
 
-    const res = await fetch("https://accounts.spotify.com/api/token", {
+    const res = await fetch(`${config.spotifyAccountsBaseUrl}/api/token`, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -355,14 +370,33 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     return c.json(diagnostics);
   });
 
+  authed.get("/parties/archived", (c) => {
+    const limit = Math.min(50, Math.max(1, Number(c.req.query("limit") ?? 50)));
+    return c.json({ parties: listArchivedParties(db, limit) });
+  });
+
   authed.get("/parties/last-ended", (c) => {
+    const parties = listArchivedParties(db, 1);
+    if (parties.length === 0) return c.json(null, 200);
+    const latest = parties[0]!;
+    const tracks = getPartyExportTracks(db, latest.partyId);
+    return c.json({
+      partyId: latest.partyId,
+      partyName: latest.partyName,
+      tracks,
+      trackCount: tracks.length,
+    });
+  });
+
+  authed.get("/parties/:id/export", (c) => {
+    const partyId = c.req.param("id");
     const party = db
-      .query(
-        `SELECT id, name, updated_at FROM parties WHERE status = 'archived' ORDER BY updated_at DESC LIMIT 1`,
-      )
-      .get() as { id: string; name: string } | null;
-    if (!party) return c.json(null, 200);
-    const tracks = getPartyExportTracks(db, party.id);
+      .query(`SELECT id, name, status FROM parties WHERE id = ? AND status = 'archived'`)
+      .get(partyId) as { id: string; name: string } | null;
+    if (!party) {
+      return c.json({ error: "Not found", code: "NOT_FOUND" }, 404);
+    }
+    const tracks = getPartyExportTracks(db, partyId);
     return c.json({
       partyId: party.id,
       partyName: party.name,
@@ -391,16 +425,6 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
 
     const now = new Date().toISOString();
     db.run(
-      `UPDATE queue_items SET status = 'played', finished_at = ?
-       WHERE party_id = ? AND status = 'playing'`,
-      [now, partyId],
-    );
-    db.run(
-      `UPDATE queue_items SET status = 'skipped', finished_at = ?
-       WHERE party_id = ? AND status IN ('pending', 'queued')`,
-      [now, partyId],
-    );
-    db.run(
       `UPDATE parties SET status = 'archived', updated_at = ? WHERE id = ?`,
       [now, partyId],
     );
@@ -412,6 +436,28 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
       tracks,
       trackCount: tracks.length,
     });
+  });
+
+  authed.post("/parties/:id/resume", async (c) => {
+    const partyId = c.req.param("id");
+    try {
+      const party = resumeParty(db, partyId);
+      requestPartySync(db, partyId);
+      const guestCount = countNamedPartyGuests(db, partyId);
+      return c.json({
+        id: party.id,
+        slug: party.slug,
+        name: party.name,
+        status: "off" as const,
+        guestCount,
+      });
+    } catch (e) {
+      if (e instanceof ResumePartyError) {
+        const status = e.code === "NOT_FOUND" ? 404 : 409;
+        return c.json({ error: e.message, code: e.code }, status);
+      }
+      throw e;
+    }
   });
 
   authed.patch("/parties/:id", async (c) => {

@@ -288,7 +288,7 @@
 | 6.1.1 | Party is toggled `off` mid-party | Mutations return `PARTY_OFF` (403); sync worker stops | All guest routes check `isPartyOn` |
 | 6.1.2 | Party toggled back `on` | Guest actions resume; existing queue intact | No data loss from off period |
 | 6.1.3 | Guest loads the page while party is off | Can view but not mutate | `POST` routes blocked; `GET` routes work |
-| 6.1.4 | Party ends (archived) while a track is playing | Playing track marked `played`; remaining marked `skipped` | `POST /parties/:id/end` bulk-updates |
+| 6.1.4 | Party ends (archived) while a track is playing | Party archived; queue items keep current statuses (`playing`, `pending`, etc.) for resume | `POST /parties/:id/end` soft-archives only |
 | 6.1.5 | New party created while previous party is active | Previous archived; new party in `off` state; old party guests get `NOT_FOUND` | `getPartyBySlug` excludes archived |
 | 6.1.6 | Guest from archived party tries to join new party | Session cookie scoped to old slug; new join creates fresh session | Slug-scoped cookies |
 | 6.1.7 | Host creates new party with import from previous party | Previous party's tracks imported in play order | `getPartyExportTracks` returns terminal items |
@@ -328,7 +328,17 @@
 | 6.5.1 | Party ends; host views history | `played`, `skipped`, `vetoed` tracks in reverse `finished_at` order | `GET /host/parties/:id/history` |
 | 6.5.2 | Export includes tracks from seed playlist | Seed tracks that were played appear in export | `getPartyExportTracks` includes all terminal statuses |
 | 6.5.3 | Export deduplicates by URI | Same URI re-added after skip → only first occurrence | `seen` Set dedup in `getPartyExportTracks` |
-| 6.5.4 | Last ended party import | Previous party's export tracks imported as seed | `addTrackToParty` with `fromSeed=true` |
+| 6.5.4 | Archived party import | Any archived party's export tracks can seed a new party | `POST /parties` with `importFromPartyId` |
+
+### 6.9 Resume party
+
+| # | Scenario | Expected | What to verify |
+|---|----------|----------|----------------|
+| 6.9.1 | Host lists archived parties | All archived parties returned with `canResume`, guest count, export track count | `GET /host/parties/archived` |
+| 6.9.2 | Host resumes soft-archived party | Same slug reactivated as `off`; guests/tokens/queue/votes unchanged | `POST /host/parties/:id/resume` |
+| 6.9.3 | Legacy fully-terminal party | `canResume: false`; resume returns 409; seed import still works | `canResumeParty` + export |
+| 6.9.4 | Resume while another party active | Current party soft-archived; target party becomes active `off` | One `on`/`off` party invariant |
+| 6.9.5 | Export includes upcoming tracks | Soft-archived party export lists played history + upcoming play order | `getPartyExportTracks` |
 
 ### 6.6 Guest session lifecycle
 

@@ -1,5 +1,6 @@
 import * as React from "react";
 import type {
+  ArchivedPartySummary,
   EndedPartyExport,
   HostSpotifyStatus,
   PartyRateLimits,
@@ -65,8 +66,16 @@ export function AdminPage() {
   const [endedExport, setEndedExport] = React.useState<EndedPartyExport | null>(
     null,
   );
+  const [archivedParties, setArchivedParties] = React.useState<
+    ArchivedPartySummary[]
+  >([]);
+  const [selectedArchivedId, setSelectedArchivedId] = React.useState<string | null>(
+    null,
+  );
   const [useImportHistory, setUseImportHistory] = React.useState(false);
   const [showHistoryList, setShowHistoryList] = React.useState(false);
+  const [resuming, setResuming] = React.useState(false);
+  const selectedArchivedIdRef = React.useRef<string | null>(null);
   const artistLoadRef = React.useRef(0);
   const scrollPendingRef = React.useRef<string | null>(null);
   const [highlightedItemId, setHighlightedItemId] = React.useState<string | null>(
@@ -100,6 +109,14 @@ export function AdminPage() {
     }
   }
 
+  const loadArchivedExport = React.useCallback(async (partyId: string) => {
+    const exportData = await apiOptional<EndedPartyExport>(
+      `/host/parties/${partyId}/export`,
+    );
+    setEndedExport(exportData);
+    return exportData;
+  }, []);
+
   const load = React.useCallback(async () => {
     try {
       setError(null);
@@ -118,18 +135,40 @@ export function AdminPage() {
         setQueue(null);
         setHistory([]);
         if (s.authenticated) {
-          const last = await apiOptional<EndedPartyExport>(
-            "/host/parties/last-ended",
+          const archived = await apiOptional<{ parties: ArchivedPartySummary[] }>(
+            "/host/parties/archived",
           );
-          if (last?.trackCount) {
-            setEndedExport(last);
+          const parties = archived?.parties ?? [];
+          setArchivedParties(parties);
+          const currentId = selectedArchivedIdRef.current;
+          const preferredId =
+            currentId && parties.some((item) => item.partyId === currentId)
+              ? currentId
+              : parties[0]?.partyId ?? null;
+          selectedArchivedIdRef.current = preferredId;
+          setSelectedArchivedId(preferredId);
+          if (preferredId) {
+            await loadArchivedExport(preferredId);
+          } else {
+            setEndedExport(null);
           }
         }
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     }
-  }, []);
+  }, [loadArchivedExport]);
+
+  async function selectArchivedParty(partyId: string) {
+    selectedArchivedIdRef.current = partyId;
+    setSelectedArchivedId(partyId);
+    setShowHistoryList(false);
+    try {
+      await loadArchivedExport(partyId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load party export");
+    }
+  }
 
   React.useEffect(() => {
     void load();
@@ -158,13 +197,15 @@ export function AdminPage() {
       } else if (form.seedPlaylistId.trim()) {
         body.seedPlaylistId = form.seedPlaylistId.trim();
       } else {
-        setError("Choose a seed playlist or import the last party history.");
+        setError("Choose a seed playlist or import a previous party track list.");
         return;
       }
       await api("/host/parties", {
         method: "POST",
         body: JSON.stringify(body),
       });
+      selectedArchivedIdRef.current = null;
+      setSelectedArchivedId(null);
       setEndedExport(null);
       setUseImportHistory(false);
       setForm({ name: "", seedPlaylistId: "", vetoThreshold: 3, boostCap: null });
@@ -178,9 +219,9 @@ export function AdminPage() {
 
   async function endParty() {
     if (!party) return;
-    if (
+      if (
       !confirm(
-        `End "${party.name}"?\n\nGuests will lose access. Playlist history will be saved for your next party.`,
+        `End "${party.name}"?\n\nGuests will lose access until you resume or start a new party. Queue state is preserved for resume.`,
       )
     ) {
       return;
@@ -193,6 +234,8 @@ export function AdminPage() {
       );
       setEndedExport(result);
       setUseImportHistory(result.trackCount > 0);
+      selectedArchivedIdRef.current = result.partyId;
+      setSelectedArchivedId(result.partyId);
       setParty(null);
       setQueue(null);
       setHistory([]);
@@ -203,8 +246,34 @@ export function AdminPage() {
           ? `Party ended. ${result.trackCount} tracks saved from "${result.partyName}".`
           : "Party ended.",
       );
+      await load();
     } catch (e) {
       setError(formatApiError(e));
+    }
+  }
+
+  async function resumeArchivedParty() {
+    if (!selectedArchivedId || !selectedArchivedParty?.canResume) return;
+    if (
+      !confirm(
+        `Resume "${selectedArchivedParty.partyName}" at /${selectedArchivedParty.slug}?\n\nGuest join links and saved sessions will work again. Turn the party ON when ready.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      setResuming(true);
+      setError(null);
+      await api(`/host/parties/${selectedArchivedId}/resume`, {
+        method: "POST",
+        body: "{}",
+      });
+      setNotice(`Party "${selectedArchivedParty.partyName}" resumed. Turn it ON when ready.`);
+      await load();
+    } catch (e) {
+      setError(formatApiError(e));
+    } finally {
+      setResuming(false);
     }
   }
 
@@ -216,6 +285,10 @@ export function AdminPage() {
     void navigator.clipboard.writeText(text);
     setNotice("Playlist copied to clipboard.");
   }
+
+  const selectedArchivedParty = archivedParties.find(
+    (item) => item.partyId === selectedArchivedId,
+  ) ?? null;
 
   const canCreate =
     form.name.trim() &&
@@ -471,17 +544,49 @@ export function AdminPage() {
           <div className="card">
             <h2>Create party</h2>
             {notice && <p className="toast-ok">{notice}</p>}
-            {endedExport && endedExport.trackCount > 0 && (
+            {archivedParties.length > 0 && (
               <div className="banner playing admin-ended-banner">
-                <strong>Last party: {endedExport.partyName}</strong>
-                <p className="small admin-ended-banner-meta">
-                  {endedExport.trackCount} tracks saved in playback order.
-                </p>
+                <h3 className="admin-ended-banner-title">Previous parties</h3>
+                <label className="form-field">
+                  <span>Select a party</span>
+                  <select
+                    value={selectedArchivedId ?? ""}
+                    onChange={(e) => void selectArchivedParty(e.target.value)}
+                  >
+                    {archivedParties.map((item) => (
+                      <option key={item.partyId} value={item.partyId}>
+                        {item.partyName} — {new Date(item.archivedAt).toLocaleString()} (
+                        {item.guestCount} guests, {item.exportTrackCount} tracks)
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {selectedArchivedParty && (
+                  <p className="small admin-ended-banner-meta">
+                    /{selectedArchivedParty.slug}
+                    {selectedArchivedParty.canResume
+                      ? " — queue can be resumed with guests, votes, and order intact."
+                      : " — track list only (queue was fully ended before resume support)."}
+                  </p>
+                )}
                 <div className="row party-controls">
+                  <button
+                    type="button"
+                    onClick={() => void resumeArchivedParty()}
+                    disabled={!selectedArchivedParty?.canResume || resuming}
+                    title={
+                      selectedArchivedParty?.canResume
+                        ? "Reactivate this party with the same slug and guest sessions"
+                        : "Track list only — queue was fully ended before resume support"
+                    }
+                  >
+                    {resuming ? "Resuming…" : "Resume party"}
+                  </button>
                   <label className="row admin-checkbox-label">
                     <input
                       type="checkbox"
                       checked={useImportHistory}
+                      disabled={!endedExport?.trackCount}
                       onChange={(e) => {
                         setUseImportHistory(e.target.checked);
                         if (e.target.checked) {
@@ -491,18 +596,24 @@ export function AdminPage() {
                     />
                     <span>Use as seed queue</span>
                   </label>
-                  <button type="button" className="secondary" onClick={copyHistory}>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={copyHistory}
+                    disabled={!endedExport?.tracks.length}
+                  >
                     Copy list
                   </button>
                   <button
                     type="button"
                     className="secondary"
                     onClick={() => setShowHistoryList((v) => !v)}
+                    disabled={!endedExport?.tracks.length}
                   >
                     {showHistoryList ? "Hide" : "Show"} tracks
                   </button>
                 </div>
-                {showHistoryList && (
+                {showHistoryList && endedExport?.tracks.length ? (
                   <div className="history-list small admin-history-list">
                     {endedExport.tracks.map((t) => (
                       <div key={t.uri}>
@@ -510,7 +621,7 @@ export function AdminPage() {
                       </div>
                     ))}
                   </div>
-                )}
+                ) : null}
               </div>
             )}
             <div className="form-grid">

@@ -1,4 +1,5 @@
 node_modules/
+services/spotify-mock/node_modules/
 dist/
 data/
 .env
@@ -6,6 +7,5 @@ data/
 .env.development
 .env.production
 .env.cloudflared
-.env.docker
 *.db
 .DS_Store

@@ -4,15 +4,14 @@ Self-hosted party queue control for Spotify Premium.
 
 ## Environments
 
-Jukebox uses **separate env files** with **separate Spotify apps** for dev and prod:
-
-| | Development | Production (Docker) |
+| Mode | Command | Env files |
 |---|---|---|
-| **Env files** | `.env.development` | `.env.production` (+ `.env.cloudflared` if using tunnel overlay) |
-| **Spotify app** | Dev app (127.0.0.1 redirect) | Prod app (your public URL) |
-| **Cloudflare** | Not used | Optional — `docker-compose.cloudflare.yml` |
-| **Run** | `bun run dev` | `bun run docker:up` |
-| **Admin UI** | http://127.0.0.1:5173/admin | `{BASE_URL}/admin` |
+| **Dev (local)** | `bun run dev` | `.env.development` |
+| **Prod (Docker)** | `bun run docker:up` | `.env.production` |
+| **Prod + tunnel** | `bun run docker:up:tunnel` | `.env.production`, `.env.cloudflared` |
+| **Mock scale test** | `bun run docker:up:mock` | `.env.development` (+ compose overrides) |
+
+Use **separate Spotify apps** for dev and prod when running live Spotify (`SPOTIFY_MODE=live`).
 
 Spotify rejects `http://localhost`. Always use **`127.0.0.1`** in dev.
 
@@ -20,7 +19,9 @@ Spotify rejects `http://localhost`. Always use **`127.0.0.1`** in dev.
 
 ## Development setup
 
-### 1. Spotify dev app
+### 1. Spotify dev app (live mode only)
+
+Skip this when using `bun run docker:up:mock` — mock mode needs no real Spotify app.
 
 Create a **development** app in the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard):
 
@@ -31,8 +32,7 @@ Create a **development** app in the [Spotify Developer Dashboard](https://develo
 
 ```bash
 bun run setup:dev
-# Or: cp .env.development.example .env.development
-# Fill in SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET from the dev app
+# Fill in SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET for live mode
 ```
 
 `HOST_SETUP_TOKEN` is optional in development.
@@ -53,15 +53,44 @@ Open **http://127.0.0.1:5173/admin** for the UI.
 
 Port 3000 is API-only in dev. Visiting it in a browser redirects to 5173.
 
-Use **`127.0.0.1`**, not `localhost`, in the browser.
+---
 
-No Cloudflare tunnel needed for local dev.
+## Mock Spotify scale testing (Docker)
+
+Run a full container stack with a fake Spotify sidecar — no OAuth, no rate limits:
+
+```bash
+bun run setup:dev   # creates .env.development (values overridden by compose for mock)
+bun run docker:up:mock
+```
+
+| | URL |
+|---|---|
+| **Jukebox** | http://127.0.0.1:3000/admin |
+| **Mock Spotify (inspect)** | http://127.0.0.1:8080/health |
+
+Connect Spotify from Admin — mock mode auto-connects without leaving the app.
+
+Endurance script targets the mock stack with:
+
+```bash
+JUKEBOX_BASE_URL=http://127.0.0.1:3000 bun run endurance --slug my-party --admin-token <host_session>
+# or: --base-url http://127.0.0.1:3000
+```
+
+Optional mock controls: `POST http://127.0.0.1:8080/mock/advance`, `/mock/reset`, `/mock/rate-limit`.
+
+Run mock sidecar alone (e.g. alongside `bun run dev` with `SPOTIFY_MODE=mock` in `.env.development`):
+
+```bash
+bun run mock:spotify
+```
 
 ---
 
 ## Production setup (Docker)
 
-Docker runs the built app on port **3000** by default. Put your own reverse proxy (nginx, Caddy, Traefik) in front, or use the optional Cloudflare Tunnel overlay.
+Docker runs the built app on port **3000** by default. Put your own reverse proxy in front, or use the Cloudflare Tunnel profile.
 
 ### 1. Spotify app
 
@@ -69,13 +98,11 @@ Create a **production** app in the [Spotify Developer Dashboard](https://develop
 
 - Redirect URI: `https://your-public-hostname/api/v1/host/spotify/callback`
 - Must match `BASE_URL` and `SPOTIFY_REDIRECT_URI` in `.env.production`
-- Use prod client ID/secret (not the dev app credentials)
 
 ### 2. Env file
 
 ```bash
 bun run setup:prod
-# Or: cp .env.production.example .env.production
 ```
 
 **`.env.production`** (required):
@@ -89,52 +116,37 @@ ENCRYPTION_KEY=...      # openssl rand -hex 32  (≥ 32 characters)
 HOST_SETUP_TOKEN=...    # openssl rand -hex 16
 ```
 
-Set `BASE_URL` and `SPOTIFY_REDIRECT_URI` to however guests reach the app — your proxy hostname, LAN IP, or Cloudflare tunnel URL. Prefer **https://**; for http:// LAN-only setups set `ALLOW_INSECURE_HTTP=1`.
+Prefer **https://**; for http:// LAN-only setups set `ALLOW_INSECURE_HTTP=1`.
 
 ### 3. Deploy
 
-**Self-hosted** (port exposed — use your own proxy or LAN):
+**Self-hosted** (port exposed):
 
 ```bash
 bun run docker:up
-# Or: docker compose up --build -d
 ```
 
-Jukebox listens on **`http://localhost:3000`** (override host port with `JUKEBOX_PORT=8080 bun run docker:up`).
-
-**Private registry** (optional — for build/push or pulling on a server):
+**Private registry** (optional):
 
 ```bash
-cp .env.docker.example .env.docker
+cp .env.example .env
 # Set JUKEBOX_IMAGE=your-registry/jukebox:latest
-# Optional: JUKEBOX_PLATFORM=linux/arm64 (default linux/amd64)
 
 docker login your-registry:5555
-
-# Single platform: build locally, then push
-bun run docker:build:registry
-bun run docker:push
-
-# Or multi-arch build + push in one step (requires buildx)
-bun run docker:publish
-
-# Run the published image
-bun run docker:up:registry
+bun run docker:publish          # multi-arch build + push
+bun run docker:up:registry      # run published image
 ```
 
-**Important:** `docker-compose.publish-multi.yml` is multi-arch and must use `build --push` — a plain `build` will fail because Docker cannot load multi-platform images locally. Use `docker-compose.publish.yml` for single-platform `build`.
-
-**With Cloudflare Tunnel** (optional overlay — tunnel only, no host port):
+**Cloudflare Tunnel** (no host port):
 
 ```bash
 cp .env.cloudflared.example .env.cloudflared
 # Add TUNNEL_TOKEN from Cloudflare Zero Trust → Tunnels
 
-bun run docker:up:cloudflare
-# Or: docker compose --env-file .env.docker -f docker-compose.yml -f docker-compose.cloudflare.yml up -d
+bun run docker:up:tunnel
 ```
 
-Configure the tunnel public hostname → `http://jukebox:3000` (Docker service name).
+Configure the tunnel public hostname → `http://jukebox:3000`.
 
 ### 4. Connect Spotify (first time)
 
@@ -145,9 +157,8 @@ Configure the tunnel public hostname → `http://jukebox:3000` (Docker service n
 ### 5. Logs
 
 ```bash
-docker compose logs -f jukebox
-# With Cloudflare overlay:
-docker compose -f docker-compose.yml -f docker-compose.cloudflare.yml logs -f
+docker compose --profile default logs -f jukebox
+docker compose --profile tunnel logs -f cloudflared
 ```
 
 ---
@@ -158,34 +169,30 @@ docker compose -f docker-compose.yml -f docker-compose.cloudflare.yml logs -f
 |---|---|
 | `bun run dev` | `.env.development`, then `.env.local` |
 | `bun run start` | `.env.production`, then `.env.local` |
-| `bun run docker:up` | `jukebox` container ← `.env.production`; local image `jukebox:local` |
-| `bun run docker:up:registry` | compose ← `.env.docker`; container ← `.env.production` |
-| `bun run docker:up:cloudflare` | above + `cloudflared` ← `.env.cloudflared` |
+| `bun run docker:up` | container ← `.env.production`; compose ← `.env` (optional) |
+| `bun run docker:up:tunnel` | above + `.env.cloudflared` |
+| `bun run docker:up:mock` | `jukebox-mock` ← `.env.development` + compose mock overrides |
+| `bun run docker:up:registry` | compose ← `.env` (`JUKEBOX_IMAGE`) |
 
-All secret env files are gitignored. Templates: `.env.development.example`, `.env.production.example`, `.env.cloudflared.example`, `.env.docker.example`. Overview: `.env.example`.
+Templates: `.env.development.example`, `.env.production.example`, `.env.cloudflared.example`, `.env.example`.
 
 ### Variable reference
 
 | Variable | Dev | Prod | Notes |
 |---|---|---|---|
-| `SPOTIFY_CLIENT_ID` | required | required | Separate Spotify app per environment |
-| `SPOTIFY_CLIENT_SECRET` | required | required | |
-| `SPOTIFY_REDIRECT_URI` | required | required | Must match `BASE_URL` hostname |
+| `SPOTIFY_MODE` | optional | — | `mock` (dev only) or `live` (default) |
+| `SPOTIFY_API_BASE_URL` | optional | — | Default `https://api.spotify.com/v1` |
+| `SPOTIFY_ACCOUNTS_BASE_URL` | optional | — | Default `https://accounts.spotify.com` |
+| `SPOTIFY_CLIENT_ID` | required* | required | *Optional in mock mode |
+| `SPOTIFY_CLIENT_SECRET` | required* | required | |
+| `SPOTIFY_REDIRECT_URI` | required* | required | Must match `BASE_URL` hostname |
 | `BASE_URL` | optional | required | Dev default `http://127.0.0.1:5173` |
 | `ALLOW_INSECURE_HTTP` | — | optional | Set `1` for http:// production URLs (LAN) |
-| `ENCRYPTION_KEY` | required | required | Prod: ≥ 32 chars (`openssl rand -hex 32`) |
+| `ENCRYPTION_KEY` | required | required | Prod: ≥ 32 chars |
 | `HOST_SETUP_TOKEN` | optional | required | Prod: enter in Admin before Connect Spotify |
-| `TUNNEL_TOKEN` | — | `.env.cloudflared` only | Only with `docker-compose.cloudflare.yml` |
-| `JUKEBOX_IMAGE` | — | `.env.docker` only | Compose interpolation; default `jukebox:local` |
-| `JUKEBOX_PORT` | — | `.env.docker` or shell | Host port for default Docker compose (default `3000`) |
-| `DATABASE_PATH` | optional | optional | Defaults shown in examples |
-| `PORT` | optional | optional | Default `3000` |
-
-Config validation enforces:
-
-- **Dev:** `http://127.0.0.1` URLs only
-- **Prod:** `BASE_URL` and `SPOTIFY_REDIRECT_URI` must share the same hostname; **https://** unless `ALLOW_INSECURE_HTTP=1`
-- **Prod:** `ENCRYPTION_KEY` length ≥ 32, `HOST_SETUP_TOKEN` must be set
+| `TUNNEL_TOKEN` | — | `.env.cloudflared` only | Tunnel profile only |
+| `JUKEBOX_IMAGE` | — | `.env` only | Compose interpolation; default `jukebox:local` |
+| `JUKEBOX_PORT` | — | `.env` or shell | Host port (default `3000`) |
 
 ---
 
@@ -197,11 +204,24 @@ bun test
 
 ### Load / endurance testing
 
-Simulated guests should reuse sessions or reset the guest list between runs:
+Prefer the **mock stack** for load tests (`bun run docker:up:mock`) to avoid Spotify rate limits. Use production + real Spotify for occasional integration checks.
 
-1. **Clear guests before each run** — `DELETE /api/v1/host/parties/:id/guests` (admin auth), or use **Clear all guests** on the admin Guests page.
-2. **Reuse sessions** — persist the `guest_session_{slug}` cookie or dev `sessionToken` from `POST /parties/:slug/join` across runs so the same guest row is reused.
-3. **Stale cleanup** — turning a party **on** purges guests inactive for 24h with no songs added; manual purge: `POST /api/v1/host/parties/:id/guests/purge-stale`.
+```bash
+# Optional: pre-join guests and save session cookies
+JUKEBOX_BASE_URL=http://127.0.0.1:3000 bun run scripts/join-guests.ts --slug my-party --count 30
+
+# Full 3h phased party sim (joins spread over 60 min by default)
+JUKEBOX_BASE_URL=http://127.0.0.1:3000 bun run endurance --slug my-party --guests 30 --admin-token <token>
+
+# Short dev smoke (5 min join window)
+bun run endurance --slug my-party --guests 5 --join-window-min 5 --admin-token <token> --base-url http://127.0.0.1:3000
+```
+
+Flags: `--slug`, `--guests` (max 50), `--join-window-min`, `--admin-token`, `--base-url`, `--guests-file`, `--cache-stress`.
+
+Report written to `./data/endurance-{timestamp}.json` with diagnostics time series and **`firstBlock`** (outbound Spotify call index at first 429).
+
+Between runs: clear guests or reuse session cookies — see [docs/ENDURANCE_TEST_ISSUES.md](docs/ENDURANCE_TEST_ISSUES.md).
 
 See [docs/SPEC.md](docs/SPEC.md) for the full specification.
 
