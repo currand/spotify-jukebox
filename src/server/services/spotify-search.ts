@@ -15,8 +15,9 @@ import {
 import {
   getSpotifyRetryAfterMs,
   isSpotifyRateLimitError,
+  MIN_SPOTIFY_BACKOFF_MS,
 } from "./spotify-errors";
-import { isSpotifyRateLimited } from "./sync";
+import { getSpotifyRateLimitRemainingMs, isSpotifyRateLimited } from "./sync";
 
 export const MIN_SEARCH_QUERY_LENGTH = 3;
 /** Search query results — guests repeat queries within a party but not for hours. */
@@ -601,6 +602,48 @@ function logCatalogSearch(
   });
 }
 
+function spotifyRateLimitRetryAfterMs(): number {
+  return getSpotifyRateLimitRemainingMs() ?? MIN_SPOTIFY_BACKOFF_MS;
+}
+
+function staleSearchCacheOrThrow(
+  partyId: string,
+  query: string,
+  caller: SearchCaller,
+  key: string,
+): SearchResult {
+  const stale = searchCache.get(key);
+  if (stale) {
+    touchEntry(stale);
+    logCatalogSearch(partyId, query, caller, true);
+    return stale.data;
+  }
+  throw new SpotifySearchRateLimitedError(spotifyRateLimitRetryAfterMs());
+}
+
+function staleArtistTracksOrThrow(
+  partyId: string,
+  artistId: string,
+  label: string,
+  caller: SearchCaller,
+  filter: ArtistTrackFilter,
+  key: string,
+): TrackInfo[] {
+  const stale = artistTracksCache.get(key);
+  if (stale) {
+    touchEntry(stale);
+    recordSearchActivity({
+      partyId,
+      query: label,
+      source: caller,
+      cacheHit: true,
+      kind: "artist-tracks",
+    });
+    return filter === "credited" ? stale.credited : stale.all;
+  }
+  throw new SpotifySearchRateLimitedError(spotifyRateLimitRetryAfterMs());
+}
+
 export async function searchPartyCatalog(
   spotify: SpotifyClient,
   db: Db,
@@ -633,6 +676,9 @@ export async function searchPartyCatalog(
 
   const run = (async () => {
     assertSearchAllowed(db, partyId, guestId, limits);
+    if (isSpotifyRateLimited()) {
+      return staleSearchCacheOrThrow(partyId, trimmed, caller, key);
+    }
     let tracks: SpotifyTrack[];
     let artists: { id: string; name: string; imageUrl: string | null }[];
     try {
@@ -726,6 +772,16 @@ export async function getPartyArtistTracks(
     cacheHit: false,
     kind: "artist-tracks",
   });
+  if (isSpotifyRateLimited()) {
+    return staleArtistTracksOrThrow(
+      partyId,
+      artistId,
+      label,
+      caller,
+      filter,
+      key,
+    );
+  }
   let entry: ArtistTracksCacheEntry;
   try {
     entry = await loadArtistTracks(

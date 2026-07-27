@@ -8,13 +8,23 @@ import type { SpotifyTrack } from "@/shared/types";
 import { resolveSpotifyRateLimitMs, SpotifyApiError } from "./spotify-errors";
 
 type SpotifyRateLimitHandler = (error: unknown) => void;
+type SpotifyRateLimitedGate = () => number | null;
+
 let spotifyRateLimitHandler: SpotifyRateLimitHandler | null = null;
+let spotifyRateLimitedGate: SpotifyRateLimitedGate | null = null;
 
 /** Register global backoff when any Spotify API call returns 429. */
 export function setSpotifyRateLimitHandler(
   handler: SpotifyRateLimitHandler | null,
 ): void {
   spotifyRateLimitHandler = handler;
+}
+
+/** Register gate that blocks outbound calls while global Spotify backoff is active. */
+export function setSpotifyRateLimitedGate(
+  gate: SpotifyRateLimitedGate | null,
+): void {
+  spotifyRateLimitedGate = gate;
 }
 
 export interface PlayerSnapshot {
@@ -247,6 +257,16 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
     const method = init?.method ?? "GET";
     const started = Date.now();
     debugLog("spotify", "→", method, path);
+
+    const backoffRemainingMs = spotifyRateLimitedGate?.() ?? null;
+    if (backoffRemainingMs != null && backoffRemainingMs > 0) {
+      debugLog("spotify", "backoff gate", { remainingMs: backoffRemainingMs, path });
+      throw new SpotifyApiError(
+        "SPOTIFY_429:global backoff",
+        429,
+        backoffRemainingMs,
+      );
+    }
 
     await acquireSpotifyApiBudgetSlot({
       onWait: (waitMs) => {

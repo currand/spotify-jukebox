@@ -109,6 +109,7 @@ export function getSpotifyApiMetricsSnapshot() {
     total: totalApiCalls,
     last1m: countCallsSince(60_000),
     last5m: countCallsSince(5 * 60_000),
+    last24h: countCallsSince(24 * 60 * 60_000),
     byEndpoint: Object.fromEntries(endpointTotals.entries()),
     byEndpointLast5m: countCallsByEndpointSince(5 * 60_000),
     rateLimitCount,

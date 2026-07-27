@@ -106,7 +106,7 @@ export function GuestMySongsPage() {
     }
   }
 
-  const partyOff = party?.status !== "on";
+  const partyOff = party != null && party.status !== "on";
   const canMutate = Boolean(songs && !partyOff);
   const removedHistory =
     songs?.history.filter((song) => song.status === "skipped") ?? [];

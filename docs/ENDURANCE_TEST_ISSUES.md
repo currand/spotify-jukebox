@@ -10,43 +10,13 @@
 
 **Severity:** High
 **Component:** `src/server/services/sync.ts`
-
-**Evidence:**
-```
-Rate limit count: 95
-sync.retryAfterMs: null (NOT engaged)
-Sync polling: 29 player.state + 44 player.queue calls in 5 min
-```
-
-**Expected behavior:** When any part of the system (sync worker, search API, prefetch) receives a Spotify 429, the sync worker should detect the rate limit and reduce polling frequency.
-
-**Actual behavior:** The sync worker continues polling at its normal 10-second interval regardless of rate limits. The `rateLimitCount` climbs to 100+ while `retryAfterMs` remains `null`.
-
-**Root cause:** The `applySpotifyRateLimit()` function is called from the search path (`searchPartyCatalog`) when a 429 is received. This sets `rateLimitedUntil` on the sync state. However, the sync worker's `runSyncTick()` checks `isRateLimited()` at the start of each tick. If the 429 occurs between ticks (during a search call), the next tick fires before the backoff state is set, or the state is cleared too quickly by `clearRateLimitIfExpired()`.
-
-**Impact:** With 30 guests searching and the sync worker polling every 10s, total API calls reach ~35/min. Spotify's rate limit for search is much lower, leading to sustained 429s that never resolve because the sync worker keeps adding to the call volume.
-
----
+**Status:** Fixed (2026-07-26) — global 429 handler, sync early-return, minimum 15s backoff, `getNextSyncDelayMs`
 
 ## Issue 2: Search 503 errors during rate limiting
 
 **Severity:** Medium
 **Component:** `src/server/routes/guest.ts` (search endpoint)
-
-**Evidence:**
-```
-13:02:32 [Leo] search "don't stop me now" → 503 ERR: Search unavailable
-13:02:32 [Hank] search "wonderwall" → 503 ERR: Search unavailable
-13:02:34 [Clara] search "party 215 version" → 503 ERR: Search unavailable
-```
-
-**Expected behavior:** When Spotify is rate-limiting search requests, the app should either serve cached results or return a graceful error with retry guidance.
-
-**Actual behavior:** The app returns 503 "Search unavailable" to guests. This happens because `searchPartyCatalog` catches the `SpotifyApiError` from the 429 and the route handler returns 503.
-
-**Impact:** Guests see "Search unavailable" and cannot find tracks. The search cache should absorb repeat queries, but during heavy load with varied queries, the cache hit rate drops to ~16-40%, leaving many guests unable to search.
-
----
+**Status:** Fixed (2026-07-26) — stale cache on 429; uncached queries return 429 with `retryAfterMs`. Global `spotifyFetch` gate prevents search from calling Spotify during active backoff.
 
 ## Issue 3: Guest session not preserved across endurance test runs
 
@@ -116,7 +86,7 @@ Sync polling: 29 player.state + 44 player.queue calls in 5 min
 | Boost | ✅ Works correctly (one per guest) |
 | Queue ordering | ✅ Boost lane leads, upvotes sort normal queue |
 | Rate limiting (per-guest) | ✅ Enforced correctly |
-| Sync worker | ⚠️ Works but does not back off on 429s |
+| Sync worker | ✅ Backs off on 429s; outbound gate blocks all Spotify calls during backoff |
 | Search caching | ✅ Works (40% hit rate with varied queries) |
 | ETag/conditional GET | ✅ 304 returned when queue unchanged |
 

@@ -234,7 +234,7 @@ function GuestApp({ slug }: { slug: string }) {
     }
   }
 
-  const partyOff = queue?.party.status !== "on";
+  const partyOff = queue != null && queue.party.status !== "on";
   const canMutate = !partyOff;
   const showingSearch = searchView !== "idle" && results;
 

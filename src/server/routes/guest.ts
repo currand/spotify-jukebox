@@ -7,7 +7,6 @@ import {
   guestSessionMiddleware,
   setGuestCookie,
 } from "../middleware/session";
-import { isDuplicateTrack } from "@/shared/dedup";
 import {
   findSimilarNamedGuest,
   reclaimGuestSession,
@@ -18,12 +17,14 @@ import {
 import { getClientIp } from "../client-ip";
 import {
   computeQueueEtag,
+  DuplicateQueueItemError,
   getBoostLane,
   getDedupTracks,
   getNormalUpcoming,
   getNextUpcomingItem,
   getQueueItems,
   getUpcomingPlayOrder,
+  insertQueueItem,
   isGuestBoostBlocked,
   isGuestUpvoteBlocked,
   isGuestVetoBlocked,
@@ -868,38 +869,27 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
       }
     }
 
-    const tracks = getDedupTracks(db, party.id);
-    if (isDuplicateTrack(
-      { trackName: trackInfo.name, artistName: trackInfo.artistName },
-      tracks,
-    )) {
-      return c.json(
-        { error: "This song is already in the queue", code: "DUPLICATE" },
-        409,
-      );
+    try {
+      const id = insertQueueItem(db, {
+        partyId: party.id,
+        uri: trackInfo.uri,
+        name: trackInfo.name,
+        artistName: trackInfo.artistName,
+        albumArtUrl: trackInfo.albumArtUrl,
+        guestId: isHost ? null : guest!.id,
+      });
+      if (guest && !isHost) recordAction(db, guest.id, "add");
+      requestPartySync(db, party.id);
+      return c.json({ id }, 201);
+    } catch (e) {
+      if (e instanceof DuplicateQueueItemError) {
+        return c.json(
+          { error: "This song is already in the queue", code: "DUPLICATE" },
+          409,
+        );
+      }
+      throw e;
     }
-
-    const id = newId();
-    db.run(
-      `INSERT INTO queue_items (
-        id, party_id, spotify_uri, track_name, artist_name, album_art_url,
-        upvote_count, veto_count, status, is_boosted, boost_position,
-        manual_order, added_by_guest_id, from_seed, added_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'pending', 0, NULL, NULL, ?, 0, ?)`,
-      [
-        id,
-        party.id,
-        trackInfo.uri,
-        trackInfo.name,
-        trackInfo.artistName,
-        trackInfo.albumArtUrl,
-        isHost ? null : guest!.id,
-        new Date().toISOString(),
-      ],
-    );
-    if (guest && !isHost) recordAction(db, guest.id, "add");
-    requestPartySync(db, party.id);
-    return c.json({ id }, 201);
   }
 
   return app;
@@ -912,31 +902,20 @@ export async function addTrackToParty(
   guestId: string | null,
   fromSeed = false,
 ): Promise<string> {
-  const tracks = getDedupTracks(db, partyId);
-  if (isDuplicateTrack(
-    { trackName: track.name, artistName: track.artistName },
-    tracks,
-  )) {
-    throw new Error("DUPLICATE");
-  }
-  const id = newId();
-  db.run(
-    `INSERT INTO queue_items (
-      id, party_id, spotify_uri, track_name, artist_name, album_art_url,
-      upvote_count, veto_count, status, is_boosted, boost_position,
-      manual_order, added_by_guest_id, from_seed, added_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'pending', 0, NULL, NULL, ?, ?, ?)`,
-    [
-      id,
+  try {
+    return insertQueueItem(db, {
       partyId,
-      track.uri,
-      track.name,
-      track.artistName,
-      track.albumArtUrl,
+      uri: track.uri,
+      name: track.name,
+      artistName: track.artistName,
+      albumArtUrl: track.albumArtUrl,
       guestId,
-      fromSeed ? 1 : 0,
-      new Date().toISOString(),
-    ],
-  );
-  return id;
+      fromSeed,
+    });
+  } catch (e) {
+    if (e instanceof DuplicateQueueItemError) {
+      throw new Error("DUPLICATE");
+    }
+    throw e;
+  }
 }

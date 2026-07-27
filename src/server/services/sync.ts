@@ -11,6 +11,7 @@ import {
 } from "./queue";
 import {
   setSpotifyRateLimitHandler,
+  setSpotifyRateLimitedGate,
   trackFromSpotify,
   type PlayerSnapshot,
   type SpotifyClient,
@@ -524,6 +525,12 @@ export function isSpotifyRateLimited(): boolean {
   return isRateLimited();
 }
 
+/** Remaining global Spotify backoff in ms, or null when not rate-limited. */
+export function getSpotifyRateLimitRemainingMs(): number | null {
+  if (!isRateLimited()) return null;
+  return Math.max(0, (syncState.rateLimitedUntil ?? 0) - Date.now());
+}
+
 function applyPlayerSnapshot(snapshot: PlayerSnapshot): void {
   if (!isRateLimited()) {
     consecutiveRateLimitHits = 0;
@@ -606,6 +613,7 @@ function handleQueueSyncError(e: unknown): void {
 
 export function startSyncWorker(db: Db, spotify: SpotifyClient): void {
   setSpotifyRateLimitHandler(applySpotifyRateLimit);
+  setSpotifyRateLimitedGate(getSpotifyRateLimitRemainingMs);
   const tick = async () => {
     await runSyncTick(db, spotify);
     const party = getActiveParty(db);
@@ -1064,6 +1072,7 @@ export function resetSyncStateForTests(): void {
     syncWorkerTimer = null;
   }
   setSpotifyRateLimitHandler(null);
+  setSpotifyRateLimitedGate(null);
   syncState = {
     deviceActive: false,
     spotifyReachable: true,

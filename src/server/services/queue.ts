@@ -1,5 +1,6 @@
 import type { Db } from "../db/schema";
 import type { ExportTrack, QueueItemStatus } from "@/shared/types";
+import { isDuplicateTrack } from "@/shared/dedup";
 import { newId } from "../crypto";
 import type { TrackInfo } from "./spotify";
 
@@ -404,7 +405,85 @@ export function getPartyExportTracks(db: Db, partyId: string): ExportTrack[] {
 }
 
 export function isDuplicateError(error: unknown): boolean {
-  return error instanceof Error && error.message === "DUPLICATE";
+  return (
+    error instanceof DuplicateQueueItemError ||
+    (error instanceof Error && error.message === "DUPLICATE")
+  );
+}
+
+export class DuplicateQueueItemError extends Error {
+  constructor() {
+    super("DUPLICATE");
+    this.name = "DuplicateQueueItemError";
+  }
+}
+
+function isActiveUriUniqueViolation(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("unique constraint") ||
+    message.includes("constraint failed") ||
+    message.includes("idx_queue_party_active_uri")
+  );
+}
+
+export interface InsertQueueItemInput {
+  partyId: string;
+  uri: string;
+  name: string;
+  artistName: string;
+  albumArtUrl: string | null;
+  guestId: string | null;
+  fromSeed?: boolean;
+  fromSpotify?: boolean;
+}
+
+/** Insert a queue item with dedup check inside a transaction (race-safe). */
+export function insertQueueItem(db: Db, input: InsertQueueItemInput): string {
+  try {
+    return db.transaction(() => {
+      const tracks = getDedupTracks(db, input.partyId);
+      if (
+        isDuplicateTrack(
+          { trackName: input.name, artistName: input.artistName },
+          tracks,
+        )
+      ) {
+        throw new DuplicateQueueItemError();
+      }
+
+      const id = newId();
+      db.run(
+        `INSERT INTO queue_items (
+          id, party_id, spotify_uri, track_name, artist_name, album_art_url,
+          upvote_count, veto_count, status, is_boosted, boost_position,
+          manual_order, added_by_guest_id, from_seed, from_spotify, added_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'pending', 0, NULL, NULL, ?, ?, ?, ?)`,
+        [
+          id,
+          input.partyId,
+          input.uri,
+          input.name,
+          input.artistName,
+          input.albumArtUrl,
+          input.guestId,
+          input.fromSeed ? 1 : 0,
+          input.fromSpotify ? 1 : 0,
+          new Date().toISOString(),
+        ],
+      );
+      return id;
+    })();
+  } catch (error) {
+    if (
+      error instanceof DuplicateQueueItemError ||
+      isActiveUriUniqueViolation(error)
+    ) {
+      throw new DuplicateQueueItemError();
+    }
+    throw error;
+  }
 }
 
 /** Remove a party and all dependent rows (failed create rollback). */
