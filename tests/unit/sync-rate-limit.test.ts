@@ -3,6 +3,7 @@ import { SpotifyApiError, MIN_SPOTIFY_BACKOFF_MS } from "../../src/server/servic
 import {
   applySpotifyRateLimit,
   getNextSyncDelayMs,
+  getSpotifyRateLimitRemainingMs,
   getSyncIntervalMs,
   getSyncState,
   resetSyncStateForTests,
@@ -64,5 +65,23 @@ describe("sync Spotify rate limit backoff", () => {
   test("applySpotifyRateLimit ignores non-429 errors", () => {
     applySpotifyRateLimit(new SpotifyApiError("SPOTIFY_503:{}", 503, null));
     expect(getSyncState().rateLimitedUntil).toBeNull();
+  });
+
+  test("getSpotifyRateLimitRemainingMs returns null when not limited", () => {
+    expect(getSpotifyRateLimitRemainingMs()).toBeNull();
+  });
+
+  test("getSpotifyRateLimitRemainingMs reflects active backoff", () => {
+    applySpotifyRateLimit(new SpotifyApiError("SPOTIFY_429:{}", 429, 45_000));
+    const remaining = getSpotifyRateLimitRemainingMs();
+    expect(remaining).not.toBeNull();
+    expect(remaining!).toBeGreaterThan(40_000);
+  });
+
+  test("honors long Spotify Retry-After without capping below header", () => {
+    const longMs = 86_400_000;
+    applySpotifyRateLimit(new SpotifyApiError("SPOTIFY_429:{}", 429, longMs));
+    const remaining = getSpotifyRateLimitRemainingMs();
+    expect(remaining).toBeGreaterThan(longMs - 5000);
   });
 });

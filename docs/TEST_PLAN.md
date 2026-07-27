@@ -132,7 +132,7 @@
 | 2.3.4 | Admin or host skips the current track | Status changes to `skipped` + `finished_at` | `markFinished(db, item.id, "skipped")` |
 | 2.3.5 | Track reaches `veto_threshold` via vetoes | Status changes to `vetoed` immediately | `markFinished` called synchronously on veto route |
 | 2.3.6 | Guest removes their own pending track | Status changes to `skipped`; `boost_used` refunded if boosted | `DELETE /parties/:slug/me/songs/:itemId` |
-| 2.3.7 | Guest adds track via two browser tabs simultaneously | Both requests pass dedup check → duplicate track added (SQLite race) | `queue_items` has no UNIQUE on `(party_id, spotify_uri)`; dedup is application-level |
+| 2.3.7 | Guest adds track via two browser tabs simultaneously | Second add returns 409 DUPLICATE (transaction + partial unique index) | `insertQueueItem` + `idx_queue_party_active_uri` |
 | 2.3.8 | Queue is cleared while a track is `queued` in Spotify | Cleared items marked `skipped`; next sync skips them if Spotify tries to play them | `shouldSkipTerminalPlayback` handles `vetoed`/`skipped` |
 | 2.3.9 | Admin shuffles queue while sync worker is mid-buffer-fill | Shuffle marks items `pending`; sync tick re-evaluates on next cycle | `resetQueuedToPending` undoes in-flight buffer state |
 | 2.3.10 | Track transitions `playing` → `played`; guest views "My Songs" | Track moves from active to history; `queuePosition` becomes null | `countGuestActiveSongs` no longer counts it |
@@ -151,7 +151,7 @@
 
 | # | Scenario | Expected | What to verify |
 |---|----------|----------|----------------|
-| 2.5.1 | Boosted track gets upvoted | Upvote increments count; boost lane ordering unchanged (by position, not votes) | `getBoostLane` sorts by `boost_position` |
+| 2.5.1 | Boosted track gets upvoted | Upvote increments count; boost lane ordering unchanged (by position, not votes) — **by design** (GH #9) | `getBoostLane` sorts by `boost_position` |
 | 2.5.2 | Normal track with 10 upvotes; boosted track with 0 upvotes | Boost lane leads (FIFO boost wins over upvotes) | `getPlayOrder` puts boost before normal |
 | 2.5.3 | Seeded track (`from_seed=1`) is boosted | Allowed — seed tracks can be boosted | No `from_seed` guard in boost endpoint |
 | 2.5.4 | Admin moves a boosted track up | `manual_order` set, but boost lane ignores it | `getBoostLane` sorts by `boost_position` only |

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
   artistsToPrefetch,
   cacheSpotifyTracksMetadata,
@@ -14,6 +14,10 @@ import {
   SpotifySearchRateLimitedError,
 } from "../../src/server/services/spotify-search";
 import { SpotifyApiError } from "../../src/server/services/spotify-errors";
+import {
+  applySpotifyRateLimit,
+  resetSyncStateForTests,
+} from "../../src/server/services/sync";
 import { DEFAULT_RATE_LIMITS } from "@/shared/types";
 
 const mockTrack = (id: string, name: string, artist = "Artist", artistId = "artist-1") => ({
@@ -37,6 +41,10 @@ describe("normalizeRateLimits", () => {
 });
 
 describe("searchPartyCatalog", () => {
+  afterEach(() => {
+    resetSyncStateForTests();
+  });
+
   test("returns cached results without calling Spotify twice", async () => {
     clearSpotifySearchCacheForTests();
     let calls = 0;
@@ -200,6 +208,63 @@ describe("searchPartyCatalog", () => {
         DEFAULT_RATE_LIMITS,
       ),
     ).rejects.toMatchObject({ retryAfterMs: 8000 });
+  });
+
+  test("skips Spotify when globally rate limited and no cache", async () => {
+    clearSpotifySearchCacheForTests();
+    applySpotifyRateLimit(new SpotifyApiError("SPOTIFY_429:{}", 429, 20_000));
+    let calls = 0;
+    const spotify = {
+      searchCatalog: async () => {
+        calls += 1;
+        return { tracks: [], artists: [] };
+      },
+      searchArtistTracks: async () => [],
+    };
+    const db = { query: () => ({ get: () => null }), run: () => {} } as never;
+
+    await expect(
+      searchPartyCatalog(
+        spotify as never,
+        db,
+        "party-1",
+        "abba",
+        null,
+        DEFAULT_RATE_LIMITS,
+      ),
+    ).rejects.toBeInstanceOf(SpotifySearchRateLimitedError);
+    expect(calls).toBe(0);
+  });
+
+  test("serves stale cache when globally rate limited", async () => {
+    clearSpotifySearchCacheForTests();
+    seedSearchCacheForTests(
+      "party-1",
+      "abba",
+      { tracks: [{ id: "t1", uri: "u", name: "Dancing Queen", artistName: "ABBA", albumArtUrl: null }], artists: [] },
+      { expired: true },
+    );
+    applySpotifyRateLimit(new SpotifyApiError("SPOTIFY_429:{}", 429, 20_000));
+    let calls = 0;
+    const spotify = {
+      searchCatalog: async () => {
+        calls += 1;
+        return { tracks: [], artists: [] };
+      },
+      searchArtistTracks: async () => [],
+    };
+    const db = { query: () => ({ get: () => null }), run: () => {} } as never;
+
+    const result = await searchPartyCatalog(
+      spotify as never,
+      db,
+      "party-1",
+      "abba",
+      null,
+      DEFAULT_RATE_LIMITS,
+    );
+    expect(calls).toBe(0);
+    expect(result.tracks[0]?.name).toBe("Dancing Queen");
   });
 });
 
