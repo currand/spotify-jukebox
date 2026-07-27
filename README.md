@@ -196,6 +196,10 @@ Templates: `.env.development.example`, `.env.production.example`, `.env.cloudfla
 | `TUNNEL_TOKEN` | — | `.env.cloudflared` only | Tunnel profile only |
 | `JUKEBOX_IMAGE` | — | `.env` only | Compose interpolation; default `jukebox:local` |
 | `JUKEBOX_PORT` | — | `.env` or shell | Host port (default `3000`) |
+| `SYNC_FAST_POLL` | optional | optional | `1` = fixed 10s Spotify sync; default adaptive (~1 poll/track) |
+| `SYNC_END_WINDOW_MS` | optional | optional | Poll this many ms before track end (default `7000`) |
+
+Admin **Start** / **Stop** control Spotify play/pause on the active device; **Skip** advances the queue immediately and refills the buffer.
 
 ---
 

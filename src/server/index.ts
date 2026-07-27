@@ -85,7 +85,7 @@ if (config.env === "development" && config.spotifyMode !== "mock") {
   );
 }
 
-startSyncWorker(db, spotify);
+startSyncWorker(db, spotify, config);
 
 startMetricsRecorder(db, () => {
   const { partyId, partySearchLimit } = getActivePartyDiagnosticsContext(db);

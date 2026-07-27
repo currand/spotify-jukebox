@@ -1,3 +1,4 @@
+import type { Config } from "../config";
 import type { Db } from "../db/schema";
 import { getActiveParty, hasActiveParty } from "./party";
 import {
@@ -31,19 +32,38 @@ import { withSpotifyCallerAsync } from "./spotify-caller";
 
 const SYNC_INTERVAL_MS = 10_000;
 const SYNC_INTERVAL_NO_PARTY_MS = 60_000;
+const SYNC_MAX_SLEEP_MS = 5 * 60_000;
+const SYNC_NEAR_END_MIN_MS = 1_000;
 
 const RESTRICTED_DEVICE_HINT =
   "This device doesn't support Spotify's queue API — use the Spotify app on your phone or computer.";
+
+export interface PlaybackTiming {
+  currentUri: string | null;
+  progressMs: number | null;
+  durationMs: number | null;
+  isPlaying: boolean;
+  capturedAt: number;
+}
+
+export interface SyncPollingConfig {
+  syncFastPoll: boolean;
+  syncEndWindowMs: number;
+  syncFallbackIntervalMs: number;
+  syncIdleIntervalMs: number;
+}
 
 export interface SyncState {
   deviceActive: boolean;
   spotifyReachable: boolean;
   deviceRestricted: boolean;
   deviceName: string | null;
+  isPlaying: boolean;
   lastError: string | null;
   rateLimitedUntil: number | null;
   /** When the sync worker last refreshed player state from Spotify. */
   lastSyncedAt: number | null;
+  playbackTiming: PlaybackTiming | null;
 }
 
 export interface SpotifyQueueSnapshot {
@@ -58,15 +78,38 @@ let syncState: SyncState = {
   spotifyReachable: true,
   deviceRestricted: false,
   deviceName: null,
+  isPlaying: false,
   lastError: null,
   rateLimitedUntil: null,
   lastSyncedAt: null,
+  playbackTiming: null,
 };
 
 const partySyncInFlight = new Map<string, Promise<void>>();
 const partyLastSyncedGeneration = new Map<string, number>();
 let consecutiveRateLimitHits = 0;
 let syncWorkerTimer: ReturnType<typeof setTimeout> | null = null;
+let syncWorkerTick: (() => void) | null = null;
+
+let syncPollingConfig: SyncPollingConfig = {
+  syncFastPoll: false,
+  syncEndWindowMs: 7000,
+  syncFallbackIntervalMs: 30_000,
+  syncIdleIntervalMs: 60_000,
+};
+
+export function configureSyncPolling(config: SyncPollingConfig): void {
+  syncPollingConfig = config;
+}
+
+function configureSyncPollingFromConfig(config: Config): void {
+  configureSyncPolling({
+    syncFastPoll: config.syncFastPoll,
+    syncEndWindowMs: config.syncEndWindowMs,
+    syncFallbackIntervalMs: config.syncFallbackIntervalMs,
+    syncIdleIntervalMs: config.syncIdleIntervalMs,
+  });
+}
 
 export function partyNeedsSpotifyQueueSync(
   db: Db,
@@ -88,12 +131,37 @@ export function partyHasActiveQueueItems(db: Db, partyId: string): boolean {
 
 export { hasActiveParty };
 
+/** Adaptive delay between scheduled polls when not rate-limited or event-driven. */
+export function computeAdaptiveSyncDelayMs(): number {
+  const timing = syncState.playbackTiming;
+  if (
+    timing?.isPlaying &&
+    timing.currentUri &&
+    timing.durationMs != null &&
+    timing.progressMs != null
+  ) {
+    const elapsed = Date.now() - timing.capturedAt;
+    const remainingMs = timing.durationMs - timing.progressMs - elapsed;
+    const delayMs = remainingMs - syncPollingConfig.syncEndWindowMs;
+    if (delayMs <= 0) return SYNC_NEAR_END_MIN_MS;
+    return Math.min(delayMs, SYNC_MAX_SLEEP_MS);
+  }
+  if (timing?.isPlaying) {
+    return syncPollingConfig.syncFallbackIntervalMs;
+  }
+  return syncPollingConfig.syncIdleIntervalMs;
+}
+
 export function getSyncIntervalMs(
-  _db: Db,
+  db: Db,
   party: { id: string; sync_generation: number } | null,
 ): number {
   if (!party) return SYNC_INTERVAL_NO_PARTY_MS;
-  return SYNC_INTERVAL_MS;
+  if (syncPollingConfig.syncFastPoll) return SYNC_INTERVAL_MS;
+  if (partyNeedsSpotifyQueueSync(db, party.id, party.sync_generation)) {
+    return 0;
+  }
+  return computeAdaptiveSyncDelayMs();
 }
 
 /** Delay until the next sync tick — waits out Spotify backoff when active. */
@@ -536,13 +604,24 @@ function applyPlayerSnapshot(snapshot: PlayerSnapshot): void {
   if (!isRateLimited()) {
     consecutiveRateLimitHits = 0;
   }
+  const capturedAt = Date.now();
   syncState = {
     ...syncState,
     deviceActive: snapshot.deviceActive,
+    isPlaying: snapshot.isPlaying,
     spotifyReachable: true,
     deviceRestricted: snapshot.deviceRestricted,
     deviceName: snapshot.deviceName,
-    lastSyncedAt: Date.now(),
+    lastSyncedAt: capturedAt,
+    playbackTiming: snapshot.currentUri
+      ? {
+          currentUri: snapshot.currentUri,
+          progressMs: snapshot.progressMs,
+          durationMs: snapshot.durationMs,
+          isPlaying: snapshot.isPlaying,
+          capturedAt,
+        }
+      : null,
     lastError: snapshot.deviceRestricted
       ? restrictedMessage(snapshot.deviceName)
       : isRateLimited()
@@ -571,26 +650,29 @@ function handlePlayerError(e: unknown): void {
   }
   if (isSpotifyReauthRequired(e)) {
     syncState = {
+      ...syncState,
       deviceActive: false,
       spotifyReachable: false,
       deviceRestricted: false,
       deviceName: null,
+      isPlaying: false,
+      playbackTiming: null,
       lastError:
         formatSpotifyErrorForUser(e) ??
         "Spotify authorization expired — connect Spotify again in admin.",
       rateLimitedUntil: null,
-      lastSyncedAt: syncState.lastSyncedAt,
     };
     return;
   }
   syncState = {
+    ...syncState,
     deviceActive: false,
     spotifyReachable: false,
     deviceRestricted: false,
-    deviceName: syncState.deviceName,
+    isPlaying: false,
+    playbackTiming: null,
     lastError: formatSpotifyErrorForUser(e) ?? (e instanceof Error ? e.message : String(e)),
     rateLimitedUntil: null,
-    lastSyncedAt: syncState.lastSyncedAt,
   };
 }
 
@@ -612,7 +694,17 @@ function handleQueueSyncError(e: unknown): void {
   };
 }
 
-export function startSyncWorker(db: Db, spotify: SpotifyClient): void {
+function wakeSyncWorker(): void {
+  if (!syncWorkerTick) return;
+  if (syncWorkerTimer) {
+    clearTimeout(syncWorkerTimer);
+    syncWorkerTimer = null;
+  }
+  syncWorkerTimer = setTimeout(syncWorkerTick, 0);
+}
+
+export function startSyncWorker(db: Db, spotify: SpotifyClient, config: Config): void {
+  configureSyncPollingFromConfig(config);
   setSpotifyRateLimitHandler(applySpotifyRateLimit);
   setSpotifyRateLimitedGate(getSpotifyRateLimitRemainingMs);
   const tick = async () => {
@@ -620,12 +712,14 @@ export function startSyncWorker(db: Db, spotify: SpotifyClient): void {
     const party = getActiveParty(db);
     syncWorkerTimer = setTimeout(() => void tick(), getNextSyncDelayMs(db, party));
   };
+  syncWorkerTick = () => void tick();
   void tick();
 }
 
 /** Queue a Spotify sync on the background worker — avoids duplicate API calls per mutation. */
 export function requestPartySync(db: Db, partyId: string): void {
   bumpSyncGeneration(db, partyId);
+  wakeSyncWorker();
 }
 
 export class PartySyncError extends Error {
@@ -1083,11 +1177,20 @@ export function resetSyncStateForTests(): void {
     spotifyReachable: true,
     deviceRestricted: false,
     deviceName: null,
+    isPlaying: false,
     lastError: null,
     rateLimitedUntil: null,
     lastSyncedAt: null,
+    playbackTiming: null,
   };
   consecutiveRateLimitHits = 0;
   partySyncInFlight.clear();
   partyLastSyncedGeneration.clear();
+  syncWorkerTick = null;
+  configureSyncPolling({
+    syncFastPoll: false,
+    syncEndWindowMs: 7000,
+    syncFallbackIntervalMs: 30_000,
+    syncIdleIntervalMs: 60_000,
+  });
 }

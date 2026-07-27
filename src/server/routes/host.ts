@@ -201,6 +201,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
       authenticated,
       expiresAt: creds?.expires_at ?? null,
       deviceActive: sync.deviceActive,
+      isPlaying: sync.isPlaying,
       spotifyReachable: sync.spotifyReachable,
       deviceRestricted: sync.deviceRestricted,
       deviceName: sync.deviceName,
@@ -764,6 +765,44 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
       await spotify.skipNext();
     } catch {
       return c.json({ error: "Skip failed", code: "SPOTIFY_ERROR" }, 502);
+    }
+    bumpSyncGeneration(db, partyId);
+    afterQueueChange(db, partyId);
+    return c.json({ ok: true });
+  });
+
+  authed.post("/parties/:id/play", async (c) => {
+    const partyId = c.req.param("id");
+    const party = db
+      .query(`SELECT status FROM parties WHERE id = ?`)
+      .get(partyId) as { status: string } | null;
+    if (!party) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404);
+    if (party.status !== "on") {
+      return c.json({ error: "Party is off", code: "PARTY_OFF" }, 403);
+    }
+    try {
+      await spotify.play();
+    } catch {
+      return c.json({ error: "Play failed", code: "SPOTIFY_ERROR" }, 502);
+    }
+    bumpSyncGeneration(db, partyId);
+    afterQueueChange(db, partyId);
+    return c.json({ ok: true });
+  });
+
+  authed.post("/parties/:id/pause", async (c) => {
+    const partyId = c.req.param("id");
+    const party = db
+      .query(`SELECT status FROM parties WHERE id = ?`)
+      .get(partyId) as { status: string } | null;
+    if (!party) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404);
+    if (party.status !== "on") {
+      return c.json({ error: "Party is off", code: "PARTY_OFF" }, 403);
+    }
+    try {
+      await spotify.pause();
+    } catch {
+      return c.json({ error: "Pause failed", code: "SPOTIFY_ERROR" }, 502);
     }
     bumpSyncGeneration(db, partyId);
     afterQueueChange(db, partyId);

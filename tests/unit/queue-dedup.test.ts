@@ -22,7 +22,8 @@ function testDb(): Db {
       added_by_guest_id TEXT,
       from_seed INTEGER NOT NULL DEFAULT 0,
       added_at TEXT NOT NULL,
-      finished_at TEXT
+      finished_at TEXT,
+      duration_ms INTEGER
     )
   `);
   return db;
@@ -60,8 +61,8 @@ describe("getDedupTracks", () => {
     insertItem(db, { id: "3", track_name: "Active Song", artist_name: "Band", status: "pending" });
 
     expect(getDedupTracks(db, "party")).toEqual([
-      { trackName: "Active Song", artistName: "Band" },
-      { trackName: "Played Song", artistName: "Band" },
+      { trackName: "Active Song", artistName: "Band", durationMs: null },
+      { trackName: "Played Song", artistName: "Band", durationMs: null },
     ]);
   });
 
@@ -70,7 +71,7 @@ describe("getDedupTracks", () => {
     insertItem(db, { id: "1", track_name: "Vetoed Song", artist_name: "Band", status: "vetoed", finished_at: "2026-01-02T00:00:00.000Z" });
 
     expect(getDedupTracks(db, "party")).toEqual([
-      { trackName: "Vetoed Song", artistName: "Band" },
+      { trackName: "Vetoed Song", artistName: "Band", durationMs: null },
     ]);
   });
 });

@@ -36,7 +36,8 @@ function testDb(): Db {
       added_by_guest_id TEXT,
       from_seed INTEGER NOT NULL DEFAULT 0,
       added_at TEXT NOT NULL,
-      finished_at TEXT
+      finished_at TEXT,
+      duration_ms INTEGER
     )
   `);
   db.run(`

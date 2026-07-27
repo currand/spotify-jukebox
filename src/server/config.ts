@@ -22,6 +22,14 @@ export interface Config {
   spotifyApiBudgetWindowMs: number;
   /** Warn in diagnostics when 24h API calls exceed this; null disables warning */
   spotifyDailyWarnCalls: number | null;
+  /** When true, sync worker polls Spotify every 10s (legacy behavior). */
+  syncFastPoll: boolean;
+  /** Poll this many ms before estimated track end (adaptive mode). */
+  syncEndWindowMs: number;
+  /** Poll interval when playing but track timing is unknown. */
+  syncFallbackIntervalMs: number;
+  /** Poll interval when idle or paused with no pending sync work. */
+  syncIdleIntervalMs: number;
 }
 
 function parseOptionalPositiveInt(name: string): number | null {
@@ -42,6 +50,19 @@ function parsePositiveInt(name: string, fallback: number): number {
     throw new Error(`${name} must be a positive integer`);
   }
   return Math.floor(parsed);
+}
+
+function parseBoolean(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (raw == null || raw.trim() === "") return fallback;
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "1" || normalized === "true" || normalized === "yes") {
+    return true;
+  }
+  if (normalized === "0" || normalized === "false" || normalized === "no") {
+    return false;
+  }
+  throw new Error(`${name} must be true/false or 1/0`);
 }
 
 function requireEnv(name: string, env: AppEnv): string {
@@ -197,6 +218,10 @@ export function loadConfig(env: AppEnv): Config {
     spotifyApiBudgetCount: parsePositiveInt("SPOTIFY_API_BUDGET_COUNT", 90),
     spotifyApiBudgetWindowMs: parsePositiveInt("SPOTIFY_API_BUDGET_WINDOW_MS", 30_000),
     spotifyDailyWarnCalls: parseOptionalPositiveInt("SPOTIFY_DAILY_WARN_CALLS") ?? 8000,
+    syncFastPoll: parseBoolean("SYNC_FAST_POLL", false),
+    syncEndWindowMs: parsePositiveInt("SYNC_END_WINDOW_MS", 7000),
+    syncFallbackIntervalMs: parsePositiveInt("SYNC_FALLBACK_INTERVAL_MS", 30_000),
+    syncIdleIntervalMs: parsePositiveInt("SYNC_IDLE_INTERVAL_MS", 60_000),
   };
 }
 

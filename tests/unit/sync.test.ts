@@ -7,6 +7,10 @@ import {
   getManagedSpotifyQueueUris,
   getSpotifyBufferTrack,
   getSyncIntervalMs,
+  computeAdaptiveSyncDelayMs,
+  configureSyncPolling,
+  getSyncState,
+  resetSyncStateForTests,
   getVirtualNextToBuffer,
   inferPaddedSpotifyQueueLength,
   isSpotifyBufferOccupied,
@@ -51,6 +55,7 @@ const base = (overrides: Partial<QueueItemRow>): QueueItemRow => ({
   from_spotify: 0,
   added_at: "2026-01-01T00:00:00.000Z",
   finished_at: null,
+  duration_ms: null,
   ...overrides,
 });
 
@@ -233,7 +238,8 @@ describe("reconcileSpotifyBufferStatuses", () => {
       from_seed INTEGER NOT NULL DEFAULT 0,
       from_spotify INTEGER NOT NULL DEFAULT 0,
       added_at TEXT NOT NULL,
-        finished_at TEXT
+        finished_at TEXT,
+        duration_ms INTEGER
       )
     `);
     return db;
@@ -678,9 +684,99 @@ describe("sync pacing helpers", () => {
     expect(getSyncIntervalMs({} as Db, null)).toBe(60_000);
   });
 
-  test("uses 10s interval when party is active", () => {
+  test("uses 10s interval when fast poll is enabled", () => {
+    configureSyncPolling({
+      syncFastPoll: true,
+      syncEndWindowMs: 7000,
+      syncFallbackIntervalMs: 30_000,
+      syncIdleIntervalMs: 60_000,
+    });
     expect(
       getSyncIntervalMs({} as Db, { id: "party-a", sync_generation: 0 }),
     ).toBe(10_000);
+  });
+
+  test("syncs immediately when party generation is pending", () => {
+    resetSyncStateForTests();
+    expect(
+      getSyncIntervalMs({} as Db, { id: "party-a", sync_generation: 1 }),
+    ).toBe(0);
+  });
+
+  test("schedules near-end poll from track timing", () => {
+    resetSyncStateForTests();
+    const capturedAt = Date.now();
+    configureSyncPolling({
+      syncFastPoll: false,
+      syncEndWindowMs: 7000,
+      syncFallbackIntervalMs: 30_000,
+      syncIdleIntervalMs: 60_000,
+    });
+    const state = getSyncState();
+    state.playbackTiming = {
+      currentUri: "spotify:track:1",
+      progressMs: 170_000,
+      durationMs: 180_000,
+      isPlaying: true,
+      capturedAt,
+    };
+    expect(computeAdaptiveSyncDelayMs()).toBe(3000);
+  });
+
+  test("uses fallback interval when playing without timing", () => {
+    resetSyncStateForTests();
+    configureSyncPolling({
+      syncFastPoll: false,
+      syncEndWindowMs: 7000,
+      syncFallbackIntervalMs: 30_000,
+      syncIdleIntervalMs: 60_000,
+    });
+    const state = getSyncState();
+    state.playbackTiming = {
+      currentUri: "spotify:track:1",
+      progressMs: null,
+      durationMs: null,
+      isPlaying: true,
+      capturedAt: Date.now(),
+    };
+    expect(computeAdaptiveSyncDelayMs()).toBe(30_000);
+  });
+
+  test("uses idle interval when paused with no pending sync", () => {
+    resetSyncStateForTests();
+    configureSyncPolling({
+      syncFastPoll: false,
+      syncEndWindowMs: 7000,
+      syncFallbackIntervalMs: 30_000,
+      syncIdleIntervalMs: 60_000,
+    });
+    const state = getSyncState();
+    state.playbackTiming = {
+      currentUri: "spotify:track:1",
+      progressMs: 90_000,
+      durationMs: 180_000,
+      isPlaying: false,
+      capturedAt: Date.now(),
+    };
+    expect(computeAdaptiveSyncDelayMs()).toBe(60_000);
+  });
+
+  test("polls soon when track is near end", () => {
+    resetSyncStateForTests();
+    configureSyncPolling({
+      syncFastPoll: false,
+      syncEndWindowMs: 7000,
+      syncFallbackIntervalMs: 30_000,
+      syncIdleIntervalMs: 60_000,
+    });
+    const state = getSyncState();
+    state.playbackTiming = {
+      currentUri: "spotify:track:1",
+      progressMs: 176_000,
+      durationMs: 180_000,
+      isPlaying: true,
+      capturedAt: Date.now(),
+    };
+    expect(computeAdaptiveSyncDelayMs()).toBe(1000);
   });
 });

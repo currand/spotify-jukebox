@@ -18,6 +18,26 @@ function activeQueueItems(queue: QueueMatchSource): QueueItemView[] {
   return [...(queue.nowPlaying ? [queue.nowPlaying] : []), ...ordered];
 }
 
+function queueItemAsDedupTrack(item: QueueItemView): DedupTrack {
+  return {
+    trackName: item.trackName,
+    artistName: item.artistName,
+    durationMs: item.durationMs,
+  };
+}
+
+function trackAsDedupTrack(track: {
+  name: string;
+  artistName: string;
+  durationMs?: number | null;
+}): DedupTrack {
+  return {
+    trackName: track.name,
+    artistName: track.artistName,
+    durationMs: track.durationMs,
+  };
+}
+
 /** Find an actively queued item by Spotify URI (not dedup history). */
 export function findActiveQueueItem(
   track: { uri: string },
@@ -26,27 +46,52 @@ export function findActiveQueueItem(
   return activeQueueItems(queue).find((item) => item.spotifyUri === track.uri) ?? null;
 }
 
+/** Find an actively queued item by folded title/artist (different URI, same song). */
+export function findActiveQueueItemByFold(
+  track: { name: string; artistName: string; durationMs?: number | null },
+  queue: QueueMatchSource,
+): QueueItemView | null {
+  const candidate = trackAsDedupTrack(track);
+  for (const item of activeQueueItems(queue)) {
+    if (isDuplicateTrack(candidate, [queueItemAsDedupTrack(item)])) {
+      return item;
+    }
+  }
+  return null;
+}
+
 /** Whether a search result matches an active or recently played queue entry. */
 export function isTrackInPartyQueue(
-  track: { uri: string; name: string; artistName: string },
+  track: {
+    uri: string;
+    name: string;
+    artistName: string;
+    durationMs?: number | null;
+  },
   queue: QueueMatchSource,
 ): boolean {
   if (findActiveQueueItem(track, queue)) return true;
-  return isDuplicateTrack(
-    { trackName: track.name, artistName: track.artistName },
-    queue.dedupTracks,
-  );
+  return isDuplicateTrack(trackAsDedupTrack(track), queue.dedupTracks);
 }
 
 export function getSearchTrackQueueState(
-  track: { uri: string; name: string; artistName: string },
+  track: {
+    uri: string;
+    name: string;
+    artistName: string;
+    durationMs?: number | null;
+  },
   queue: QueueMatchSource,
 ): { blockedReason: SearchQueueBlockReason; queueItemId: string | null } {
-  const active = findActiveQueueItem(track, queue);
-  if (active) {
-    return { blockedReason: "active", queueItemId: active.id };
+  const activeByUri = findActiveQueueItem(track, queue);
+  if (activeByUri) {
+    return { blockedReason: "active", queueItemId: activeByUri.id };
   }
-  if (isTrackInPartyQueue(track, queue)) {
+  const activeByFold = findActiveQueueItemByFold(track, queue);
+  if (activeByFold) {
+    return { blockedReason: "active", queueItemId: activeByFold.id };
+  }
+  if (isDuplicateTrack(trackAsDedupTrack(track), queue.dedupTracks)) {
     return { blockedReason: "history", queueItemId: null };
   }
   return { blockedReason: null, queueItemId: null };

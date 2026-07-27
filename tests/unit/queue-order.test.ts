@@ -31,6 +31,7 @@ const base = (overrides: Partial<QueueItemRow>): QueueItemRow => ({
   from_spotify: 0,
   added_at: "2026-01-01T00:00:00.000Z",
   finished_at: null,
+  duration_ms: null,
   ...overrides,
 });
 

@@ -219,7 +219,7 @@ Jukebox maintains a **virtual queue** as the source of truth. A background sync 
 
 **Track lifecycle:** `pending` → `queued` (sent to Spotify) → `playing` → `played` | `skipped` | `vetoed`
 
-**Visible queue:** Guests see `pending`, `queued`, and `playing`. Terminal states (`played`, `skipped`, `vetoed`) leave the active list but remain in history for dedup (see Deduplication).
+**Visible queue:** Guests see `pending`, `queued`, and `playing`. Terminal states (`played`, `skipped`, `vetoed`) leave the active list; `played` and `vetoed` feed recent dedup history (see Deduplication). `skipped` does not.
 
 ### Interaction rules
 
@@ -232,33 +232,42 @@ Jukebox maintains a **virtual queue** as the source of truth. A background sync 
 
 ### Spotify sync worker
 
-Runs on an interval (~2s) when a party is **on**:
+When a party is **on**, a background worker keeps the virtual queue aligned with Spotify playback:
 
-1. Poll `GET /me/player/currently-playing` (and queue if needed).
-2. If no active device / no playback: **do not fail guest mutations**. Set host-visible warning `spotify_device_inactive`. Skip Spotify write calls until a device is active again.
-3. Detect track transitions; mark previous item `played` or `skipped`.
-4. Select next virtual track (boost lane first, then normal head; never select vetoed).
-5. Maintain a Spotify queue buffer of **3–5** upcoming tracks via `POST /me/player/queue` (prefer smoothness over fine-grained reorderability).
-6. If the currently playing Spotify track is vetoed or no longer in the virtual queue, call `POST /me/player/next`.
-7. Do not add duplicate URIs already in the Spotify queue buffer.
-8. If the virtual queue has no upcoming tracks: stop adding to Spotify; guest UI shows “Add something!” Now-playing may finish naturally; Spotify’s own autoplay/recommendations are out of scope — Jukebox does not try to keep music going.
+1. Poll `GET /me/player` (with `/me/player/currently-playing` fallback) for device state, current track URI, and timing (`progress_ms`, `duration_ms`).
+2. **Adaptive polling (default):** schedule the next poll ~7s before the current track is expected to end; wake immediately on queue mutations, skip, and host play/pause. Set `SYNC_FAST_POLL=1` to restore fixed 10s polling.
+3. If no active device / no playback: **do not fail guest mutations**. Set host-visible warning `spotify_device_inactive`. Skip Spotify write calls until a device is active again.
+4. Detect track transitions; mark previous item `played` or `skipped`.
+5. Select next virtual track (boost lane first, then normal head; never select vetoed).
+6. Maintain **one** Spotify queue buffer slot via `POST /me/player/queue` when empty.
+7. If the currently playing Spotify track is vetoed or no longer in the virtual queue, call `POST /me/player/next`.
+8. Do not add duplicate URIs already in the Spotify queue buffer.
+9. If the virtual queue has no upcoming tracks: stop adding to Spotify; guest UI shows “Add something!” Now-playing may finish naturally; Spotify’s own autoplay/recommendations are out of scope — Jukebox does not try to keep music going.
+
+**Host playback controls:** Admin can Start/Stop Spotify playback (`PUT /me/player/play` / `pause`) and Skip the current track.
 
 **Device targeting:** No explicit `device_id`; operate on whichever device is currently active on the host account.
 
 ### Deduplication
 
-Before adding a track, compare **normalized title only** (not artist) against:
+Before adding a track, compare **folded title and artist** against:
 
 - All **active** queue items (`pending`, `queued`, `playing`)
-- The **20 most recent** terminal items (`played`, `skipped`, `vetoed`), ordered by when they left the active queue
+- The **20 most recent** terminal items with status `played` or `vetoed`, ordered by `finished_at DESC`
 
-Matching:
+`skipped` items are excluded — guests may re-add songs they removed.
 
-- Normalize: lowercase, strip punctuation, collapse whitespace.
-- Match if Levenshtein ratio ≥ 0.85 on title, OR exact normalized title match.
-- Reject add with `{ error: "This song is already in the queue", code: "DUPLICATE" }`.
+Matching (see `src/shared/dedup.ts`):
 
-Search results are not deduplicated — only queue insertion.
+- **Title fold:** NFKD accent strip, lowercase, strip cosmetic suffixes (`Remaster`, `Explicit`, `Clean`), alphanumeric-only key.
+- **Artist fold:** NFKD, strip leading `The` / trailing `, The`, primary artist before `,` / `&` / `feat.`, alphanumeric-only key.
+- **Primary match:** exact fold equality on title and artist.
+- **Fallback:** Levenshtein ratio ≥ 0.85 on folded strings (typos).
+- **Duration guard:** when both sides have `duration_ms`, require |Δ| ≤ 5s; otherwise fold match alone applies.
+
+Search UI uses the same logic: URI match or fold match on active items → “In queue”; fold match on history → “Already played”. Search results themselves are not filtered — only add is blocked.
+
+Reject add with `{ error: "This song is already in the queue", code: "DUPLICATE" }`.
 
 ### Rate limits (defaults, all configurable per party)
 
@@ -421,8 +430,9 @@ Invariant: at most one party with `status IN ('on', 'off')`; others are `archive
 | party_id | TEXT FK | |
 | spotify_uri | TEXT | |
 | track_name | TEXT | Denormalized for dedup/display |
-| artist_name | TEXT | Display only (not used in dedup) |
+| artist_name | TEXT | Denormalized for dedup/display |
 | album_art_url | TEXT NULL | |
+| duration_ms | INTEGER NULL | Track length when known (duration guard) |
 | upvote_count | INTEGER | Denormalized counter |
 | veto_count | INTEGER | Denormalized counter |
 | status | TEXT | `pending` \| `queued` \| `playing` \| `played` \| `skipped` \| `vetoed` |

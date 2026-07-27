@@ -155,6 +155,18 @@ export function createPlayerState(options: CreatePlayerOptions = {}) {
     clearRateLimit() {
       state.rateLimitUntil = null;
     },
+    play() {
+      tick();
+      if (!state.currentlyPlaying) return;
+      if (state.startedAt == null) {
+        state.startedAt = now();
+      }
+      state.isPlaying = true;
+    },
+    pause() {
+      tick();
+      state.isPlaying = false;
+    },
     isRateLimited() {
       return state.rateLimitUntil != null && now() < state.rateLimitUntil;
     },

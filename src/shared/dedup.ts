@@ -1,9 +1,49 @@
+import type { DedupTrack } from "./types";
+
+/** Max duration delta (ms) when both tracks have duration — corroborates fold match. */
+export const DEDUP_DURATION_TOLERANCE_MS = 5000;
+
+const COSMETIC_SUFFIX =
+  /\s*(?:[-–—]\s*)?(?:\([^)]*\)|\[[^\]]*\])\s*$/i;
+const COSMETIC_SUFFIX_KEYWORDS =
+  /\b(?:remaster(?:ed)?|explicit|clean)\b/i;
+
 export function normalizeTitle(title: string): string {
   return title
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s]/gu, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function stripCombiningMarks(text: string): string {
+  return text.normalize("NFKD").replace(/\p{M}/gu, "");
+}
+
+function stripCosmeticSuffixes(title: string): string {
+  let result = title.trim();
+  for (let i = 0; i < 4; i++) {
+    const match = result.match(COSMETIC_SUFFIX);
+    if (!match) break;
+    const segment = match[0];
+    if (!COSMETIC_SUFFIX_KEYWORDS.test(segment)) break;
+    result = result.slice(0, -segment.length).trim();
+  }
+  return result.replace(/\s*(?:[-–—]\s*)?(?:remaster(?:ed)?(?:\s+\d{4})?)\s*$/i, "").trim();
+}
+
+/** Alphanumeric fold for track titles — absorbs punctuation and cosmetic suffix drift. */
+export function foldTitle(title: string): string {
+  const stripped = stripCosmeticSuffixes(stripCombiningMarks(title).toLowerCase());
+  return stripped.replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+/** Alphanumeric fold for artist names — primary artist, no leading "The". */
+export function foldArtist(artist: string): string {
+  let name = stripCombiningMarks(artist).toLowerCase().trim();
+  name = name.replace(/^the\s+/, "").replace(/,\s*the$/, "");
+  const primary = name.split(/\s*(?:,|&|\s(?:feat\.?|ft\.?|featuring)\s)/i)[0] ?? name;
+  return primary.replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
 function levenshtein(a: string, b: string): number {
@@ -32,6 +72,38 @@ function similarity(a: string, b: string): number {
   return 1 - levenshtein(a, b) / maxLen;
 }
 
+function durationsCompatible(
+  a: number | null | undefined,
+  b: number | null | undefined,
+): boolean {
+  if (a == null || b == null) return true;
+  return Math.abs(a - b) <= DEDUP_DURATION_TOLERANCE_MS;
+}
+
+function foldedMetadataMatch(candidate: DedupTrack, entry: DedupTrack): boolean {
+  const title = foldTitle(candidate.trackName);
+  if (!title) return false;
+  const otherTitle = foldTitle(entry.trackName);
+  if (!otherTitle) return false;
+
+  const artist = foldArtist(candidate.artistName);
+  const otherArtist = foldArtist(entry.artistName);
+
+  const titleMatch =
+    title === otherTitle || similarity(title, otherTitle) >= 0.85;
+  if (!titleMatch) return false;
+
+  if (!artist || !otherArtist) {
+    return durationsCompatible(candidate.durationMs, entry.durationMs);
+  }
+
+  const artistMatch =
+    artist === otherArtist || similarity(artist, otherArtist) >= 0.85;
+  if (!artistMatch) return false;
+
+  return durationsCompatible(candidate.durationMs, entry.durationMs);
+}
+
 export function isDuplicateTitle(
   candidateTitle: string,
   existingTitles: string[],
@@ -46,25 +118,11 @@ export function isDuplicateTitle(
   });
 }
 
-import type { DedupTrack } from "./types";
-
 export function isDuplicateTrack(
   candidate: DedupTrack,
   existing: DedupTrack[],
 ): boolean {
-  const title = normalizeTitle(candidate.trackName);
-  if (!title) return false;
-  const artist = normalizeTitle(candidate.artistName);
-  return existing.some((entry) => {
-    const otherTitle = normalizeTitle(entry.trackName);
-    if (!otherTitle) return false;
-    const otherArtist = normalizeTitle(entry.artistName);
-    const titleMatch =
-      title === otherTitle || similarity(title, otherTitle) >= 0.85;
-    if (!titleMatch) return false;
-    if (!artist || !otherArtist) return titleMatch;
-    return artist === otherArtist || similarity(artist, otherArtist) >= 0.85;
-  });
+  return existing.some((entry) => foldedMetadataMatch(candidate, entry));
 }
 
 export function normalizeDisplayName(name: string): string {
