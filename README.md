@@ -71,6 +71,8 @@ bun run docker:up:mock
 
 Connect Spotify from Admin — mock mode auto-connects without leaving the app.
 
+The mock starts idle (device present, nothing playing). Tracks only play when Jukebox queues them, advance after ~3 minutes by default (`MOCK_TRACK_DURATION_MS`), and report `progress_ms` like a real player.
+
 Endurance script targets the mock stack with:
 
 ```bash
@@ -79,6 +81,7 @@ JUKEBOX_BASE_URL=http://127.0.0.1:3000 bun run endurance --slug my-party --admin
 ```
 
 Optional mock controls: `POST http://127.0.0.1:8080/mock/advance`, `/mock/reset`, `/mock/rate-limit`.
+For faster song cycling in long tests: `MOCK_TRACK_DURATION_MS=60000` on the `spotify-mock` service.
 
 Run mock sidecar alone (e.g. alongside `bun run dev` with `SPOTIFY_MODE=mock` in `.env.development`):
 

@@ -10,6 +10,7 @@ export interface MockTrack {
   name: string;
   artists: { id: string; name: string }[];
   album: { images: { url: string }[] };
+  duration_ms?: number;
 }
 
 export interface PlayerState {
@@ -22,10 +23,32 @@ export interface PlayerState {
   isPlaying: boolean;
   currentlyPlaying: MockTrack | null;
   queue: MockTrack[];
+  /** Wall-clock ms when the current track started (null when idle). */
+  startedAt: number | null;
   rateLimitUntil: number | null;
 }
 
-export function createPlayerState(tracks: MockTrack[]) {
+export interface CreatePlayerOptions {
+  /** Catalog tracks available for lookup; not auto-seeded into the player. */
+  tracks?: MockTrack[];
+  /** Default song length when a track omits duration_ms. */
+  durationMs?: number;
+  /** Injectable clock for tests. */
+  now?: () => number;
+}
+
+const DEFAULT_DURATION_MS = 180_000;
+
+function trackDuration(track: MockTrack | null, fallbackMs: number): number {
+  if (!track) return fallbackMs;
+  const ms = track.duration_ms ?? fallbackMs;
+  return Math.max(1_000, ms);
+}
+
+export function createPlayerState(options: CreatePlayerOptions = {}) {
+  const durationMs = Math.max(1_000, options.durationMs ?? DEFAULT_DURATION_MS);
+  const now = options.now ?? Date.now;
+
   const state: PlayerState = {
     device: {
       id: "mock-device-1",
@@ -33,72 +56,136 @@ export function createPlayerState(tracks: MockTrack[]) {
       type: "computer",
       is_restricted: false,
     },
-    isPlaying: tracks.length > 0,
-    currentlyPlaying: tracks[0] ?? null,
-    queue: tracks.slice(1, 8),
+    isPlaying: false,
+    currentlyPlaying: null,
+    queue: [],
+    startedAt: null,
     rateLimitUntil: null,
   };
 
+  function progressMs(): number {
+    if (!state.currentlyPlaying || state.startedAt == null) return 0;
+    return Math.max(0, now() - state.startedAt);
+  }
+
+  function startTrack(track: MockTrack) {
+    state.currentlyPlaying = track;
+    state.isPlaying = true;
+    state.startedAt = now();
+  }
+
+  function stop() {
+    state.currentlyPlaying = null;
+    state.isPlaying = false;
+    state.startedAt = null;
+  }
+
+  function promoteNext() {
+    const next = state.queue.shift() ?? null;
+    if (next) {
+      startTrack(next);
+    } else {
+      stop();
+    }
+  }
+
+  /** Apply elapsed playback; advance when the current track finishes. */
+  function tick() {
+    while (state.currentlyPlaying && state.isPlaying) {
+      const duration = trackDuration(state.currentlyPlaying, durationMs);
+      if (progressMs() < duration) break;
+      // Carry over surplus time into the next track so multi-song jumps stay accurate.
+      const surplus = progressMs() - duration;
+      promoteNext();
+      if (state.startedAt != null && surplus > 0) {
+        state.startedAt = now() - surplus;
+      }
+    }
+  }
+
   return {
-    getState: () => state,
+    getState: () => {
+      tick();
+      return state;
+    },
+    tick,
+    progressMs: () => {
+      tick();
+      return progressMs();
+    },
+    durationMs: () => {
+      tick();
+      return trackDuration(state.currentlyPlaying, durationMs);
+    },
     advance() {
+      tick();
       if (!state.currentlyPlaying && state.queue.length === 0) {
-        state.isPlaying = false;
+        stop();
         return;
       }
-      const next = state.queue.shift() ?? null;
-      if (next) {
-        state.currentlyPlaying = next;
-        state.isPlaying = true;
-      } else {
-        state.currentlyPlaying = null;
-        state.isPlaying = false;
-      }
+      promoteNext();
     },
     addToQueue(uri: string, tracksByUri: Map<string, MockTrack>) {
-      const track = tracksByUri.get(uri);
-      if (track) state.queue.push(track);
+      tick();
+      const track =
+        tracksByUri.get(uri) ??
+        ({
+          uri,
+          id: uri.split(":").pop() ?? uri,
+          name: uri,
+          artists: [{ id: "unknown", name: "Unknown" }],
+          album: { images: [] },
+          duration_ms: durationMs,
+        } satisfies MockTrack);
+
+      if (!state.currentlyPlaying) {
+        startTrack(track);
+        return;
+      }
+      state.queue.push(track);
     },
-    reset(tracks: MockTrack[]) {
-      state.isPlaying = tracks.length > 0;
-      state.currentlyPlaying = tracks[0] ?? null;
-      state.queue = tracks.slice(1, 8);
+    reset() {
+      stop();
+      state.queue = [];
       state.rateLimitUntil = null;
     },
     setRateLimit(seconds: number) {
-      state.rateLimitUntil = Date.now() + seconds * 1000;
+      state.rateLimitUntil = now() + seconds * 1000;
     },
     clearRateLimit() {
       state.rateLimitUntil = null;
     },
     isRateLimited() {
-      return state.rateLimitUntil != null && Date.now() < state.rateLimitUntil;
+      return state.rateLimitUntil != null && now() < state.rateLimitUntil;
     },
     rateLimitRemainingMs() {
       if (state.rateLimitUntil == null) return 0;
-      return Math.max(0, state.rateLimitUntil - Date.now());
+      return Math.max(0, state.rateLimitUntil - now());
     },
   };
 }
 
 export type MockPlayer = ReturnType<typeof createPlayerState>;
 
-export function toSpotifyTrack(track: MockTrack) {
+export function toSpotifyTrack(track: MockTrack, fallbackDurationMs = DEFAULT_DURATION_MS) {
   return {
     uri: track.uri,
     id: track.id,
     name: track.name,
     artists: track.artists,
     album: track.album,
+    duration_ms: trackDuration(track, fallbackDurationMs),
   };
 }
 
 export function toPlayerResponse(player: MockPlayer) {
   const state = player.getState();
-  if (!state.currentlyPlaying) return null;
   return {
     is_playing: state.isPlaying,
-    item: toSpotifyTrack(state.currentlyPlaying),
+    progress_ms: state.currentlyPlaying ? player.progressMs() : 0,
+    item: state.currentlyPlaying
+      ? toSpotifyTrack(state.currentlyPlaying)
+      : null,
     device: state.device,
   };
 }
@@ -109,6 +196,6 @@ export function toQueueResponse(player: MockPlayer) {
     currently_playing: state.currentlyPlaying
       ? toSpotifyTrack(state.currentlyPlaying)
       : null,
-    queue: state.queue.map(toSpotifyTrack),
+    queue: state.queue.map((track) => toSpotifyTrack(track)),
   };
 }

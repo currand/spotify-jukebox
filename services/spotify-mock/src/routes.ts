@@ -9,7 +9,7 @@ import {
 interface AppDeps {
   player: MockPlayer;
   tracks: MockTrack[];
-  advanceMs: number;
+  durationMs: number;
 }
 
 function uniqueArtists(tracks: MockTrack[]) {
@@ -68,7 +68,7 @@ function requireBearer(c: { req: { header: (name: string) => string | undefined 
   return auth?.startsWith("Bearer ") ?? false;
 }
 
-export function createApp({ player, tracks, advanceMs }: AppDeps) {
+export function createApp({ player, tracks, durationMs }: AppDeps) {
   const tracksByUri = new Map(tracks.map((track) => [track.uri, track]));
   const artists = uniqueArtists(tracks);
   const app = new Hono();
@@ -140,17 +140,16 @@ export function createApp({ player, tracks, advanceMs }: AppDeps) {
   });
 
   app.get("/v1/me/player", (c) => {
-    const body = toPlayerResponse(player);
-    if (!body) return c.body(null, 204);
-    return c.json(body);
+    return c.json(toPlayerResponse(player));
   });
 
   app.get("/v1/me/player/currently-playing", (c) => {
-    const state = player.getState();
-    if (!state.currentlyPlaying) return c.body(null, 204);
+    const body = toPlayerResponse(player);
+    if (!body.item) return c.body(null, 204);
     return c.json({
-      is_playing: state.isPlaying,
-      item: toSpotifyTrack(state.currentlyPlaying),
+      is_playing: body.is_playing,
+      progress_ms: body.progress_ms,
+      item: body.item,
     });
   });
 
@@ -174,7 +173,7 @@ export function createApp({ player, tracks, advanceMs }: AppDeps) {
   });
 
   app.post("/mock/reset", (c) => {
-    player.reset(tracks);
+    player.reset();
     return c.json({ ok: true });
   });
 
@@ -194,7 +193,8 @@ export function createApp({ player, tracks, advanceMs }: AppDeps) {
     c.json({
       ok: true,
       tracks: tracks.length,
-      advanceMs,
+      durationMs,
+      progress_ms: player.progressMs(),
       ...toQueueResponse(player),
     }),
   );
