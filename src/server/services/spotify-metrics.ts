@@ -1,3 +1,6 @@
+import type { SpotifyApiCaller } from "./spotify-caller";
+import { getSpotifyApiCaller } from "./spotify-caller";
+
 export type SearchActivitySource = "guest" | "host" | "prefetch";
 
 export interface SearchActivityEvent {
@@ -9,22 +12,35 @@ export interface SearchActivityEvent {
   kind: "catalog" | "artist-tracks";
 }
 
-interface TimedCall {
+export interface SpotifyApiCallRecord {
   at: number;
+  path: string;
   endpoint: string;
   status: number;
+  elapsedMs: number;
+  caller: SpotifyApiCaller;
+  retryAfterMs: number | null;
+}
+
+export interface RateLimitTimelineEntry {
+  at: number;
+  retryAfterMs: number;
+  caller: SpotifyApiCaller;
 }
 
 const startedAt = Date.now();
 const RECENT_SEARCH_LIMIT = 50;
-const RECENT_API_LIMIT = 200;
+const RECENT_API_LIMIT = 500;
+const RATE_LIMIT_TIMELINE_LIMIT = 50;
 const endpointTotals = new Map<string, number>();
-const apiCallLog: TimedCall[] = [];
+const apiCallLog: SpotifyApiCallRecord[] = [];
+const rateLimitTimeline: RateLimitTimelineEntry[] = [];
 const recentSearches: SearchActivityEvent[] = [];
 
 let totalApiCalls = 0;
 let rateLimitCount = 0;
 let last429At: number | null = null;
+let prefetchApiCalls = 0;
 let searchTotal = 0;
 let searchCacheHits = 0;
 let searchCacheMisses = 0;
@@ -47,13 +63,28 @@ export function recordSpotifyApiCall(input: {
   path: string;
   status: number;
   elapsedMs: number;
+  caller?: SpotifyApiCaller;
+  retryAfterMs?: number | null;
 }): void {
   const endpoint = classifySpotifyEndpoint(input.path);
+  const caller = input.caller ?? getSpotifyApiCaller();
   totalApiCalls += 1;
   endpointTotals.set(endpoint, (endpointTotals.get(endpoint) ?? 0) + 1);
+  if (caller === "prefetch") {
+    prefetchApiCalls += 1;
+  }
 
   const at = Date.now();
-  apiCallLog.push({ at, endpoint, status: input.status });
+  const entry: SpotifyApiCallRecord = {
+    at,
+    path: input.path,
+    endpoint,
+    status: input.status,
+    elapsedMs: input.elapsedMs,
+    caller,
+    retryAfterMs: input.retryAfterMs ?? null,
+  };
+  apiCallLog.push(entry);
   if (apiCallLog.length > RECENT_API_LIMIT) {
     apiCallLog.splice(0, apiCallLog.length - RECENT_API_LIMIT);
   }
@@ -61,6 +92,11 @@ export function recordSpotifyApiCall(input: {
   if (input.status === 429) {
     rateLimitCount += 1;
     last429At = at;
+    const retryAfterMs = input.retryAfterMs ?? 5000;
+    rateLimitTimeline.push({ at, retryAfterMs, caller });
+    if (rateLimitTimeline.length > RATE_LIMIT_TIMELINE_LIMIT) {
+      rateLimitTimeline.splice(0, rateLimitTimeline.length - RATE_LIMIT_TIMELINE_LIMIT);
+    }
     rateLimitListener?.();
   }
 }
@@ -104,6 +140,16 @@ function countCallsByEndpointSince(sinceMs: number): Record<string, number> {
   return counts;
 }
 
+function countCallsByCallerSince(sinceMs: number): Record<string, number> {
+  const cutoff = Date.now() - sinceMs;
+  const counts: Record<string, number> = {};
+  for (const call of apiCallLog) {
+    if (call.at < cutoff) continue;
+    counts[call.caller] = (counts[call.caller] ?? 0) + 1;
+  }
+  return counts;
+}
+
 export function getSpotifyApiMetricsSnapshot() {
   return {
     total: totalApiCalls,
@@ -112,8 +158,12 @@ export function getSpotifyApiMetricsSnapshot() {
     last24h: countCallsSince(24 * 60 * 60_000),
     byEndpoint: Object.fromEntries(endpointTotals.entries()),
     byEndpointLast5m: countCallsByEndpointSince(5 * 60_000),
+    byCallerLast5m: countCallsByCallerSince(5 * 60_000),
     rateLimitCount,
     last429At,
+    prefetchApiCalls,
+    recentApiCalls: apiCallLog.slice(-50).map((call) => ({ ...call })),
+    rateLimitTimeline: rateLimitTimeline.map((entry) => ({ ...entry })),
   };
 }
 
@@ -137,10 +187,12 @@ export function getMetricsUptimeMs(): number {
 export function clearSpotifyMetricsForTests(): void {
   endpointTotals.clear();
   apiCallLog.length = 0;
+  rateLimitTimeline.length = 0;
   recentSearches.length = 0;
   totalApiCalls = 0;
   rateLimitCount = 0;
   last429At = null;
+  prefetchApiCalls = 0;
   searchTotal = 0;
   searchCacheHits = 0;
   searchCacheMisses = 0;

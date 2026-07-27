@@ -22,8 +22,19 @@ describe("classifySpotifyEndpoint", () => {
 describe("spotify metrics", () => {
   test("counts api calls and 429s", () => {
     clearSpotifyMetricsForTests();
-    recordSpotifyApiCall({ path: "/search?q=abba", status: 200, elapsedMs: 12 });
-    recordSpotifyApiCall({ path: "/me/player", status: 429, elapsedMs: 5 });
+    recordSpotifyApiCall({
+      path: "/search?q=abba",
+      status: 200,
+      elapsedMs: 12,
+      caller: "search",
+    });
+    recordSpotifyApiCall({
+      path: "/me/player",
+      status: 429,
+      elapsedMs: 5,
+      caller: "sync",
+      retryAfterMs: 60_000,
+    });
 
     const snapshot = getSpotifyApiMetricsSnapshot();
     expect(snapshot.total).toBe(2);
@@ -31,6 +42,10 @@ describe("spotify metrics", () => {
     expect(snapshot.byEndpoint["player.state"]).toBe(1);
     expect(snapshot.rateLimitCount).toBe(1);
     expect(snapshot.last429At).not.toBeNull();
+    expect(snapshot.byCallerLast5m.sync).toBe(1);
+    expect(snapshot.recentApiCalls).toHaveLength(2);
+    expect(snapshot.rateLimitTimeline).toHaveLength(1);
+    expect(snapshot.rateLimitTimeline[0]?.caller).toBe("sync");
   });
 
   test("tracks search cache hits and recent activity", () => {

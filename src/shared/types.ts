@@ -83,6 +83,7 @@ export interface PartyView {
   name: string;
   status: PartyStatus;
   vetoThreshold: number;
+  boostCap: number | null;
   rateLimits: PartyRateLimits;
 }
 
@@ -90,7 +91,9 @@ export interface GuestMe {
   id: string;
   displayName: string | null;
   boostUsed: boolean;
+  tutorialSeen: boolean;
   activeSongCount?: number;
+  quota?: { add: number; upvote: number; veto: number };
 }
 
 export interface GuestMySongView {
@@ -175,6 +178,9 @@ export interface QueueResponse extends QueueSnapshot {
   nextItemId: string | null;
   party: PartyView;
   etag: string;
+  boostsUsed: number;
+  boostCap: number | null;
+  boostsRemaining: number | null;
 }
 
 export type HostQueueAction =
@@ -243,10 +249,35 @@ export interface HostDiagnostics {
     total: number;
     last1m: number;
     last5m: number;
+    last24h: number;
     byEndpoint: Record<string, number>;
     byEndpointLast5m: Record<string, number>;
+    byCallerLast5m: Record<string, number>;
     rateLimitCount: number;
     last429At: number | null;
+    prefetchApiCalls: number;
+    recentApiCalls: Array<{
+      at: number;
+      path: string;
+      endpoint: string;
+      status: number;
+      elapsedMs: number;
+      caller: string;
+      retryAfterMs: number | null;
+    }>;
+    rateLimitTimeline: Array<{
+      at: number;
+      retryAfterMs: number;
+      caller: string;
+    }>;
+    dailyWarnCalls: number | null;
+    dailyWarnExceeded: boolean;
+  };
+  globalApiBudget: {
+    used: number;
+    limit: number;
+    windowMs: number;
+    resetsInMs: number;
   };
   search: {
     total: number;

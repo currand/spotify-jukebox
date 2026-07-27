@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   compareNormalQueue,
   getAdminReorderableNormal,
+  getBoostLane,
   getNextUpcomingItem,
   getPlayOrder,
   getSpotifyBufferItem,
@@ -84,6 +85,28 @@ describe("getPlayOrder", () => {
     expect(
       getUpcomingPlayOrder([playing, normal, boosted]).map((i) => i.id),
     ).toEqual(["boost", "normal"]);
+  });
+
+  test("boost lane sorts by upvotes then boost position", () => {
+    const lowVotes = base({
+      id: "low",
+      is_boosted: 1,
+      boost_position: 2,
+      upvote_count: 1,
+    });
+    const highVotes = base({
+      id: "high",
+      is_boosted: 1,
+      boost_position: 1,
+      upvote_count: 5,
+    });
+    expect(getBoostLane([lowVotes, highVotes]).map((i) => i.id)).toEqual([
+      "high",
+      "low",
+    ]);
+    expect(
+      getUpcomingPlayOrder([lowVotes, highVotes]).map((i) => i.id),
+    ).toEqual(["high", "low"]);
   });
 
   test("boost lane leads over multiple normals when not pinned", () => {

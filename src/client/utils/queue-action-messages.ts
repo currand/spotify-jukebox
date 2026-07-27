@@ -39,8 +39,10 @@ export function boostBlockedMessage(
   item: QueueItemView,
   canMutate: boolean,
   boostUsed: boolean,
+  boostsRemaining?: number | null,
 ): string {
   if (!canMutate) return "Party is paused — actions are off";
+  if (boostsRemaining === 0) return "Boost limit reached for this party";
   if (item.guestBoostBlocked) {
     const upNextPending =
       item.status === "pending" && !item.guestVetoBlocked;
@@ -104,6 +106,8 @@ export function boostApiMessage(error: unknown): string | null {
         : "Already queued in Spotify — boost is locked";
     case "PARTY_OFF":
       return "Party is paused — turn it on to boost";
+    case "BOOST_CAP":
+      return "Boost limit reached for this party";
     default:
       return null;
   }

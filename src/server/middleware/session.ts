@@ -12,6 +12,7 @@ type GuestEnv = {
       partyId: string;
       displayName: string | null;
       boostUsed: boolean;
+      tutorialSeen: boolean;
       disabled: boolean;
     };
   };
@@ -42,6 +43,7 @@ export function guestSessionMiddleware(db: Db) {
           party_id: string;
           display_name: string | null;
           boost_used: number;
+          tutorial_seen: number;
           disabled: number;
         }
       | null;
@@ -53,6 +55,7 @@ export function guestSessionMiddleware(db: Db) {
         partyId: guest.party_id,
         displayName: guest.display_name,
         boostUsed: guest.boost_used === 1,
+        tutorialSeen: guest.tutorial_seen === 1,
         disabled: guest.disabled === 1,
       });
     }

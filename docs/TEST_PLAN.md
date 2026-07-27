@@ -104,7 +104,7 @@
 | 2.1.1 | 3 tracks in queue: 0, 2, 5 upvotes | Sorted by upvotes desc: 5 → 2 → 0 | `compareNormalQueue` returns correct order |
 | 2.1.2 | 2 tracks tied at 3 upvotes, added at T1 and T2 | Earlier-added track ranks higher | Tiebreaker: `added_at ASC` |
 | 2.1.3 | Track has `manual_order` set (admin reordered) | Manual order takes precedence over upvotes | `manual_order != null` branch |
-| 2.1.4 | Boost lane has 3 items at positions 0, 1, 2 | Sorted by `boost_position` ASC | FIFO: position 0 plays before position 1 |
+| 2.1.4 | Boost lane has 3 items with varying upvotes and positions | Sorted by `upvote_count` DESC, then `boost_position` ASC | Higher upvotes play first within boost lane |
 | 2.1.5 | Boost lane item AND normal items exist, no `queued` buffer | Boost lane leads: B0, B1, then normal sorted by upvotes | `getPlayOrder` returns `[...boost, ...normal]` |
 | 2.1.6 | Item has `status: "queued"` (Spotify buffer) | Queued item pins first in upcoming order | `queued` item always first, then boost, then normal |
 | 2.1.7 | Idle seed (0 upvotes, not boosted) vs same-upvote guest add | Guest add above idle seed | `isIdleSeed` check |
@@ -151,10 +151,10 @@
 
 | # | Scenario | Expected | What to verify |
 |---|----------|----------|----------------|
-| 2.5.1 | Boosted track gets upvoted | Upvote increments count; boost lane ordering unchanged (by position, not votes) — **by design** (GH #9) | `getBoostLane` sorts by `boost_position` |
-| 2.5.2 | Normal track with 10 upvotes; boosted track with 0 upvotes | Boost lane leads (FIFO boost wins over upvotes) | `getPlayOrder` puts boost before normal |
+| 2.5.1 | Boosted track gets upvoted | Upvote increments count; boost lane re-sorts by upvotes (GH #9) | `getBoostLane` sorts by `upvote_count` then `boost_position` |
+| 2.5.2 | Normal track with 10 upvotes; boosted track with 0 upvotes | Boost lane still leads over normal queue | `getPlayOrder` puts boost before normal |
 | 2.5.3 | Seeded track (`from_seed=1`) is boosted | Allowed — seed tracks can be boosted | No `from_seed` guard in boost endpoint |
-| 2.5.4 | Admin moves a boosted track up | `manual_order` set, but boost lane ignores it | `getBoostLane` sorts by `boost_position` only |
+| 2.5.4 | Admin moves a boosted track up | `manual_order` set, but boost lane ignores it | `getBoostLane` sorts by upvotes then `boost_position` only |
 
 ### 2.6 Sync worker race conditions
 

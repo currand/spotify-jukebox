@@ -6,9 +6,14 @@ import {
   getSearchMetricsSnapshot,
   getSpotifyApiMetricsSnapshot,
 } from "./spotify-metrics";
+import { getSpotifyApiBudgetSnapshot } from "./spotify-api-budget";
 import { getSearchCacheSnapshot, getPartySearchBudgetSnapshot, normalizeRateLimits } from "./spotify-search";
 import { getSyncState } from "./sync";
 import { getCurrentMetricsSessionId } from "./metrics-recorder";
+
+export interface BuildHostDiagnosticsOptions {
+  dailyWarnCalls?: number | null;
+}
 
 export function getActivePartyDiagnosticsContext(db: Db): {
   partyId: string | null;
@@ -30,16 +35,26 @@ export function getActivePartyDiagnosticsContext(db: Db): {
 export function buildHostDiagnostics(
   partyId: string | null,
   partySearchLimit = DEFAULT_PARTY_SEARCH_LIMIT.count,
+  options: BuildHostDiagnosticsOptions = {},
 ): HostDiagnostics {
   const sync = getSyncState();
   const retryAfterMs =
     sync.rateLimitedUntil != null
       ? Math.max(0, sync.rateLimitedUntil - Date.now())
       : null;
+  const apiMetrics = getSpotifyApiMetricsSnapshot();
+  const dailyWarnCalls = options.dailyWarnCalls ?? null;
+  const dailyWarnExceeded =
+    dailyWarnCalls != null && apiMetrics.last24h >= dailyWarnCalls;
 
   return {
     uptimeMs: getMetricsUptimeMs(),
-    spotifyApi: getSpotifyApiMetricsSnapshot(),
+    spotifyApi: {
+      ...apiMetrics,
+      dailyWarnCalls,
+      dailyWarnExceeded,
+    },
+    globalApiBudget: getSpotifyApiBudgetSnapshot(),
     search: getSearchMetricsSnapshot(),
     cache: getSearchCacheSnapshot(partyId),
     sync: {

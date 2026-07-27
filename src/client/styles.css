@@ -142,6 +142,70 @@ input {
   margin-top: 0.75rem;
 }
 
+.guest-tutorial-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.guest-tutorial-sheet {
+  width: 100%;
+  max-width: 28rem;
+  margin-bottom: env(safe-area-inset-bottom, 0);
+}
+
+.guest-tutorial-progress {
+  margin: 0 0 0.5rem;
+  color: #b8b8c0;
+}
+
+.guest-tutorial-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0.5rem 0 1rem;
+  min-height: 2.5rem;
+}
+
+.guest-tutorial-boost-icon {
+  display: inline-block;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  background: #3d2f6b;
+  color: #f0e8ff;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.guest-tutorial-body {
+  color: #d0d0d8;
+  margin: 0 0 1.25rem;
+}
+
+.guest-tutorial-actions {
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.diagnostics-details {
+  margin-top: 0.75rem;
+}
+
+.diagnostics-details summary {
+  cursor: pointer;
+  color: #c8c8d0;
+}
+
+.diagnostics-api-list code {
+  display: block;
+  margin-top: 0.15rem;
+}
+
 .guest-search-hero {
   border-color: #1db954;
   box-shadow: 0 0 0 1px rgba(29, 185, 84, 0.15);

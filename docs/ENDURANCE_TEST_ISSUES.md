@@ -100,3 +100,18 @@
 4. **Reduce initial search load** — start with 10 guests, scale to 30 over 30 minutes
 5. **Skip fewer tracks** — admin skip every 60s instead of 30s to reduce API calls
 6. **Monitor rate limit count** — if it exceeds 20, pause the test and wait for cooldown
+
+---
+
+## Daily quota / long Retry-After (GH #11)
+
+When Spotify returns **429** with a **Retry-After of many minutes or hours**, the app is likely hitting a **daily or extended quota**, not a short burst limit.
+
+**What to do:**
+
+1. Open **Admin → Diagnostics** and check **24h API call count**. If it exceeds `SPOTIFY_DAILY_WARN_CALLS` (default 8000), expect prolonged backoff.
+2. **Stop endurance tests** and wait for Retry-After to expire — do not restart guests or sync-heavy workloads.
+3. Review **429 timeline** and **by caller (5m)** to see whether sync, search, or prefetch drove the spike.
+4. Tune **`SPOTIFY_API_BUDGET_COUNT`** / **`SPOTIFY_API_BUDGET_WINDOW_MS`** if proactive throttling is too loose for your party size.
+
+The sync worker honors long Retry-After values and blocks all outbound Spotify calls via the global gate until backoff clears.

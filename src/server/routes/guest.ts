@@ -64,6 +64,7 @@ type GuestVars = {
       partyId: string;
       displayName: string | null;
       boostUsed: boolean;
+      tutorialSeen: boolean;
       disabled: boolean;
     };
   };
@@ -89,6 +90,8 @@ function parseArtistTrackFilter(value: string | undefined): ArtistTrackFilter {
 }
 
 import {
+  formatPartyView,
+  getBoostCapStats,
   getPartyBySlug,
   isPartyOn,
   PARTY_OFF_RESPONSE,
@@ -111,11 +114,16 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
     if (existingToken) {
       const existing = db
         .query(
-          `SELECT id, display_name, boost_used FROM guests
+          `SELECT id, display_name, boost_used, tutorial_seen FROM guests
            WHERE session_token = ? AND party_id = ?`,
         )
         .get(existingToken, party.id) as
-        | { id: string; display_name: string | null; boost_used: number }
+        | {
+            id: string;
+            display_name: string | null;
+            boost_used: number;
+            tutorial_seen: number;
+          }
         | null;
       if (existing) {
         touchGuestLastSeen(db, existing.id, clientIp);
@@ -123,6 +131,7 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
           id: existing.id,
           displayName: existing.display_name,
           boostUsed: existing.boost_used === 1,
+          tutorialSeen: existing.tutorial_seen === 1,
           sessionToken: config.isProduction ? undefined : existingToken,
         });
       }
@@ -138,7 +147,7 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
     if (resumeToken) {
       const resumed = db
         .query(
-          `SELECT id, display_name, boost_used, session_token FROM guests
+          `SELECT id, display_name, boost_used, tutorial_seen, session_token FROM guests
            WHERE session_token = ? AND party_id = ?`,
         )
         .get(resumeToken, party.id) as
@@ -146,6 +155,7 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
             id: string;
             display_name: string | null;
             boost_used: number;
+            tutorial_seen: number;
             session_token: string;
           }
         | null;
@@ -156,6 +166,7 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
           id: resumed.id,
           displayName: resumed.display_name,
           boostUsed: resumed.boost_used === 1,
+          tutorialSeen: resumed.tutorial_seen === 1,
           sessionToken: config.isProduction ? undefined : resumed.session_token,
         });
       }
@@ -182,6 +193,7 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
       id: guestId,
       displayName,
       boostUsed: false,
+      tutorialSeen: false,
       sessionToken: config.isProduction ? undefined : token,
     });
   });
@@ -197,11 +209,24 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
     const party = getPartyBySlug(db, slug);
     if (!party) return c.json({ error: "Party not found", code: "NOT_FOUND" }, 404);
 
-    const body = (await c.req.json()) as {
-      displayName: string;
+    const body = (await c.req.json().catch(() => ({}))) as {
+      displayName?: string;
       confirmReclaim?: boolean;
+      tutorialSeen?: boolean;
     };
-    const name = body.displayName?.trim().slice(0, MAX_DISPLAY_NAME_LENGTH);
+
+    if (body.tutorialSeen === true) {
+      db.run(`UPDATE guests SET tutorial_seen = 1 WHERE id = ?`, [guest.id]);
+    }
+
+    if (body.displayName === undefined) {
+      if (body.tutorialSeen === true) {
+        return c.json({ tutorialSeen: true });
+      }
+      return c.json({ error: "Nothing to update", code: "BAD_REQUEST" }, 400);
+    }
+
+    const name = body.displayName.trim().slice(0, MAX_DISPLAY_NAME_LENGTH);
     if (!name) {
       return c.json(
         { error: "Display name required", code: "DISPLAY_NAME_REQUIRED" },
@@ -237,6 +262,7 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
         id: reclaimed.id,
         displayName: reclaimed.displayName,
         boostUsed: reclaimed.boostUsed,
+        tutorialSeen: reclaimed.tutorialSeen,
         sessionToken: config.isProduction ? undefined : reclaimed.sessionToken,
       });
     }
@@ -254,6 +280,7 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
       name: party.name,
       status: party.status,
       vetoThreshold: party.veto_threshold,
+      boostCap: party.boost_cap ?? null,
       rateLimits: parseRateLimits(party.rate_limits),
     });
   });
@@ -311,6 +338,9 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
     const upcoming = getNormalUpcoming(items).map(toGuestQueueItemView);
     const upcomingOrder = getUpcomingPlayOrder(items).map(toGuestQueueItemView);
 
+    const rateLimits = parseRateLimits(party.rate_limits);
+    const boostStats = getBoostCapStats(db, party.id, party.boost_cap ?? null);
+
     c.header("ETag", etag);
     return c.json({
       nowPlaying: nowPlaying ? toGuestQueueItemView(nowPlaying) : null,
@@ -319,14 +349,8 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
       boostLane,
       nextItemId: nextItem?.id ?? null,
       dedupTracks: getDedupTracks(db, party.id),
-      party: {
-        id: party.id,
-        slug: party.slug,
-        name: party.name,
-        status: party.status,
-        vetoThreshold: party.veto_threshold,
-        rateLimits: parseRateLimits(party.rate_limits),
-      },
+      party: formatPartyView(party, rateLimits),
+      ...boostStats,
       etag,
     });
   });
@@ -626,6 +650,14 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
       return c.json({ error: "Already boosted", code: "ALREADY_BOOSTED" }, 400);
     }
 
+    const boostCap = party.boost_cap;
+    if (boostCap != null && getBoostCapStats(db, party.id, boostCap).boostsUsed >= boostCap) {
+      return c.json(
+        { error: "Boost limit reached for this party", code: "BOOST_CAP" },
+        400,
+      );
+    }
+
     const pos = nextBoostPosition(db, party.id);
     db.run(
       `UPDATE queue_items SET is_boosted = 1, boost_position = ?, status = 'pending' WHERE id = ?`,
@@ -777,6 +809,7 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
       id: guest.id,
       displayName: guest.displayName,
       boostUsed: guest.boostUsed,
+      tutorialSeen: guest.tutorialSeen,
       activeSongCount: countGuestActiveSongs(db, party.id, guest.id),
       quota,
     });

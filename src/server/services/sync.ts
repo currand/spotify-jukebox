@@ -27,6 +27,7 @@ import {
   isSpotifyRateLimitError,
   isSpotifyReauthRequired,
 } from "./spotify-errors";
+import { withSpotifyCallerAsync } from "./spotify-caller";
 
 const SYNC_INTERVAL_MS = 10_000;
 const SYNC_INTERVAL_NO_PARTY_MS = 60_000;
@@ -644,6 +645,7 @@ export async function forcePartySync(
   spotify: SpotifyClient,
   partyId: string,
 ): Promise<void> {
+  return withSpotifyCallerAsync("admin", async () => {
   const party = db
     .query(`SELECT * FROM parties WHERE id = ?`)
     .get(partyId) as { id: string; sync_generation: number; status: string } | null;
@@ -763,6 +765,7 @@ export async function forcePartySync(
     }
     partyLastSyncedGeneration.set(partyId, refreshedParty.sync_generation);
   });
+  });
 }
 
 async function withPartySyncLock(
@@ -782,6 +785,7 @@ async function withPartySyncLock(
 }
 
 async function runSyncTick(db: Db, spotify: SpotifyClient): Promise<void> {
+  return withSpotifyCallerAsync("sync", async () => {
   clearRateLimitIfExpired();
 
   const rateLimited = isRateLimited();
@@ -855,6 +859,7 @@ async function runSyncTick(db: Db, spotify: SpotifyClient): Promise<void> {
   } catch (e) {
     handlePlayerError(e);
   }
+  });
 }
 
 async function runPartySync(

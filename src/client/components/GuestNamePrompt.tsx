@@ -1,4 +1,5 @@
 import * as React from "react";
+import type { GuestMe } from "@/shared/types";
 import { ApiError, api } from "../http";
 import { setStoredGuestSession } from "../utils/guest-session";
 
@@ -7,13 +8,7 @@ export function GuestNamePrompt({
   onSaved,
 }: {
   slug: string;
-  onSaved: (profile: {
-    id: string;
-    displayName: string | null;
-    boostUsed: boolean;
-    activeSongCount?: number;
-    quota?: { add: number; upvote: number; veto: number };
-  }) => void;
+  onSaved: (profile: GuestMe) => void;
 }) {
   const [name, setName] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);

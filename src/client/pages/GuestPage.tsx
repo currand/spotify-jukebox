@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useParams } from "react-router-dom";
-import type { QueueItemView, QueueResponse, SearchResult, TrackInfo } from "@/shared/types";
+import type { GuestMe, QueueItemView, QueueResponse, SearchResult, TrackInfo } from "@/shared/types";
 import { getSearchTrackQueueState } from "@/shared/queue-match";
 import {
   formatApiError,
@@ -17,6 +17,7 @@ import {
 } from "../components/QueueUi";
 import { GuestNav } from "../components/GuestNav";
 import { GuestNamePrompt } from "../components/GuestNamePrompt";
+import { GuestTutorial } from "../components/GuestTutorial";
 import { usePopup } from "../hooks/usePopup";
 import {
   boostApiMessage,
@@ -38,13 +39,7 @@ type SearchView = "idle" | "results" | "artist";
 type ArtistFilter = "songs" | "top-tracks";
 
 function GuestApp({ slug }: { slug: string }) {
-  const [me, setMe] = React.useState<{
-    id: string;
-    displayName: string | null;
-    boostUsed: boolean;
-    activeSongCount?: number;
-    quota?: { add: number; upvote: number; veto: number };
-  } | null>(null);
+  const [me, setMe] = React.useState<GuestMe | null>(null);
   const [queue, setQueue] = React.useState<QueueResponse | null>(null);
   const [query, setQuery] = React.useState("");
   const [results, setResults] = React.useState<SearchResult | null>(null);
@@ -110,9 +105,14 @@ function GuestApp({ slug }: { slug: string }) {
     return () => clearInterval(id);
   }, [joined, slug, queue?.party.status]);
 
-  function onNameSaved(profile: NonNullable<typeof me>) {
+  function onNameSaved(profile: GuestMe) {
     setMe(profile);
   }
+
+  const showTutorial =
+    Boolean(me?.displayName) &&
+    !me?.tutorialSeen &&
+    queue?.party.status === "on";
 
   function clearSearch() {
     setResults(null);
@@ -439,6 +439,7 @@ function GuestApp({ slug }: { slug: string }) {
               guestId={me?.id}
               canMutate={canMutate}
               boostUsed={me?.boostUsed ?? true}
+              boostsRemaining={queue?.boostsRemaining}
               upvotesLeft={me?.quota?.upvote}
               downvotesLeft={me?.quota?.veto}
               showPopup={showPopup}
@@ -450,6 +451,16 @@ function GuestApp({ slug }: { slug: string }) {
         </section>
       )}
       <SpotifyAttribution />
+      {showTutorial && (
+        <GuestTutorial
+          slug={slug}
+          onDismiss={() =>
+            setMe((current) =>
+              current ? { ...current, tutorialSeen: true } : current,
+            )
+          }
+        />
+      )}
       <PopupHost />
     </div>
   );
@@ -460,6 +471,7 @@ function QueueRowActions({
   guestId,
   canMutate,
   boostUsed,
+  boostsRemaining,
   upvotesLeft,
   downvotesLeft,
   showPopup,
@@ -470,6 +482,7 @@ function QueueRowActions({
   guestId?: string;
   canMutate: boolean;
   boostUsed: boolean;
+  boostsRemaining?: number | null;
   upvotesLeft?: number;
   downvotesLeft?: number;
   showPopup: (message: string, kind?: "success" | "error" | "info") => void;
@@ -491,6 +504,7 @@ function QueueRowActions({
   const boostDisabled =
     !canMutate ||
     boostUsed ||
+    boostsRemaining === 0 ||
     item.isBoosted ||
     item.guestBoostBlocked;
 
@@ -518,7 +532,10 @@ function QueueRowActions({
 
   function handleBoost() {
     if (boostDisabled) {
-      showPopup(boostBlockedMessage(item, canMutate, boostUsed), "info");
+      showPopup(
+        boostBlockedMessage(item, canMutate, boostUsed, boostsRemaining),
+        "info",
+      );
       return;
     }
     void onAction(`/parties/${slug}/queue/${item.id}/boost`);
@@ -561,6 +578,7 @@ function QueueRow({
   guestId,
   canMutate,
   boostUsed,
+  boostsRemaining,
   upvotesLeft,
   downvotesLeft,
   showPopup,
@@ -572,6 +590,7 @@ function QueueRow({
   guestId?: string;
   canMutate: boolean;
   boostUsed: boolean;
+  boostsRemaining?: number | null;
   upvotesLeft?: number;
   downvotesLeft?: number;
   showPopup: (message: string, kind?: "success" | "error" | "info") => void;
@@ -598,6 +617,7 @@ function QueueRow({
           guestId={guestId}
           canMutate={canMutate}
           boostUsed={boostUsed}
+          boostsRemaining={boostsRemaining}
           upvotesLeft={upvotesLeft}
           downvotesLeft={downvotesLeft}
           showPopup={showPopup}

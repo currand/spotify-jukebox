@@ -18,6 +18,7 @@ import {
   MIN_SPOTIFY_BACKOFF_MS,
 } from "./spotify-errors";
 import { getSpotifyRateLimitRemainingMs, isSpotifyRateLimited } from "./sync";
+import { withSpotifyCallerAsync } from "./spotify-caller";
 
 export const MIN_SEARCH_QUERY_LENGTH = 3;
 /** Search query results — guests repeat queries within a party but not for hours. */
@@ -462,13 +463,16 @@ async function fetchArtistTrackPages(
   artistId: string,
   artistName: string,
   pages: number,
+  caller: "search" | "prefetch" = "search",
 ): Promise<SpotifyTrack[]> {
   const raw: SpotifyTrack[] = [];
   for (let page = 0; page < pages; page += 1) {
-    const batch = await spotify.searchArtistTracks(artistId, artistName, {
-      limit: 10,
-      offset: page * 10,
-    });
+    const batch = await withSpotifyCallerAsync(caller, () =>
+      spotify.searchArtistTracks(artistId, artistName, {
+        limit: 10,
+        offset: page * 10,
+      }),
+    );
     if (batch.length === 0) break;
     for (const track of batch) {
       raw.push({
@@ -489,7 +493,7 @@ async function loadArtistTracks(
   partyId: string,
   artistId: string,
   artistName: string,
-  options?: { pages?: number },
+  options?: { pages?: number; caller?: "search" | "prefetch" },
 ): Promise<ArtistTracksCacheEntry> {
   const key = artistTracksCacheKey(partyId, artistId);
   const existing = artistTracksCache.get(key);
@@ -504,8 +508,15 @@ async function loadArtistTracks(
   }
 
   const pages = options?.pages ?? 1;
+  const caller = options?.caller ?? "search";
   const run = (async () => {
-    const raw = await fetchArtistTrackPages(spotify, artistId, artistName, pages);
+    const raw = await fetchArtistTrackPages(
+      spotify,
+      artistId,
+      artistName,
+      pages,
+      caller,
+    );
     const built = buildArtistTracksEntry(artistId, raw, existing);
     const now = Date.now();
     const entry: ArtistTracksCacheEntry = {
@@ -560,7 +571,10 @@ function prefetchArtistCatalogs(
         });
         const pages =
           index === 0 && artist.trackHits >= 3 ? ARTIST_PREFETCH_DEEP_PAGES : 1;
-        await loadArtistTracks(spotify, partyId, artist.id, artist.name, { pages });
+        await loadArtistTracks(spotify, partyId, artist.id, artist.name, {
+          pages,
+          caller: "prefetch",
+        });
       } catch {
         /* prefetch is best-effort */
       }
@@ -582,6 +596,7 @@ function scheduleArtistCatalogRefresh(
 
   void loadArtistTracks(spotify, partyId, artistId, artistName, {
     pages: ARTIST_PREFETCH_DEEP_PAGES,
+    caller: "prefetch",
   }).catch(() => {
     /* background refresh is best-effort */
   });
@@ -682,7 +697,10 @@ export async function searchPartyCatalog(
     let tracks: SpotifyTrack[];
     let artists: { id: string; name: string; imageUrl: string | null }[];
     try {
-      ({ tracks, artists } = await spotify.searchCatalog(trimmed, 10, 5));
+      const apiCaller = caller === "host" ? "admin" : "search";
+      ({ tracks, artists } = await withSpotifyCallerAsync(apiCaller, () =>
+        spotify.searchCatalog(trimmed, 10, 5),
+      ));
     } catch (e) {
       if (isSpotifyRateLimitError(e)) {
         const stale = searchCache.get(key);
