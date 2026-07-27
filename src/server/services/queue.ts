@@ -82,7 +82,22 @@ export function getBoostLane(items: QueueItemRow[]): QueueItemRow[] {
         ACTIVE_STATUSES.includes(i.status) &&
         i.status !== "playing",
     )
-    .sort((a, b) => (a.boost_position ?? 0) - (b.boost_position ?? 0));
+    .sort((a, b) => {
+      if (a.upvote_count !== b.upvote_count) {
+        return b.upvote_count - a.upvote_count;
+      }
+      return (a.boost_position ?? 0) - (b.boost_position ?? 0);
+    });
+}
+
+export function countActiveBoosts(db: Db, partyId: string): number {
+  const row = db
+    .query(
+      `SELECT COUNT(*) as count FROM queue_items
+       WHERE party_id = ? AND is_boosted = 1 AND status IN ('pending', 'queued', 'playing')`,
+    )
+    .get(partyId) as { count: number };
+  return row.count;
 }
 
 export function getNormalUpcoming(items: QueueItemRow[]): QueueItemRow[] {

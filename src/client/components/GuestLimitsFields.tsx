@@ -66,14 +66,18 @@ function LimitRow({
 
 export function GuestLimitsFields({
   vetoThreshold,
+  boostCap,
   rateLimits,
   onVetoThresholdChange,
+  onBoostCapChange,
   onRateLimitsChange,
   showIntro = true,
 }: {
   vetoThreshold: number;
+  boostCap: number | null;
   rateLimits: PartyRateLimits;
   onVetoThresholdChange: (value: number) => void;
+  onBoostCapChange: (value: number | null) => void;
   onRateLimitsChange: (next: PartyRateLimits) => void;
   showIntro?: boolean;
 }) {
@@ -99,6 +103,23 @@ export function GuestLimitsFields({
           value={vetoThreshold}
           onChange={(e) => onVetoThresholdChange(Number(e.target.value))}
         />
+      </label>
+      <label className="form-field">
+        <span>Active boost cap</span>
+        <input
+          type="number"
+          min={1}
+          max={99}
+          placeholder="Unlimited"
+          value={boostCap ?? ""}
+          onChange={(e) => {
+            const raw = e.target.value.trim();
+            onBoostCapChange(raw === "" ? null : Number(raw));
+          }}
+        />
+        <span className="small">
+          Max boosted tracks in the queue at once. Leave blank for unlimited.
+        </span>
       </label>
       <LimitRow
         label="Add songs"
@@ -142,16 +163,19 @@ export function GuestLimitsFields({
 export function GuestLimitsPanel({
   partyId,
   vetoThreshold,
+  boostCap,
   rateLimits,
   onSaved,
 }: {
   partyId: string;
   vetoThreshold: number;
+  boostCap: number | null;
   rateLimits: PartyRateLimits;
   onSaved: () => void;
 }) {
   const [limits, setLimits] = React.useState<PartyRateLimits>(rateLimits);
   const [vetoes, setVetoes] = React.useState(vetoThreshold);
+  const [boostCapValue, setBoostCapValue] = React.useState<number | null>(boostCap);
   const [saving, setSaving] = React.useState(false);
   const [notice, setNotice] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -159,7 +183,8 @@ export function GuestLimitsPanel({
   React.useEffect(() => {
     setLimits(rateLimits);
     setVetoes(vetoThreshold);
-  }, [partyId, rateLimits, vetoThreshold]);
+    setBoostCapValue(boostCap);
+  }, [partyId, rateLimits, vetoThreshold, boostCap]);
 
   async function save() {
     setSaving(true);
@@ -168,7 +193,11 @@ export function GuestLimitsPanel({
     try {
       await api(`/host/parties/${partyId}`, {
         method: "PATCH",
-        body: JSON.stringify({ rateLimits: limits, vetoThreshold: vetoes }),
+        body: JSON.stringify({
+          rateLimits: limits,
+          vetoThreshold: vetoes,
+          boostCap: boostCapValue,
+        }),
       });
       setNotice("Guest limits saved.");
       onSaved();
@@ -184,8 +213,10 @@ export function GuestLimitsPanel({
       <h3>Guest limits</h3>
       <GuestLimitsFields
         vetoThreshold={vetoes}
+        boostCap={boostCapValue}
         rateLimits={limits}
         onVetoThresholdChange={setVetoes}
+        onBoostCapChange={setBoostCapValue}
         onRateLimitsChange={setLimits}
       />
       {error && <p className="error">{error}</p>}
@@ -200,6 +231,7 @@ export function GuestLimitsPanel({
           onClick={() => {
             setLimits(DEFAULT_RATE_LIMITS);
             setVetoes(3);
+            setBoostCapValue(null);
           }}
         >
           Reset defaults

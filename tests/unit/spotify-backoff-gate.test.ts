@@ -17,6 +17,9 @@ const testConfig: Config = {
   hostSetupToken: null,
   isProduction: false,
   secureCookies: false,
+  spotifyApiBudgetCount: 90,
+  spotifyApiBudgetWindowMs: 30_000,
+  spotifyDailyWarnCalls: 8000,
 };
 
 function emptyDb(): Db {

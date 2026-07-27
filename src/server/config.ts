@@ -13,6 +13,30 @@ export interface Config {
   isProduction: boolean;
   /** false when BASE_URL uses http:// (e.g. LAN or TLS terminated elsewhere) */
   secureCookies: boolean;
+  spotifyApiBudgetCount: number;
+  spotifyApiBudgetWindowMs: number;
+  /** Warn in diagnostics when 24h API calls exceed this; null disables warning */
+  spotifyDailyWarnCalls: number | null;
+}
+
+function parseOptionalPositiveInt(name: string): number | null {
+  const raw = process.env[name];
+  if (raw == null || raw.trim() === "") return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return Math.floor(parsed);
+}
+
+function parsePositiveInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw == null || raw.trim() === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return Math.floor(parsed);
 }
 
 function requireEnv(name: string, env: AppEnv): string {
@@ -120,6 +144,9 @@ export function loadConfig(env: AppEnv): Config {
     hostSetupToken,
     isProduction,
     secureCookies: baseUrl.startsWith("https://"),
+    spotifyApiBudgetCount: parsePositiveInt("SPOTIFY_API_BUDGET_COUNT", 90),
+    spotifyApiBudgetWindowMs: parsePositiveInt("SPOTIFY_API_BUDGET_WINDOW_MS", 30_000),
+    spotifyDailyWarnCalls: parseOptionalPositiveInt("SPOTIFY_DAILY_WARN_CALLS") ?? 8000,
   };
 }
 

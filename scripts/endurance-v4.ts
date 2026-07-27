@@ -413,6 +413,11 @@ async function diagnosticsLoop(
         const diagRes = await api("GET", "/api/v1/host/diagnostics", undefined, `host_session=${config.adminToken}`);
         if (diagRes.status === 200 && diagRes.json) {
           const d = diagRes.json;
+          const last429 = d.spotifyApi?.rateLimitTimeline?.at(-1);
+          const callers = d.spotifyApi?.byCallerLast5m ?? {};
+          const callerSummary = Object.entries(callers)
+            .map(([name, count]) => `${name}:${count}`)
+            .join(" ");
           metrics.push({
             timestamp: new Date().toISOString(),
             apiTotal: d.spotifyApi?.total ?? 0,
@@ -432,7 +437,7 @@ async function diagnosticsLoop(
           log({
             time: m.timestamp,
             action: "diagnostics",
-            detail: `API:${m.apiTotal} RateLimits:${m.rateLimitCount} Cache:${(m.cacheHitRate * 100).toFixed(0)}% Searches:${m.searchTotal} Sync:${m.syncDeviceActive ? "active" : "inactive"}${m.syncRateLimited ? " ⚠️ RATE LIMITED" : ""}`,
+            detail: `API:${m.apiTotal} RateLimits:${m.rateLimitCount} Cache:${(m.cacheHitRate * 100).toFixed(0)}% Searches:${m.searchTotal} Sync:${m.syncDeviceActive ? "active" : "inactive"}${m.syncRateLimited ? " ⚠️ RATE LIMITED" : ""}${callerSummary ? ` Callers[${callerSummary}]` : ""}${last429 ? ` Last429:${last429.caller}@${Math.round(last429.retryAfterMs / 1000)}s` : ""}`,
           });
         }
       }

@@ -189,6 +189,7 @@ export function reclaimGuestSession(
   id: string;
   displayName: string;
   boostUsed: boolean;
+  tutorialSeen: boolean;
   sessionToken: string;
 } {
   db.run(`DELETE FROM votes WHERE guest_id = ?`, [newGuestId]);
@@ -198,19 +199,21 @@ export function reclaimGuestSession(
 
   const existing = db
     .query(
-      `SELECT id, display_name, session_token, boost_used FROM guests WHERE id = ?`,
+      `SELECT id, display_name, session_token, boost_used, tutorial_seen FROM guests WHERE id = ?`,
     )
     .get(existingGuestId) as {
     id: string;
     display_name: string;
     session_token: string;
     boost_used: number;
+    tutorial_seen: number;
   };
 
   return {
     id: existing.id,
     displayName: existing.display_name,
     boostUsed: existing.boost_used === 1,
+    tutorialSeen: existing.tutorial_seen === 1,
     sessionToken: existing.session_token,
   };
 }

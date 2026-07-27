@@ -14,6 +14,7 @@ const SCHEMA = `
 CREATE TABLE IF NOT EXISTS parties (
   id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'off', veto_threshold INTEGER NOT NULL DEFAULT 3,
+  boost_cap INTEGER,
   seed_playlist_id TEXT NOT NULL, rate_limits TEXT NOT NULL,
   sync_generation INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -21,6 +22,7 @@ CREATE TABLE IF NOT EXISTS parties (
 CREATE TABLE IF NOT EXISTS guests (
   id TEXT PRIMARY KEY, party_id TEXT NOT NULL, session_token TEXT NOT NULL UNIQUE,
   display_name TEXT, boost_used INTEGER NOT NULL DEFAULT 0,
+  tutorial_seen INTEGER NOT NULL DEFAULT 0,
   disabled INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
   last_seen_at TEXT, last_ip TEXT
 );
@@ -142,6 +144,9 @@ function testConfig(): Config {
     hostSetupToken: null,
     isProduction: false,
     secureCookies: false,
+    spotifyApiBudgetCount: 90,
+    spotifyApiBudgetWindowMs: 30_000,
+    spotifyDailyWarnCalls: 8000,
   };
 }
 
@@ -162,14 +167,27 @@ function createTestApp(db: Database, spotify: SpotifyClient) {
   return app;
 }
 
-function makeParty(db: Database, overrides?: { slug?: string; status?: string; veto_threshold?: number }) {
+function makeParty(
+  db: Database,
+  overrides?: { slug?: string; status?: string; veto_threshold?: number; boost_cap?: number | null },
+) {
   const id = crypto.randomUUID();
-  const slug = overrides?.slug ?? `test-party-${Date.now().toString(36)}`;
+  const slug = overrides?.slug ?? `test-party-${crypto.randomUUID()}`;
   const now = new Date().toISOString();
   db.run(
-    `INSERT INTO parties (id, slug, name, status, veto_threshold, seed_playlist_id, rate_limits, sync_generation, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, 'test-playlist', ?, 0, ?, ?)`,
-    [id, slug, "Test Party", overrides?.status ?? "on", overrides?.veto_threshold ?? 3, JSON.stringify(DEFAULT_RATE_LIMITS), now, now],
+    `INSERT INTO parties (id, slug, name, status, veto_threshold, boost_cap, seed_playlist_id, rate_limits, sync_generation, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'test-playlist', ?, 0, ?, ?)`,
+    [
+      id,
+      slug,
+      "Test Party",
+      overrides?.status ?? "on",
+      overrides?.veto_threshold ?? 3,
+      overrides?.boost_cap ?? null,
+      JSON.stringify(DEFAULT_RATE_LIMITS),
+      now,
+      now,
+    ],
   );
   return { id, slug };
 }
@@ -221,6 +239,13 @@ async function vetoTrack(app: Hono, slug: string, itemId: string, token: string)
 
 async function boostTrack(app: Hono, slug: string, itemId: string, token: string) {
   return app.request(`/api/v1/parties/${slug}/queue/${itemId}/boost`, {
+    method: "POST",
+    headers: { Cookie: `guest_session_${slug}=${token}` },
+  });
+}
+
+async function unboostTrack(app: Hono, slug: string, itemId: string, token: string) {
+  return app.request(`/api/v1/parties/${slug}/me/songs/${itemId}/unboost`, {
     method: "POST",
     headers: { Cookie: `guest_session_${slug}=${token}` },
   });
@@ -759,6 +784,43 @@ describe("API Integration: Boost mechanics", () => {
 
     const boostRes = await boostTrack(app, party.slug, added.id, token);
     expect(boostRes.status).toBe(200);
+  });
+
+  test("boost cap rejects third active boost and reopens after unboost", async () => {
+    const partyCap = makeParty(db, { boost_cap: 2 });
+    const g1 = await joinParty(app, partyCap.slug, "Guest1");
+    const g2 = await joinParty(app, partyCap.slug, "Guest2");
+    const g3 = await joinParty(app, partyCap.slug, "Guest3");
+    const t1 = g1.body.sessionToken ?? g1.body.id;
+    const t2 = g2.body.sessionToken ?? g2.body.id;
+    const t3 = g3.body.sessionToken ?? g3.body.id;
+
+    const now = new Date().toISOString();
+    db.run(
+      `INSERT INTO queue_items (id, party_id, spotify_uri, track_name, artist_name, status, added_at, from_seed)
+       VALUES (?, ?, 'spotify:track:cap-filler', 'Filler', 'Band', 'pending', ?, 0)`,
+      [crypto.randomUUID(), partyCap.id, now],
+    );
+
+    const id1 = (await addTrack(app, partyCap.slug, {
+      uri: "spotify:track:cap-1", name: "Cap 1", artistName: "A",
+    }, t1).then((r) => r.json())).id;
+    const id2 = (await addTrack(app, partyCap.slug, {
+      uri: "spotify:track:cap-2", name: "Cap 2", artistName: "B",
+    }, t2).then((r) => r.json())).id;
+    const id3 = (await addTrack(app, partyCap.slug, {
+      uri: "spotify:track:cap-3", name: "Cap 3", artistName: "C",
+    }, t3).then((r) => r.json())).id;
+
+    expect((await boostTrack(app, partyCap.slug, id1, t1)).status).toBe(200);
+    expect((await boostTrack(app, partyCap.slug, id2, t2)).status).toBe(200);
+
+    const blocked = await boostTrack(app, partyCap.slug, id3, t3);
+    expect(blocked.status).toBe(400);
+    expect((await blocked.json()).code).toBe("BOOST_CAP");
+
+    expect((await unboostTrack(app, partyCap.slug, id1, t1)).status).toBe(200);
+    expect((await boostTrack(app, partyCap.slug, id3, t3)).status).toBe(200);
   });
 });
 

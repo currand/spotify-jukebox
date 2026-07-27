@@ -30,7 +30,7 @@ Jukebox is a self-hosted web application that lets party guests control the host
 | Guest | I search for tracks or browse an artist's songs and add one to the queue. |
 | Guest | I upvote songs I want to hear sooner (not my own). |
 | Guest | I veto a song; if enough guests agree, it is removed/skipped. |
-| Guest | I boost one song per party (mine or anyone else's) into a FIFO priority lane. |
+| Guest | I boost one song per party (mine or anyone else's) into a priority lane sorted by upvotes. |
 
 ---
 
@@ -208,7 +208,7 @@ Jukebox maintains a **virtual queue** as the source of truth. A background sync 
 
 **Normal queue:** Sorted by upvote count (desc), then `addedAt` (asc).
 
-**Boost lane:** Separate FIFO queue. When the current track ends, the next track is taken from the boost lane if non-empty; otherwise from the normal queue head.
+**Boost lane:** Separate priority lane. Within the lane, tracks sort by upvote count (desc), then `boost_position` (asc) as tie-breaker. When the current track ends, the next track is taken from the boost lane if non-empty; otherwise from the normal queue head.
 
 **Track lifecycle:** `pending` → `queued` (sent to Spotify) → `playing` → `played` | `skipped` | `vetoed`
 

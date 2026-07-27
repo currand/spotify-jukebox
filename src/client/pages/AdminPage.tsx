@@ -44,6 +44,7 @@ export function AdminPage() {
     name: "",
     seedPlaylistId: "",
     vetoThreshold: 3,
+    boostCap: null as number | null,
   });
   const [createRateLimits, setCreateRateLimits] =
     React.useState<PartyRateLimits>(DEFAULT_RATE_LIMITS);
@@ -142,12 +143,14 @@ export function AdminPage() {
       const body: {
         name: string;
         vetoThreshold: number;
+        boostCap?: number | null;
         rateLimits: PartyRateLimits;
         seedPlaylistId?: string;
         importFromPartyId?: string;
       } = {
         name: form.name.trim(),
         vetoThreshold: form.vetoThreshold,
+        boostCap: form.boostCap,
         rateLimits: createRateLimits,
       };
       if (useImportHistory && endedExport?.trackCount) {
@@ -164,7 +167,7 @@ export function AdminPage() {
       });
       setEndedExport(null);
       setUseImportHistory(false);
-      setForm({ name: "", seedPlaylistId: "", vetoThreshold: 3 });
+      setForm({ name: "", seedPlaylistId: "", vetoThreshold: 3, boostCap: null });
       setCreateRateLimits(DEFAULT_RATE_LIMITS);
       setNotice(null);
       await load();
@@ -193,7 +196,7 @@ export function AdminPage() {
       setParty(null);
       setQueue(null);
       setHistory([]);
-      setForm({ name: "", seedPlaylistId: "", vetoThreshold: 3 });
+      setForm({ name: "", seedPlaylistId: "", vetoThreshold: 3, boostCap: null });
       setCreateRateLimits(DEFAULT_RATE_LIMITS);
       setNotice(
         result.trackCount > 0
@@ -546,9 +549,13 @@ export function AdminPage() {
               <summary>Advanced guest limits</summary>
               <GuestLimitsFields
                 vetoThreshold={form.vetoThreshold}
+                boostCap={form.boostCap}
                 rateLimits={createRateLimits}
                 onVetoThresholdChange={(value) =>
                   setForm((current) => ({ ...current, vetoThreshold: value }))
+                }
+                onBoostCapChange={(value) =>
+                  setForm((current) => ({ ...current, boostCap: value }))
                 }
                 onRateLimitsChange={setCreateRateLimits}
                 showIntro={false}
@@ -603,6 +610,7 @@ export function AdminPage() {
             <GuestLimitsPanel
               partyId={party.id}
               vetoThreshold={party.vetoThreshold}
+              boostCap={party.boostCap}
               rateLimits={party.rateLimits}
               onSaved={() => void load()}
             />

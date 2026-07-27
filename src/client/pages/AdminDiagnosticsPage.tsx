@@ -60,6 +60,12 @@ function DiagnosticsPanels({ diagnostics }: { diagnostics: HostDiagnostics }) {
   const endpointRows = Object.entries(diagnostics.spotifyApi.byEndpointLast5m).sort(
     (a, b) => b[1] - a[1],
   );
+  const callerRows = Object.entries(diagnostics.spotifyApi.byCallerLast5m).sort(
+    (a, b) => b[1] - a[1],
+  );
+  const budget = diagnostics.globalApiBudget;
+  const recentCalls = diagnostics.spotifyApi.recentApiCalls.slice(-20).reverse();
+  const rateLimits = diagnostics.spotifyApi.rateLimitTimeline.slice(-10).reverse();
 
   return (
     <div className="diagnostics-grid">
@@ -68,25 +74,88 @@ function DiagnosticsPanels({ diagnostics }: { diagnostics: HostDiagnostics }) {
         <p className="diagnostics-stat-line">
           <strong>{diagnostics.spotifyApi.last5m}</strong> calls in last 5m ·{" "}
           <strong>{diagnostics.spotifyApi.last1m}</strong> in last 1m ·{" "}
+          <strong>{diagnostics.spotifyApi.last24h}</strong> in last 24h ·{" "}
           <strong>{diagnostics.spotifyApi.total}</strong> since start
         </p>
+        {diagnostics.spotifyApi.dailyWarnExceeded && (
+          <p className="small diagnostics-error">
+            24h call count exceeds soft threshold (
+            {diagnostics.spotifyApi.dailyWarnCalls?.toLocaleString()}). You may be
+            approaching Spotify&apos;s daily quota — expect long Retry-After values.
+          </p>
+        )}
         <p className="small">
           Uptime {formatDuration(diagnostics.uptimeMs)} ·{" "}
-          {diagnostics.spotifyApi.rateLimitCount} rate limits
+          {diagnostics.spotifyApi.rateLimitCount} rate limits ·{" "}
+          {diagnostics.spotifyApi.prefetchApiCalls} prefetch API calls
           {diagnostics.spotifyApi.last429At != null
             ? ` · last 429 at ${formatTime(diagnostics.spotifyApi.last429At)}`
             : ""}
         </p>
+        <p className="small">
+          Global budget: {budget.used}/{budget.limit} in{" "}
+          {formatDuration(budget.windowMs)} window
+          {budget.resetsInMs > 0
+            ? ` · resets in ${formatDuration(budget.resetsInMs)}`
+            : ""}
+        </p>
+        {callerRows.length > 0 && (
+          <>
+            <h3 className="diagnostics-subhead">By caller (5m)</h3>
+            <ul className="diagnostics-list">
+              {callerRows.map(([caller, count]) => (
+                <li key={caller}>
+                  <code>{caller}</code> · {count}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
         {endpointRows.length > 0 ? (
-          <ul className="diagnostics-list">
-            {endpointRows.map(([endpoint, count]) => (
-              <li key={endpoint}>
-                <code>{endpoint}</code> · {count}
-              </li>
-            ))}
-          </ul>
+          <>
+            <h3 className="diagnostics-subhead">By endpoint (5m)</h3>
+            <ul className="diagnostics-list">
+              {endpointRows.map(([endpoint, count]) => (
+                <li key={endpoint}>
+                  <code>{endpoint}</code> · {count}
+                </li>
+              ))}
+            </ul>
+          </>
         ) : (
           <p className="small">No Spotify calls in the last 5 minutes.</p>
+        )}
+        {recentCalls.length > 0 && (
+          <details className="diagnostics-details">
+            <summary>Recent API calls ({recentCalls.length})</summary>
+            <ul className="diagnostics-list diagnostics-api-list">
+              {recentCalls.map((call, index) => (
+                <li key={`${call.at}-${call.path}-${index}`}>
+                  <span className="diagnostics-search-meta">
+                    {formatTime(call.at)} · {call.caller} · {call.status} ·{" "}
+                    {call.elapsedMs}ms
+                    {call.retryAfterMs != null
+                      ? ` · retry ${formatDuration(call.retryAfterMs)}`
+                      : ""}
+                  </span>
+                  <code>{call.endpoint}</code>
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+        {rateLimits.length > 0 && (
+          <details className="diagnostics-details">
+            <summary>429 timeline ({rateLimits.length})</summary>
+            <ul className="diagnostics-list">
+              {rateLimits.map((entry, index) => (
+                <li key={`${entry.at}-${index}`}>
+                  {formatTime(entry.at)} · {entry.caller} · Retry-After{" "}
+                  {formatDuration(entry.retryAfterMs)}
+                </li>
+              ))}
+            </ul>
+          </details>
         )}
       </section>
 

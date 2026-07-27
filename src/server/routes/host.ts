@@ -212,6 +212,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
       importFromPartyId?: string;
       slug?: string;
       vetoThreshold?: number;
+      boostCap?: number | null;
       rateLimits?: PartyRateLimits;
     };
 
@@ -245,13 +246,14 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
         : "none";
 
     db.run(
-      `INSERT INTO parties (id, slug, name, status, veto_threshold, seed_playlist_id, rate_limits, sync_generation, created_at, updated_at)
-       VALUES (?, ?, ?, 'off', ?, ?, ?, 0, ?, ?)`,
+      `INSERT INTO parties (id, slug, name, status, veto_threshold, boost_cap, seed_playlist_id, rate_limits, sync_generation, created_at, updated_at)
+       VALUES (?, ?, ?, 'off', ?, ?, ?, ?, 0, ?, ?)`,
       [
         partyId,
         slug,
         body.name,
         body.vetoThreshold ?? 3,
+        body.boostCap ?? null,
         playlistId,
         JSON.stringify(body.rateLimits ?? DEFAULT_RATE_LIMITS),
         now,
@@ -308,7 +310,11 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
 
   authed.get("/diagnostics", (c) => {
     const { partyId, partySearchLimit } = getActivePartyDiagnosticsContext(db);
-    return c.json(buildHostDiagnostics(partyId, partySearchLimit));
+    return c.json(
+      buildHostDiagnostics(partyId, partySearchLimit, {
+        dailyWarnCalls: config.spotifyDailyWarnCalls,
+      }),
+    );
   });
 
   authed.get("/metrics/sessions", (c) => {
@@ -413,6 +419,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     const body = (await c.req.json()) as {
       status?: "on" | "off";
       vetoThreshold?: number;
+      boostCap?: number | null;
       rateLimits?: PartyRateLimits;
       name?: string;
     };
@@ -428,6 +435,10 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     if (body.vetoThreshold != null) {
       updates.push("veto_threshold = ?");
       values.push(body.vetoThreshold);
+    }
+    if (body.boostCap !== undefined) {
+      updates.push("boost_cap = ?");
+      values.push(body.boostCap);
     }
     if (body.rateLimits) {
       updates.push("rate_limits = ?");
@@ -865,6 +876,7 @@ function formatParty(row: Record<string, unknown>) {
     name: row.name,
     status: row.status,
     vetoThreshold: row.veto_threshold,
+    boostCap: row.boost_cap ?? null,
     seedPlaylistId: row.seed_playlist_id,
     rateLimits: parseRateLimits(row.rate_limits as string),
     createdAt: row.created_at,

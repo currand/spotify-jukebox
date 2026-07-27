@@ -1,6 +1,7 @@
 import type { Config } from "../config";
 import { debugLog } from "../debug";
 import { recordSpotifyApiCall } from "./spotify-metrics";
+import { getSpotifyApiCaller } from "./spotify-caller";
 import { acquireSpotifyApiBudgetSlot } from "./spotify-api-budget";
 import { decrypt, encrypt } from "../crypto";
 import type { Db } from "../db/schema";
@@ -288,7 +289,7 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
     });
 
     const elapsedMs = Date.now() - started;
-    const retryAfter = res.headers.get("Retry-After");
+    const retryAfterHeader = res.headers.get("Retry-After");
     debugLog(
       "spotify",
       "←",
@@ -296,9 +297,20 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
       path,
       res.status,
       `${elapsedMs}ms`,
-      retryAfter ? { retryAfter } : undefined,
+      retryAfterHeader ? { retryAfter: retryAfterHeader } : undefined,
     );
-    recordSpotifyApiCall({ path, status: res.status, elapsedMs });
+    let retryAfterMs: number | null = null;
+    if (res.status === 429) {
+      const body = await res.clone().text();
+      retryAfterMs = resolveSpotifyRateLimitMs(retryAfterHeader, body, res.status);
+    }
+    recordSpotifyApiCall({
+      path,
+      status: res.status,
+      elapsedMs,
+      caller: getSpotifyApiCaller(),
+      retryAfterMs,
+    });
     return res;
   }
 

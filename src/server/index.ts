@@ -10,6 +10,7 @@ import { initDb } from "./db/schema";
 import { createGuestRoutes } from "./routes/guest";
 import { createHostRoutes } from "./routes/host";
 import { probeGuardMiddleware } from "./middleware/probe-guard";
+import { initSpotifyApiBudget } from "./services/spotify-api-budget";
 import { createSpotifyClient } from "./services/spotify";
 import { startSyncWorker } from "./services/sync";
 import { isDebugEnabled } from "./debug";
@@ -21,6 +22,10 @@ import { startMetricsRecorder } from "./services/metrics-recorder";
 
 const env = bootstrapEnv();
 const config = loadConfig(env);
+initSpotifyApiBudget({
+  count: config.spotifyApiBudgetCount,
+  windowMs: config.spotifyApiBudgetWindowMs,
+});
 const db = initDb(config);
 const spotify = createSpotifyClient(db, config);
 
@@ -83,7 +88,9 @@ startSyncWorker(db, spotify);
 
 startMetricsRecorder(db, () => {
   const { partyId, partySearchLimit } = getActivePartyDiagnosticsContext(db);
-  return buildHostDiagnostics(partyId, partySearchLimit);
+  return buildHostDiagnostics(partyId, partySearchLimit, {
+    dailyWarnCalls: config.spotifyDailyWarnCalls,
+  });
 });
 
 const bindHost = config.isProduction ? "0.0.0.0" : "127.0.0.1";
