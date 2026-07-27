@@ -5,14 +5,16 @@
  */
 const slug = process.argv[process.argv.indexOf("--slug") + 1];
 const count = parseInt(process.argv[process.argv.indexOf("--count") + 1] ?? "30");
-if (!slug) { console.error("Usage: bun run scripts/join-guests.ts --slug <slug> [--count 30]"); process.exit(1); }
 
-const NAMES = [
+if (!slug) { console.error("Usage: bun run scripts/join-guests.ts --slug <slug> [--count 30] [--run 0001]"); process.exit(1); }
+
+const BASE_NAMES = [
   "Alice","Bob","Charlie","Diana","Eve","Frank","Grace","Hank",
   "Iris","Jack","Karen","Leo","Mona","Nick","Olive","Paul",
   "Quinn","Rita","Sam","Tina","Uma","Vince","Wendy","Xander",
   "Yolanda","Zach","Amy","Ben","Clara","Dan",
-].slice(0, count);
+];
+const NAMES = BASE_NAMES.slice(0, count);
 
 const cookieName = "guest_session_" + slug;
 const BASE = "https://jukebox.currannet.net";

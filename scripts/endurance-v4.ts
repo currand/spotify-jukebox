@@ -88,7 +88,7 @@ const SONG_CATALOG = [
 ];
 
 // ── Guest names ────────────────────────────────────────────────────────────
-const GUEST_NAMES = [
+const BASE_GUEST_NAMES = [
   "Alice", "Bob", "Charlie", "Diana", "Eve", "Frank", "Grace", "Hank",
   "Iris", "Jack", "Karen", "Leo", "Mona", "Nick", "Olive", "Paul",
   "Quinn", "Rita", "Sam", "Tina", "Uma", "Vince", "Wendy", "Xander",
@@ -565,7 +565,7 @@ async function main() {
   const queueRef: { items: any[] } = { items: [] };
 
   // Create guest states
-  const guestNames = GUEST_NAMES.slice(0, config.guestCount);
+  const guestNames = BASE_GUEST_NAMES.slice(0, config.guestCount);
   const guests: GuestState[] = guestNames.map((name) => ({
     name,
     token: null,
