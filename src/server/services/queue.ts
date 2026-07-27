@@ -390,11 +390,11 @@ export function toQueueItemView(row: QueueItemRow) {
 
 /** Tracks from an ended party in playback order, deduped by URI. */
 export function getPartyExportTracks(db: Db, partyId: string): ExportTrack[] {
-  const rows = db
+  const terminalRows = db
     .query(
       `SELECT spotify_uri, track_name, artist_name, album_art_url, finished_at, added_at
        FROM queue_items
-       WHERE party_id = ? AND status IN ('played', 'skipped', 'playing')
+       WHERE party_id = ? AND status IN ('played', 'skipped', 'vetoed')
        ORDER BY COALESCE(finished_at, added_at) ASC, added_at ASC`,
     )
     .all(partyId) as {
@@ -406,7 +406,7 @@ export function getPartyExportTracks(db: Db, partyId: string): ExportTrack[] {
 
   const seen = new Set<string>();
   const tracks: ExportTrack[] = [];
-  for (const row of rows) {
+  for (const row of terminalRows) {
     if (seen.has(row.spotify_uri)) continue;
     seen.add(row.spotify_uri);
     tracks.push({
@@ -416,6 +416,19 @@ export function getPartyExportTracks(db: Db, partyId: string): ExportTrack[] {
       albumArtUrl: row.album_art_url,
     });
   }
+
+  const activeItems = getQueueItems(db, partyId, ["pending", "queued", "playing"]);
+  for (const item of getPlayOrder(activeItems)) {
+    if (seen.has(item.spotify_uri)) continue;
+    seen.add(item.spotify_uri);
+    tracks.push({
+      uri: item.spotify_uri,
+      name: item.track_name,
+      artistName: item.artist_name,
+      albumArtUrl: item.album_art_url,
+    });
+  }
+
   return tracks;
 }
 

@@ -1,7 +1,17 @@
 import type { SpotifyApiCaller } from "./spotify-caller";
 import { getSpotifyApiCaller } from "./spotify-caller";
+import { debugLog } from "../debug";
 
 export type SearchActivitySource = "guest" | "host" | "prefetch";
+
+export interface FirstRateLimitEvent {
+  at: number;
+  outboundCallIndex: number;
+  caller: SpotifyApiCaller;
+  path: string;
+  endpoint: string;
+  retryAfterMs: number;
+}
 
 export interface SearchActivityEvent {
   at: number;
@@ -45,6 +55,7 @@ let searchTotal = 0;
 let searchCacheHits = 0;
 let searchCacheMisses = 0;
 let prefetchCount = 0;
+let firstRateLimit: FirstRateLimitEvent | null = null;
 
 export function classifySpotifyEndpoint(path: string): string {
   const base = path.split("?")[0] ?? path;
@@ -96,6 +107,17 @@ export function recordSpotifyApiCall(input: {
     rateLimitTimeline.push({ at, retryAfterMs, caller });
     if (rateLimitTimeline.length > RATE_LIMIT_TIMELINE_LIMIT) {
       rateLimitTimeline.splice(0, rateLimitTimeline.length - RATE_LIMIT_TIMELINE_LIMIT);
+    }
+    if (firstRateLimit == null) {
+      firstRateLimit = {
+        at,
+        outboundCallIndex: totalApiCalls,
+        caller,
+        path: input.path,
+        endpoint,
+        retryAfterMs,
+      };
+      debugLog("spotify", "first rate limit", firstRateLimit);
     }
     rateLimitListener?.();
   }
@@ -164,6 +186,7 @@ export function getSpotifyApiMetricsSnapshot() {
     prefetchApiCalls,
     recentApiCalls: apiCallLog.slice(-50).map((call) => ({ ...call })),
     rateLimitTimeline: rateLimitTimeline.map((entry) => ({ ...entry })),
+    firstRateLimit: firstRateLimit ? { ...firstRateLimit } : null,
   };
 }
 
@@ -197,4 +220,5 @@ export function clearSpotifyMetricsForTests(): void {
   searchCacheHits = 0;
   searchCacheMisses = 0;
   prefetchCount = 0;
+  firstRateLimit = null;
 }

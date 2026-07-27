@@ -56,6 +56,7 @@ Jukebox is a self-hosted web application that lets party guests control the host
 cp .env.development.example .env.development   # local dev
 cp .env.production.example .env.production     # home server (jukebox app)
 cp .env.cloudflared.example .env.cloudflared # tunnel token only
+cp .env.example .env                         # optional compose vars (registry/port)
 
 # Or: bun run setup:dev / bun run setup:prod
 
@@ -63,18 +64,22 @@ cp .env.cloudflared.example .env.cloudflared # tunnel token only
 bun install
 bun run dev
 
+# Mock Spotify scale testing (Docker — no real Spotify)
+bun run docker:up:mock
+
 # Quality
 bun run lint
 bun run typecheck
 bun test
 
-# Production (Docker loads .env.production; optional cloudflared overlay)
+# Production (Docker loads .env.production)
 bun run docker:up
-bun run docker:up:cloudflare   # adds docker-compose.cloudflare.yml
+bun run docker:up:tunnel       # compose profile `tunnel` + cloudflared
 
 # Logs
-docker compose logs -f jukebox
-docker compose logs -f cloudflared
+docker compose --profile default logs -f jukebox
+docker compose --profile tunnel logs -f cloudflared
+docker compose --profile mock logs -f jukebox-mock spotify-mock
 ```
 
 ---
@@ -85,6 +90,8 @@ docker compose logs -f cloudflared
 jukebox/
 ├── docker-compose.yml
 ├── Dockerfile
+├── services/
+│   └── spotify-mock/           # Dev-only Spotify API mock for scale testing
 ├── docs/
 │   └── SPEC.md                 # This document
 ├── src/
@@ -269,6 +276,9 @@ Return `429` with `{ error: "...", code: "RATE_LIMITED", retryAfterMs: number }`
 ### Party lifecycle
 
 - **Cardinality:** Exactly **one active party** at a time. Creating a new party ends/archives the previous one (status becomes historical; guests of the old party can no longer mutate).
+- **End party:** Soft-archives the party (`status = 'archived'`) without terminalizing queue items, so the host can **resume** the same party later (same slug, guest sessions, votes, and queue order).
+- **Resume party:** Reactivates an archived party as `off`. Only available when the archived party still has `pending`/`queued`/`playing` items. Legacy parties fully terminalized before this feature support seed import only.
+- **Previous parties:** Admin lists all archived parties; any can seed a new party’s track list, or be resumed when `canResume` is true.
 - **Binary switch:** Party is either `on` or `off` (admin toggle). No auto-expiry timer.
 - When **off:** Guests can still load the page but all mutations return `403`. Sync worker idle.
 - When **on:** Sync worker active; guests can interact within rate limits.
@@ -285,6 +295,7 @@ Return `429` with `{ error: "...", code: "RATE_LIMITED", retryAfterMs: number }`
 
 - Spotify OAuth connect / disconnect
 - Create party (name, seed playlist, slug) — ends any previous active party
+- Resume archived party (same slug; preserves guests, queue, votes) or import any archived party’s track list as seed for a new party
 - Party on/off switch
 - Configure: veto threshold, rate-limit windows
 - Display QR code + share link
@@ -329,19 +340,27 @@ Host actions bypass guest rate limits and ownership restrictions.
 
 ### Cloudflare
 
-- **Optional.** Use `docker-compose.cloudflare.yml` overlay with `bun run docker:up:cloudflare`.
-- Default `docker compose up` exposes port 3000 for your own reverse proxy or LAN access.
-- **cloudflared** provides public HTTPS when using the overlay; set tunnel hostname → `http://jukebox:3000`.
+- **Optional.** Use compose profile `tunnel` with `bun run docker:up:tunnel`.
+- Default `bun run docker:up` exposes port 3000 for your own reverse proxy or LAN access.
+- **cloudflared** provides public HTTPS when using the tunnel profile; set tunnel hostname → `http://jukebox:3000`.
 - Set up the tunnel (if used) before registering the **production** Spotify app redirect URI.
 - No Cloudflare Access, Workers, or other Cloudflare features in v1.
+
+### Mock Spotify (development only)
+
+- **Optional.** `bun run docker:up:mock` runs `jukebox-mock` + `spotify-mock` sidecar.
+- Set `SPOTIFY_MODE=mock` (dev only) to point at `SPOTIFY_API_BASE_URL` / `SPOTIFY_ACCOUNTS_BASE_URL`.
+- No OAuth, encryption requirements, or real Spotify credentials needed for scale testing.
+- Mock service implements search, player, queue, playlist seed, and token refresh stubs.
 
 **Environment files:**
 
 | File | Use |
 |---|---|
-| `.env.development` | Local dev — separate Spotify dev app, `http://127.0.0.1` URLs |
+| `.env.development` | Local dev + mock stack — Spotify dev app or mock placeholders |
 | `.env.production` | Docker **jukebox** service — Spotify prod app, public `BASE_URL`, secrets |
-| `.env.cloudflared` | Optional — Docker **cloudflared** overlay only (`TUNNEL_TOKEN`) |
+| `.env.cloudflared` | Optional — tunnel profile only (`TUNNEL_TOKEN`) |
+| `.env` | Optional — Compose interpolation (`JUKEBOX_IMAGE`, `JUKEBOX_PORT`) |
 | `.env.local` | Optional overrides (gitignored), loaded after the env file above |
 
 **Production secrets to generate:**
@@ -472,6 +491,11 @@ Base path: `/api/v1`
 | POST | `/host/logout` | Clear host session |
 | POST | `/host/parties` | Create party (archives previous active party; imports seed) |
 | GET | `/host/parties/current` | Current non-archived party |
+| GET | `/host/parties/archived` | List archived parties with resume/export summary |
+| GET | `/host/parties/last-ended` | Most recent archived party export (backward compat) |
+| GET | `/host/parties/:id/export` | Export track list for any archived party |
+| POST | `/host/parties/:id/end` | Soft-archive party (preserves queue for resume) |
+| POST | `/host/parties/:id/resume` | Reactivate archived party (same slug; guests/tokens/queue intact) |
 | PATCH | `/host/parties/:id` | Update config, toggle on/off |
 | GET | `/host/parties/:id/qr` | QR code PNG/SVG for join URL |
 | POST | `/host/parties/:id/queue` | Host add track `{ uri }` (no rate limit; attributed to Host) |
@@ -543,28 +567,36 @@ Guests poll `GET /parties/:slug/queue` every **3 seconds** when party is on. `ET
 
 ## Docker Compose
 
-**Base** (`docker-compose.yml`) — jukebox only, port `${JUKEBOX_PORT:-3000}` published:
+**Compose profiles** (`docker-compose.yml`):
+
+| Profile | Services | Command |
+|---|---|---|
+| `default` | `jukebox` (port published) | `bun run docker:up` |
+| `tunnel` | `jukebox` (no host port) + `cloudflared` | `bun run docker:up:tunnel` |
+| `mock` | `jukebox-mock` + `spotify-mock` | `bun run docker:up:mock` |
 
 ```yaml
+# Simplified — see docker-compose.yml for full config
 services:
   jukebox:
-    build: .
-    restart: unless-stopped
-    ports:
-      - "${JUKEBOX_PORT:-3000}:3000"
-    volumes:
-      - jukebox-data:/data
-    env_file:
-      - .env.production
+    profiles: [default, tunnel]
+    env_file: [.env.production]
+    ports: ["${JUKEBOX_PORT:-3000}:3000"]
 
-volumes:
-  jukebox-data:
-```
+  jukebox-mock:
+    profiles: [mock]
+    env_file: [.env.development]
+    environment:
+      SPOTIFY_MODE: mock
+      SPOTIFY_API_BASE_URL: http://spotify-mock:8080/v1
 
-**Optional Cloudflare overlay** (`docker-compose.cloudflare.yml`) — removes host port, adds cloudflared:
+  spotify-mock:
+    profiles: [mock]
+    build: ./services/spotify-mock
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.cloudflare.yml up -d
+  cloudflared:
+    profiles: [tunnel]
+    env_file: [.env.cloudflared]
 ```
 
 ---
@@ -591,7 +623,9 @@ Both apps:
 - Host must have **Spotify Premium**
 - Development mode; allowlist only the host account
 
-**Setup order (production):** Spotify prod app → `.env.production` → `bun run docker:up` (or `docker:up:cloudflare` + `.env.cloudflared`) → Admin (enter `HOST_SETUP_TOKEN`) → Connect Spotify
+**Setup order (production):** Spotify prod app → `.env.production` → `bun run docker:up` (or `docker:up:tunnel` + `.env.cloudflared`) → Admin (enter `HOST_SETUP_TOKEN`) → Connect Spotify
+
+**Setup order (mock scale test):** `bun run setup:dev` → `bun run docker:up:mock` → Admin → Connect Spotify (auto-connected in mock mode)
 
 **Policy note:** Jukebox is for personal, non-commercial home use. Spotify prohibits commercial use and broadcasting synchronized content.
 

@@ -46,6 +46,34 @@ describe("spotify metrics", () => {
     expect(snapshot.recentApiCalls).toHaveLength(2);
     expect(snapshot.rateLimitTimeline).toHaveLength(1);
     expect(snapshot.rateLimitTimeline[0]?.caller).toBe("sync");
+    expect(snapshot.firstRateLimit).not.toBeNull();
+    expect(snapshot.firstRateLimit?.outboundCallIndex).toBe(2);
+    expect(snapshot.firstRateLimit?.caller).toBe("sync");
+    expect(snapshot.firstRateLimit?.path).toBe("/me/player");
+    expect(snapshot.firstRateLimit?.retryAfterMs).toBe(60_000);
+  });
+
+  test("records firstRateLimit only once", () => {
+    clearSpotifyMetricsForTests();
+    recordSpotifyApiCall({
+      path: "/search?q=abba",
+      status: 429,
+      elapsedMs: 5,
+      caller: "search",
+      retryAfterMs: 15_000,
+    });
+    recordSpotifyApiCall({
+      path: "/me/player",
+      status: 429,
+      elapsedMs: 5,
+      caller: "sync",
+      retryAfterMs: 30_000,
+    });
+
+    const snapshot = getSpotifyApiMetricsSnapshot();
+    expect(snapshot.rateLimitCount).toBe(2);
+    expect(snapshot.firstRateLimit?.outboundCallIndex).toBe(1);
+    expect(snapshot.firstRateLimit?.caller).toBe("search");
   });
 
   test("tracks search cache hits and recent activity", () => {

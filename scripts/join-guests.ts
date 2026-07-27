@@ -1,44 +1,59 @@
 #!/usr/bin/env bun
 /**
  * Join guests to a party and save their session tokens.
- * Run this once before the endurance test.
+ * Optional pre-step before endurance — endurance.ts can join guests itself.
  */
-const slug = process.argv[process.argv.indexOf("--slug") + 1];
-const count = parseInt(process.argv[process.argv.indexOf("--count") + 1] ?? "30");
+import { writeFileSync, mkdirSync } from "fs";
+import { resolveJukeboxBaseUrl } from "./lib/endurance-base-url.ts";
+import { guestDisplayName, randomDelay } from "./lib/endurance-api.ts";
 
-if (!slug) { console.error("Usage: bun run scripts/join-guests.ts --slug <slug> [--count 30] [--run 0001]"); process.exit(1); }
+const args = process.argv.slice(2);
+const slugIdx = args.indexOf("--slug");
+const countIdx = args.indexOf("--count");
+const baseUrlIdx = args.indexOf("--base-url");
+const joinWindowIdx = args.indexOf("--join-window-min");
 
-const BASE_NAMES = [
-  "Alice","Bob","Charlie","Diana","Eve","Frank","Grace","Hank",
-  "Iris","Jack","Karen","Leo","Mona","Nick","Olive","Paul",
-  "Quinn","Rita","Sam","Tina","Uma","Vince","Wendy","Xander",
-  "Yolanda","Zach","Amy","Ben","Clara","Dan",
-];
-const NAMES = BASE_NAMES.slice(0, count);
+const slug = slugIdx !== -1 ? args[slugIdx + 1] : undefined;
+const count = Math.min(50, Math.max(1, Number(countIdx !== -1 ? args[countIdx + 1] : 30)));
+const joinWindowMin = Math.max(1, Number(joinWindowIdx !== -1 ? args[joinWindowIdx + 1] : 60));
 
-const cookieName = "guest_session_" + slug;
-const BASE = "https://jukebox.REDACTED.example.com";
+if (!slug) {
+  console.error(
+    "Usage: bun run scripts/join-guests.ts --slug <slug> [--count 30] [--join-window-min 60] [--base-url http://127.0.0.1:3000]",
+  );
+  process.exit(1);
+}
+
+const BASE = resolveJukeboxBaseUrl(baseUrlIdx !== -1 ? args[baseUrlIdx + 1] : undefined);
+const cookieName = `guest_session_${slug}`;
+const joinWindowMs = joinWindowMin * 60_000;
+const arrivalInterval = joinWindowMs / count;
 const guests: { name: string; guestId: string; cookie: string }[] = [];
 
-for (const name of NAMES) {
-  const res = await fetch(BASE + "/api/v1/parties/" + slug + "/join", {
+for (let i = 0; i < count; i++) {
+  if (i > 0) {
+    await Bun.sleep(randomDelay(arrivalInterval * 0.75, arrivalInterval * 1.25));
+  }
+
+  const name = guestDisplayName(i);
+  const res = await fetch(`${BASE}/api/v1/parties/${slug}/join`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ displayName: name }),
   });
   const setCookie = res.headers.get("set-cookie") ?? "";
-  const match = setCookie.match(new RegExp(cookieName + "=([^;]+)"));
+  const match = setCookie.match(new RegExp(`${cookieName}=([^;]+)`));
   const body = await res.json();
-  
+
   if (res.status === 200 && match) {
-    guests.push({ name, guestId: body.id, cookie: cookieName + "=" + match[1] });
-    console.log("✓ " + name + " → " + body.id.slice(0, 8));
+    guests.push({ name, guestId: body.id, cookie: `${cookieName}=${match[1]}` });
+    console.log(`✓ ${name} → ${body.id.slice(0, 8)}`);
   } else {
-    console.log("✗ " + name + " → " + res.status + " " + JSON.stringify(body));
+    console.log(`✗ ${name} → ${res.status} ${JSON.stringify(body)}`);
   }
-  await Bun.sleep(200);
 }
 
-const { writeFileSync } = await import("fs");
-writeFileSync("./data/guests-" + slug + ".json", JSON.stringify(guests, null, 2));
-console.log("\nSaved " + guests.length + " guests to ./data/guests-" + slug + ".json");
+mkdirSync("./data", { recursive: true });
+const outPath = `./data/guests-${slug}.json`;
+writeFileSync(outPath, JSON.stringify(guests, null, 2));
+console.log(`\nSaved ${guests.length} guests to ${outPath}`);

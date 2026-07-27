@@ -203,6 +203,34 @@ export interface EndedPartyExport {
   trackCount: number;
 }
 
+export interface ArchivedPartyQueueSummary {
+  playing: number;
+  pending: number;
+  queued: number;
+  played: number;
+  skipped: number;
+  vetoed: number;
+}
+
+export interface ArchivedPartySummary {
+  partyId: string;
+  partyName: string;
+  slug: string;
+  archivedAt: string;
+  guestCount: number;
+  exportTrackCount: number;
+  canResume: boolean;
+  queueSummary: ArchivedPartyQueueSummary;
+}
+
+export interface ResumedPartyView {
+  id: string;
+  slug: string;
+  name: string;
+  status: "off";
+  guestCount: number;
+}
+
 export interface SpotifyTrack {
   uri: string;
   id: string;
@@ -270,6 +298,14 @@ export interface HostDiagnostics {
       retryAfterMs: number;
       caller: string;
     }>;
+    firstRateLimit: {
+      at: number;
+      outboundCallIndex: number;
+      caller: string;
+      path: string;
+      endpoint: string;
+      retryAfterMs: number;
+    } | null;
     dailyWarnCalls: number | null;
     dailyWarnExceeded: boolean;
   };

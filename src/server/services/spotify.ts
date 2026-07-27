@@ -208,7 +208,7 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
     }
 
     const refreshToken = decrypt(row.refresh_token, config.encryptionKey);
-    const res = await fetch("https://accounts.spotify.com/api/token", {
+    const res = await fetch(`${config.spotifyAccountsBaseUrl}/api/token`, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -277,7 +277,7 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
 
     const token = await refreshTokenIfNeeded();
     if (!token) throw new Error("NOT_CONNECTED");
-    const res = await fetch(`https://api.spotify.com/v1${path}`, {
+    const res = await fetch(`${config.spotifyApiBaseUrl}${path}`, {
       ...init,
       headers: {
         Authorization: `Bearer ${token}`,
@@ -541,7 +541,7 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
           if (entry.item?.uri) tracks.push(mapTrack(entry.item));
         }
         path = data.next
-          ? data.next.replace("https://api.spotify.com/v1", "")
+          ? data.next.replace(config.spotifyApiBaseUrl, "")
           : null;
       }
       return tracks;
@@ -601,6 +601,22 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
       };
     },
   };
+}
+
+export function ensureMockHostCredentials(db: Db, config: Config): void {
+  if (config.spotifyMode !== "mock") return;
+  const row = db
+    .query(`SELECT id FROM host_credentials WHERE id = 1`)
+    .get() as { id: number } | null;
+  if (row) return;
+  storeHostTokens(
+    db,
+    config,
+    "mock-access-token",
+    "mock-refresh-token",
+    86400 * 365,
+  );
+  debugLog("spotify", "seeded mock host credentials");
 }
 
 export function storeHostTokens(

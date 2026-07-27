@@ -1,8 +1,12 @@
 # Jukebox Endurance Test — Issues Found
 **Date:** 2026-07-26
-**Test environment:** Production (jukebox.REDACTED.example.com)
+**Test environment:** Production (jukebox.REDACTED.example.com) or local mock stack (`bun run docker:up:mock`)
 **Party:** test-1-v5vu ("Test 1")
 **Duration:** ~20 minutes of actual test runtime across multiple runs
+
+> **Recommendation:** Use `bun run docker:up:mock` and `JUKEBOX_BASE_URL=http://127.0.0.1:3000` for load/endurance runs to avoid Spotify rate limits. Reserve production + real Spotify for occasional integration checks.
+
+**Canonical script:** `bun run endurance` ([`scripts/endurance.ts`](../scripts/endurance.ts)) — phased party sim with joins spread over `--join-window-min` (default 60), standard guest/host routes only, 10s diagnostics poll, JSON report with `firstBlock` (outbound call index at first Spotify 429).
 
 ---
 
@@ -21,7 +25,7 @@
 ## Issue 3: Guest session not preserved across endurance test runs
 
 **Severity:** Low (test infrastructure)
-**Component:** `scripts/endurance-test.ts`
+**Component:** `scripts/endurance.ts` (formerly `scripts/endurance-test.ts`)
 
 **Evidence:**
 ```
@@ -32,31 +36,31 @@
 
 **Actual behavior:** Each test run creates new guest sessions. Over multiple runs, the party accumulates hundreds of duplicate guest entries. The test script joins fresh guests every time instead of tracking and reusing sessions from previous runs.
 
-**Fix (for next run):** Use a two-step approach:
-1. `join-guests.ts` — joins guests once, saves session tokens to `data/guests-{slug}.json`
-2. `endurance-test.ts` — reads tokens from file, skips join step
+**Fix:** Use one of:
+1. `join-guests.ts` — joins guests once (with `--join-window-min`), saves session tokens to `data/guests-{slug}.json`
+2. `endurance.ts --guests-file ./data/guests-{slug}.json` — reuses saved cookies, skips re-join
 
 ---
 
 ## Issue 4: Endurance test action pacing too aggressive (v1)
 
 **Severity:** Low (test infrastructure)
-**Component:** `scripts/endurance-test.ts`
+**Component:** `scripts/endurance.ts` (formerly v1/v4 scripts)
 
 **Evidence:** 30 guests performing actions every 5-30 seconds generated ~35 API calls/min, which overwhelmed Spotify's rate limits within minutes.
 
 **Expected behavior:** Simulate realistic party behavior — guests arrive gradually, have natural pauses, and action frequency matches real-world usage.
 
-**Actual behavior:** All 30 guests joined within seconds and started searching/adding immediately. The combined search + sync worker API calls exceeded Spotify's rate limit within ~3 minutes.
+**Actual behavior (old v1/v4):** All guests joined within seconds and started searching/adding immediately.
 
-**Fix (v3):** Implemented phased behavior with staggered arrivals (1 guest every 2 minutes over 60 minutes) and activity rates that vary by phase (35% during arrival, 15% during peak, 8% during wind-down).
+**Fix:** Unified `endurance.ts` spreads joins over `--join-window-min` (default 60) with ±25% jitter and applies phased behavior (Arrival / Peak / Wind down) with activity rates 30% / 15% / 8%.
 
 ---
 
 ## Issue 5: Duplicate detection shows 409 but guest keeps trying
 
 **Severity:** Low
-**Component:** `scripts/endurance-test.ts`
+**Component:** `scripts/endurance.ts`
 
 **Evidence:**
 ```
@@ -69,6 +73,8 @@
 **Actual behavior:** The test script doesn't track which tracks are already in the queue across guests. Multiple guests try to add the same popular songs, hitting duplicate detection repeatedly.
 
 **Impact:** Wasted API calls and misleading error logs. Not a bug in the app, but reduces test effectiveness.
+
+**Fix:** `endurance-guest.ts` tracks per-guest failed duplicate adds and skips repeat attempts for the same track URI.
 
 ---
 
@@ -89,17 +95,18 @@
 | Sync worker | ✅ Backs off on 429s; outbound gate blocks all Spotify calls during backoff |
 | Search caching | ✅ Works (40% hit rate with varied queries) |
 | ETag/conditional GET | ✅ 304 returned when queue unchanged |
+| First rate limit metric | ✅ `spotifyApi.firstRateLimit.outboundCallIndex` in host diagnostics |
 
 ---
 
 ## Recommendations for next test run
 
 1. **Wait for rate limits to fully clear** (at least 5 minutes after last 429)
-2. **Use v3 script** with phased behavior and staggered arrivals
-3. **Use join-guests.ts** to create sessions once, then pass token file to endurance test
-4. **Reduce initial search load** — start with 10 guests, scale to 30 over 30 minutes
-5. **Skip fewer tracks** — admin skip every 60s instead of 30s to reduce API calls
-6. **Monitor rate limit count** — if it exceeds 20, pause the test and wait for cooldown
+2. **Use `bun run endurance`** with default phased behavior and 60-minute join window
+3. **Optional:** `join-guests.ts` + `--guests-file` to reuse sessions across runs
+4. **Dev smoke:** `--guests 5 --join-window-min 5` against mock stack
+5. **Monitor `firstBlock`** in the JSON report or Admin diagnostics — records outbound call # at first 429
+6. **Cache stress:** add `--cache-stress` for 40% random obscure queries (more cache misses)
 
 ---
 
