@@ -1,7 +1,7 @@
 import type { Db } from "../db/schema";
 import type { PartyRateLimits } from "@/shared/types";
 
-export type RateLimitAction = "add" | "upvote" | "veto" | "search";
+export type RateLimitAction = "add" | "upvote" | "veto" | "search" | "boost";
 
 export function countRecentActions(
   db: Db,
@@ -84,6 +84,11 @@ export function remainingQuota(
       0,
       limits.search.count -
         countRecentActions(db, guestId, "search", limits.search.windowMs),
+    ),
+    boost: Math.max(
+      0,
+      limits.boost.count -
+        countRecentActions(db, guestId, "boost", limits.boost.windowMs),
     ),
   };
 }

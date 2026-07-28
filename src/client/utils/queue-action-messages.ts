@@ -38,11 +38,11 @@ export function downvoteBlockedMessage(
 export function boostBlockedMessage(
   item: QueueItemView,
   canMutate: boolean,
-  boostUsed: boolean,
-  boostsRemaining?: number | null,
+  boostsLeft: number,
+  partyBoostsRemaining?: number | null,
 ): string {
   if (!canMutate) return "Party is paused — actions are off";
-  if (boostsRemaining === 0) return "Boost limit reached for this party";
+  if (partyBoostsRemaining === 0) return "Boost limit reached for this party";
   if (item.guestBoostBlocked) {
     const upNextPending =
       item.status === "pending" && !item.guestVetoBlocked;
@@ -51,7 +51,7 @@ export function boostBlockedMessage(
       : "Already queued in Spotify — boost is locked";
   }
   if (item.isBoosted) return "Already boosted";
-  if (boostUsed) return "Boost already in use";
+  if (boostsLeft === 0) return "No boosts left";
   return "Can't boost this song";
 }
 
@@ -97,7 +97,9 @@ export function boostApiMessage(error: unknown): string | null {
   if (!(error instanceof ApiError)) return null;
   switch (error.code) {
     case "BOOST_USED":
-      return "Boost already in use";
+      return "No boosts left";
+    case "RATE_LIMITED":
+      return "Slow down — try again in a moment";
     case "ALREADY_BOOSTED":
       return "Already boosted";
     case "NEXT_LOCKED":

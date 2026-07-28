@@ -185,7 +185,9 @@ export function GuestMySongsPage() {
         <h2>My Songs</h2>
         <p className="small guest-my-songs-intro">
           Songs you added to the party queue.
-          {songs?.boostUsed ? " Your boost is in use." : " You can boost one song."}
+          {songs?.boostUsed
+            ? " No boosts left in your current window."
+            : ` You have ${songs?.boostsLeft ?? 0} boost${songs?.boostsLeft === 1 ? "" : "s"} left.`}
         </p>
 
         {songs?.active.length === 0 &&

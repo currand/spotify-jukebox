@@ -53,7 +53,7 @@ function testDb(): Db {
 }
 
 describe("clearGuestBoost", () => {
-  test("clears boost flags on active songs and restores boost allowance", () => {
+  test("clears boost flags on active songs", () => {
     const db = testDb();
     db.run(
       `INSERT INTO guests (id, party_id, session_token, boost_used, disabled, created_at)
@@ -71,9 +71,6 @@ describe("clearGuestBoost", () => {
 
     expect(clearGuestBoost(db, "party", "guest")).toBe(1);
 
-    const guest = db
-      .query(`SELECT boost_used FROM guests WHERE id = ?`)
-      .get("guest") as { boost_used: number };
     const song = db
       .query(
         `SELECT status, is_boosted, boost_position FROM queue_items WHERE id = ?`,
@@ -84,7 +81,6 @@ describe("clearGuestBoost", () => {
       boost_position: number | null;
     };
 
-    expect(guest.boost_used).toBe(0);
     expect(song.is_boosted).toBe(0);
     expect(song.boost_position).toBeNull();
     expect(song.status).toBe("pending");
@@ -109,15 +105,13 @@ describe("resetGuestRateLimits", () => {
     );
     db.run(
       `INSERT INTO rate_limit_events (guest_id, action, created_at)
-       VALUES ('guest', 'upvote', '2026-01-01T00:00:00.000Z')`,
+       VALUES ('guest', 'upvote', '2026-01-01T00:00:00.000Z'),
+              ('guest', 'boost', '2026-01-01T00:00:00.000Z')`,
     );
 
     const result = resetGuestRateLimits(db, "party", "guest");
-    expect(result).toEqual({ cleared: 1, boostsCleared: 1 });
+    expect(result).toEqual({ cleared: 2, boostsCleared: 1 });
 
-    const guest = db
-      .query(`SELECT boost_used FROM guests WHERE id = ?`)
-      .get("guest") as { boost_used: number };
     const song = db
       .query(`SELECT is_boosted FROM queue_items WHERE id = ?`)
       .get("song") as { is_boosted: number };
@@ -125,7 +119,6 @@ describe("resetGuestRateLimits", () => {
       .query(`SELECT COUNT(*) AS count FROM rate_limit_events WHERE guest_id = ?`)
       .get("guest") as { count: number };
 
-    expect(guest.boost_used).toBe(0);
     expect(song.is_boosted).toBe(0);
     expect(limits.count).toBe(0);
   });
