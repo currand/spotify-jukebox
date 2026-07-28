@@ -26,6 +26,12 @@ describe("dedup", () => {
     expect(foldTitle("Stayin Alive (2007 Remaster)")).toBe("stayinalive");
   });
 
+  test("foldTitle strips soundtrack source suffix", () => {
+    expect(
+      foldTitle('Stayin\' Alive - From "Saturday Night Fever" Soundtrack'),
+    ).toBe("stayinalive");
+  });
+
   test("foldTitle keeps live and remix suffixes distinct", () => {
     expect(foldTitle("Song (Live)")).toBe("songlive");
     expect(foldTitle("Song (Remix)")).toBe("songremix");
@@ -57,6 +63,22 @@ describe("dedup", () => {
     ).toBe(true);
     expect(
       isDuplicateTrack(
+        {
+          trackName: "Stayin Alive",
+          artistName: "Bee Gees",
+          spotifyUri: "spotify:track:5ubvP9oKmxLUVq506fgLhk",
+        },
+        [
+          {
+            trackName: 'Stayin\' Alive - From "Saturday Night Fever" Soundtrack',
+            artistName: "Bee Gees",
+            spotifyUri: "spotify:track:other",
+          },
+        ],
+      ),
+    ).toBe(true);
+    expect(
+      isDuplicateTrack(
         { trackName: "Stayin Alive (2007 Remaster)", artistName: "Bee Gees" },
         [{ trackName: "Stayin' Alive", artistName: "Bee Gees" }],
       ),
@@ -73,6 +95,16 @@ describe("dedup", () => {
         [{ trackName: "Imagine", artistName: "John Lennon" }],
       ),
     ).toBe(false);
+  });
+
+  test("detects duplicate tracks by Spotify URI regardless of title", () => {
+    const uri = "spotify:track:5ubvP9oKmxLUVq506fgLhk";
+    expect(
+      isDuplicateTrack(
+        { trackName: "Stayin Alive", artistName: "Bee Gees", spotifyUri: uri },
+        [{ trackName: "Totally Different", artistName: "Other", spotifyUri: uri }],
+      ),
+    ).toBe(true);
   });
 
   test("duration guard rejects same fold with very different lengths", () => {

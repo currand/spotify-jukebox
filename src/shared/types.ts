@@ -168,6 +168,7 @@ export interface DedupTrack {
   trackName: string;
   artistName: string;
   durationMs?: number | null;
+  spotifyUri?: string;
 }
 
 export interface QueueSnapshot {

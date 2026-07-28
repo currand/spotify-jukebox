@@ -23,10 +23,12 @@ function queueItemAsDedupTrack(item: QueueItemView): DedupTrack {
     trackName: item.trackName,
     artistName: item.artistName,
     durationMs: item.durationMs,
+    spotifyUri: item.spotifyUri,
   };
 }
 
 function trackAsDedupTrack(track: {
+  uri?: string;
   name: string;
   artistName: string;
   durationMs?: number | null;
@@ -35,6 +37,7 @@ function trackAsDedupTrack(track: {
     trackName: track.name,
     artistName: track.artistName,
     durationMs: track.durationMs,
+    spotifyUri: track.uri,
   };
 }
 

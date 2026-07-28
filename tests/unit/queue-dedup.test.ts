@@ -62,8 +62,8 @@ describe("getDedupTracks", () => {
     insertItem(db, { id: "3", track_name: "Active Song", artist_name: "Band", status: "pending" });
 
     expect(getDedupTracks(db, "party")).toEqual([
-      { trackName: "Active Song", artistName: "Band", durationMs: null },
-      { trackName: "Played Song", artistName: "Band", durationMs: null },
+      { spotifyUri: "uri", trackName: "Active Song", artistName: "Band", durationMs: null },
+      { spotifyUri: "uri", trackName: "Played Song", artistName: "Band", durationMs: null },
     ]);
   });
 
@@ -72,7 +72,7 @@ describe("getDedupTracks", () => {
     insertItem(db, { id: "1", track_name: "Vetoed Song", artist_name: "Band", status: "vetoed", finished_at: "2026-01-02T00:00:00.000Z" });
 
     expect(getDedupTracks(db, "party")).toEqual([
-      { trackName: "Vetoed Song", artistName: "Band", durationMs: null },
+      { spotifyUri: "uri", trackName: "Vetoed Song", artistName: "Band", durationMs: null },
     ]);
   });
 });
