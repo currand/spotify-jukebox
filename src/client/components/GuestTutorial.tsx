@@ -2,7 +2,6 @@ import * as React from "react";
 import {
   ThumbsDownIcon,
   ThumbsUpIcon,
-  BoostButton,
 } from "./QueueUi";
 import { api } from "../http";
 
@@ -14,13 +13,13 @@ const STEPS = [
   },
   {
     title: "Downvote to skip",
-    body: "Thumbs down adds a veto. Enough downvotes skip the song for everyone.",
+    body: "Tap thumbs down on a track you don't want to hear. Enough downvotes skip it for everyone.",
     icon: <ThumbsDownIcon size={28} />,
   },
   {
     title: "Boost once per party",
     body: "Use your one boost to jump a song into the fast lane — higher upvotes play sooner there.",
-    icon: <BoostButton disabled />,
+    icon: <span className="boost-badge">Boost</span>,
   },
 ] as const;
 

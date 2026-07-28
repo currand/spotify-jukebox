@@ -147,7 +147,7 @@ input {
   inset: 0;
   z-index: 100;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
   padding: 1rem;
   background: rgba(0, 0, 0, 0.55);
@@ -156,7 +156,6 @@ input {
 .guest-tutorial-sheet {
   width: 100%;
   max-width: 28rem;
-  margin-bottom: env(safe-area-inset-bottom, 0);
 }
 
 .guest-tutorial-progress {
@@ -170,6 +169,11 @@ input {
   justify-content: center;
   margin: 0.5rem 0 1rem;
   min-height: 2.5rem;
+}
+
+.guest-tutorial-icon .boost-badge {
+  font-size: 0.8rem;
+  padding: 0.35rem 0.75rem;
 }
 
 .guest-tutorial-body {
