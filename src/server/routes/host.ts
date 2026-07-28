@@ -59,7 +59,13 @@ import {
 } from "../services/spotify-search";
 import { addTrackToParty } from "./guest";
 import { clearPartyGuests, countNamedPartyGuests, getPartyGuestAdminViews, purgeStalePartyGuests, resetGuestRateLimits } from "../services/guests";
-import { DEFAULT_PARTY_SEARCH_LIMIT, DEFAULT_RATE_LIMITS, type PartyRateLimits } from "@/shared/types";
+import {
+  getDefaultGuestLimits,
+  getDefaultRateLimits,
+  InvalidDefaultRateLimitsError,
+  setDefaultGuestLimits,
+} from "../services/host-settings";
+import { DEFAULT_PARTY_SEARCH_LIMIT, type PartyRateLimits } from "@/shared/types";
 import { deleteCookie, getCookie } from "hono/cookie";
 import { SPOTIFY_SCOPES } from "../config";
 
@@ -223,6 +229,41 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
   const authed = new Hono();
   authed.use("*", hostAuthMiddleware(db));
 
+  authed.get("/settings/default-rate-limits", (c) => {
+    const defaults = getDefaultGuestLimits(db, config);
+    return c.json(defaults);
+  });
+
+  authed.patch("/settings/default-rate-limits", async (c) => {
+    const body = (await c.req.json()) as {
+      rateLimits?: PartyRateLimits;
+      vetoThreshold?: number;
+      boostCap?: number | null;
+    };
+    if (!body.rateLimits || body.vetoThreshold == null) {
+      return c.json(
+        { error: "rateLimits and vetoThreshold required", code: "INVALID_BODY" },
+        400,
+      );
+    }
+    try {
+      const saved = setDefaultGuestLimits(db, {
+        rateLimits: body.rateLimits,
+        vetoThreshold: body.vetoThreshold,
+        boostCap: body.boostCap ?? null,
+      });
+      return c.json(saved);
+    } catch (e) {
+      if (e instanceof InvalidDefaultRateLimitsError) {
+        return c.json(
+          { error: "Invalid guest limits", code: "INVALID_RATE_LIMITS" },
+          400,
+        );
+      }
+      throw e;
+    }
+  });
+
   authed.post("/parties", async (c) => {
     const body = (await c.req.json()) as {
       name: string;
@@ -263,6 +304,8 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
         ? `history:${importFrom}`
         : "none";
 
+    const guestDefaults = getDefaultGuestLimits(db, config);
+
     db.run(
       `INSERT INTO parties (id, slug, name, status, veto_threshold, boost_cap, seed_playlist_id, rate_limits, sync_generation, created_at, updated_at)
        VALUES (?, ?, ?, 'off', ?, ?, ?, ?, 0, ?, ?)`,
@@ -270,10 +313,10 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
         partyId,
         slug,
         body.name,
-        body.vetoThreshold ?? 3,
-        body.boostCap ?? null,
+        body.vetoThreshold ?? guestDefaults.vetoThreshold,
+        body.boostCap !== undefined ? body.boostCap : guestDefaults.boostCap,
         playlistId,
-        JSON.stringify(body.rateLimits ?? DEFAULT_RATE_LIMITS),
+        JSON.stringify(body.rateLimits ?? guestDefaults.rateLimits),
         now,
         now,
       ],
@@ -915,7 +958,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
             db.query(`SELECT rate_limits FROM parties WHERE id = ?`).get(partyId) as
               | { rate_limits: string }
               | null
-          )?.rate_limits ?? JSON.stringify(DEFAULT_RATE_LIMITS),
+          )?.rate_limits ?? JSON.stringify(getDefaultRateLimits(db, config)),
         ),
         "host",
       );
@@ -957,7 +1000,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
             db.query(`SELECT rate_limits FROM parties WHERE id = ?`).get(partyId) as
               | { rate_limits: string }
               | null
-          )?.rate_limits ?? JSON.stringify(DEFAULT_RATE_LIMITS),
+          )?.rate_limits ?? JSON.stringify(getDefaultRateLimits(db, config)),
         ),
         "host",
       );

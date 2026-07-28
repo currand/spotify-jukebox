@@ -1,3 +1,4 @@
+import type { PartyRateLimits } from "@/shared/types";
 import type { AppEnv } from "./load-env";
 
 export type SpotifyMode = "live" | "mock";
@@ -30,6 +31,8 @@ export interface Config {
   syncFallbackIntervalMs: number;
   /** Poll interval when idle or paused with no pending sync work. */
   syncIdleIntervalMs: number;
+  /** Optional env override for guest default rate limits (below DB-stored host settings). */
+  defaultRateLimits: PartyRateLimits | null;
 }
 
 function parseOptionalPositiveInt(name: string): number | null {
@@ -145,6 +148,21 @@ function optionalEnv(name: string, fallback: string): string {
   return value ? value : fallback;
 }
 
+function parseDefaultRateLimitsFromEnv(): PartyRateLimits | null {
+  const raw = process.env.JUKEBOX_DEFAULT_RATE_LIMITS?.trim();
+  if (!raw) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("JUKEBOX_DEFAULT_RATE_LIMITS must be valid JSON");
+  }
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("JUKEBOX_DEFAULT_RATE_LIMITS must be a JSON object");
+  }
+  return parsed as PartyRateLimits;
+}
+
 export function loadConfig(env: AppEnv): Config {
   const isProduction = env === "production";
   const spotifyMode = parseSpotifyMode(env);
@@ -222,6 +240,7 @@ export function loadConfig(env: AppEnv): Config {
     syncEndWindowMs: parsePositiveInt("SYNC_END_WINDOW_MS", 7000),
     syncFallbackIntervalMs: parsePositiveInt("SYNC_FALLBACK_INTERVAL_MS", 30_000),
     syncIdleIntervalMs: parsePositiveInt("SYNC_IDLE_INTERVAL_MS", 60_000),
+    defaultRateLimits: parseDefaultRateLimitsFromEnv(),
   };
 }
 

@@ -107,6 +107,12 @@ CREATE TABLE IF NOT EXISTS metrics_snapshots (
 
 CREATE INDEX IF NOT EXISTS idx_metrics_snapshots_session ON metrics_snapshots(session_id, recorded_at);
 CREATE INDEX IF NOT EXISTS idx_metrics_snapshots_reason ON metrics_snapshots(session_id, reason);
+
+CREATE TABLE IF NOT EXISTS host_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 `;
 
 export type Db = Database;

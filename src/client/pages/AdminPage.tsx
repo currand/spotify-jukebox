@@ -1,6 +1,7 @@
 import * as React from "react";
 import type {
   ArchivedPartySummary,
+  DefaultGuestLimits,
   EndedPartyExport,
   HostSpotifyStatus,
   PartyRateLimits,
@@ -10,7 +11,7 @@ import type {
   SearchResult,
   TrackInfo,
 } from "@/shared/types";
-import { DEFAULT_RATE_LIMITS } from "@/shared/types";
+import { factoryDefaultGuestLimits } from "@/shared/types";
 import { getSearchTrackQueueState } from "@/shared/queue-match";
 import { api, apiOptional } from "../http";
 import { AdminNav } from "../components/AdminNav";
@@ -49,7 +50,9 @@ export function AdminPage() {
     boostCap: null as number | null,
   });
   const [createRateLimits, setCreateRateLimits] =
-    React.useState<PartyRateLimits>(DEFAULT_RATE_LIMITS);
+    React.useState<PartyRateLimits>(factoryDefaultGuestLimits().rateLimits);
+  const [defaultGuestLimits, setDefaultGuestLimits] =
+    React.useState<DefaultGuestLimits>(factoryDefaultGuestLimits());
   const [query, setQuery] = React.useState("");
   const [results, setResults] = React.useState<SearchResult | null>(null);
   const [showSearchResults, setShowSearchResults] = React.useState(false);
@@ -77,6 +80,7 @@ export function AdminPage() {
   const [showHistoryList, setShowHistoryList] = React.useState(false);
   const [resuming, setResuming] = React.useState(false);
   const selectedArchivedIdRef = React.useRef<string | null>(null);
+  const createFormDirtyRef = React.useRef(false);
   const artistLoadRef = React.useRef(0);
   const scrollPendingRef = React.useRef<string | null>(null);
   const [highlightedItemId, setHighlightedItemId] = React.useState<string | null>(
@@ -118,12 +122,42 @@ export function AdminPage() {
     return exportData;
   }, []);
 
+  const fetchDefaultGuestLimits = React.useCallback(async () => {
+    const defaults = await api<DefaultGuestLimits>(
+      "/host/settings/default-rate-limits",
+    );
+    setDefaultGuestLimits(defaults);
+    return defaults;
+  }, []);
+
+  const applyCreateFormDefaults = React.useCallback(async () => {
+    const defaults = await fetchDefaultGuestLimits();
+    setCreateRateLimits(defaults.rateLimits);
+    setForm((current) => ({
+      ...current,
+      vetoThreshold: defaults.vetoThreshold,
+      boostCap: defaults.boostCap,
+    }));
+    return defaults;
+  }, [fetchDefaultGuestLimits]);
+
   const load = React.useCallback(async () => {
     try {
       setError(null);
       const s = await api<HostSpotifyStatus>("/host/spotify/status");
       setStatus(s);
       const p = await apiOptional<PartyFull>("/host/parties/current");
+      if (s.authenticated) {
+        const defaults = await fetchDefaultGuestLimits();
+        if (!p && !createFormDirtyRef.current) {
+          setCreateRateLimits(defaults.rateLimits);
+          setForm((current) => ({
+            ...current,
+            vetoThreshold: defaults.vetoThreshold,
+            boostCap: defaults.boostCap,
+          }));
+        }
+      }
       setParty(p);
       if (p) {
         const q = await api<typeof queue>(`/host/parties/${p.id}/queue`);
@@ -158,7 +192,7 @@ export function AdminPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     }
-  }, [loadArchivedExport]);
+  }, [loadArchivedExport, fetchDefaultGuestLimits]);
 
   async function selectArchivedParty(partyId: string) {
     selectedArchivedIdRef.current = partyId;
@@ -209,8 +243,9 @@ export function AdminPage() {
       setSelectedArchivedId(null);
       setEndedExport(null);
       setUseImportHistory(false);
-      setForm({ name: "", seedPlaylistId: "", vetoThreshold: 3, boostCap: null });
-      setCreateRateLimits(DEFAULT_RATE_LIMITS);
+      setForm((current) => ({ ...current, name: "", seedPlaylistId: "" }));
+      createFormDirtyRef.current = false;
+      await applyCreateFormDefaults();
       setNotice(null);
       await load();
     } catch (e) {
@@ -240,8 +275,9 @@ export function AdminPage() {
       setParty(null);
       setQueue(null);
       setHistory([]);
-      setForm({ name: "", seedPlaylistId: "", vetoThreshold: 3, boostCap: null });
-      setCreateRateLimits(DEFAULT_RATE_LIMITS);
+      setForm((current) => ({ ...current, name: "", seedPlaylistId: "" }));
+      createFormDirtyRef.current = false;
+      await applyCreateFormDefaults();
       setNotice(
         result.trackCount > 0
           ? `Party ended. ${result.trackCount} tracks saved from "${result.partyName}".`
@@ -653,13 +689,18 @@ export function AdminPage() {
                 vetoThreshold={form.vetoThreshold}
                 boostCap={form.boostCap}
                 rateLimits={createRateLimits}
-                onVetoThresholdChange={(value) =>
-                  setForm((current) => ({ ...current, vetoThreshold: value }))
-                }
-                onBoostCapChange={(value) =>
-                  setForm((current) => ({ ...current, boostCap: value }))
-                }
-                onRateLimitsChange={setCreateRateLimits}
+                onVetoThresholdChange={(value) => {
+                  createFormDirtyRef.current = true;
+                  setForm((current) => ({ ...current, vetoThreshold: value }));
+                }}
+                onBoostCapChange={(value) => {
+                  createFormDirtyRef.current = true;
+                  setForm((current) => ({ ...current, boostCap: value }));
+                }}
+                onRateLimitsChange={(next) => {
+                  createFormDirtyRef.current = true;
+                  setCreateRateLimits(next);
+                }}
                 showIntro={false}
               />
             </details>
@@ -714,6 +755,8 @@ export function AdminPage() {
               vetoThreshold={party.vetoThreshold}
               boostCap={party.boostCap}
               rateLimits={party.rateLimits}
+              defaultGuestLimits={defaultGuestLimits}
+              onDefaultGuestLimitsChange={setDefaultGuestLimits}
               onSaved={() => void load()}
             />
             <div className="party-controls">
