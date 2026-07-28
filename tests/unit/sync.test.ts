@@ -621,7 +621,32 @@ describe("buildEffectiveQueueSnapshot", () => {
     expect(effective.currentlyPlaying?.name).toBe("Even Flow");
   });
 
-  test("uses player snapshot when track only exists as played in the virtual queue", () => {
+  test("ignores player snapshot when track only exists as skipped in the virtual queue", () => {
+    const skippedUri = "spotify:track:skipped";
+    const items = [
+      base({ spotify_uri: skippedUri, status: "skipped", track_name: "Skipped Song" }),
+      base({
+        id: "2",
+        spotify_uri: "spotify:track:next",
+        status: "queued",
+        track_name: "Next Song",
+      }),
+    ];
+    const effective = buildEffectiveQueueSnapshot(
+      { currentlyPlaying: null, queue: [] },
+      {
+        deviceActive: true,
+        isPlaying: true,
+        deviceRestricted: false,
+        deviceName: "Phone",
+        currentUri: skippedUri,
+      },
+      items,
+    );
+    expect(effective.currentlyPlaying).toBeNull();
+  });
+
+  test("ignores player snapshot when track only exists as played in the virtual queue", () => {
     const myWayUri = "spotify:track:3spdoTYpuCpmq19tuD0bOe";
     const items = [
       base({
@@ -648,8 +673,7 @@ describe("buildEffectiveQueueSnapshot", () => {
       },
       items,
     );
-    expect(effective.currentlyPlaying?.uri).toBe(myWayUri);
-    expect(effective.currentlyPlaying?.name).toBe("My Way");
+    expect(effective.currentlyPlaying).toBeNull();
     expect(findActiveQueueItemByUri(items, myWayUri)).toBeUndefined();
   });
 });

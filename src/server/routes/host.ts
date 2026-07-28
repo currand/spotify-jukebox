@@ -38,7 +38,7 @@ import {
   listMetricsSessions,
   listMetricsSnapshots,
 } from "../services/metrics-recorder";
-import { getSyncState, requestPartySync, forcePartySync, PartySyncError } from "../services/sync";
+import { getSyncState, requestPartySync, forcePartySync, PartySyncError, resumePartyPlayback, pausePartyPlayback } from "../services/sync";
 import {
   getPartyById,
   isPartyOn,
@@ -766,8 +766,17 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     } catch {
       return c.json({ error: "Skip failed", code: "SPOTIFY_ERROR" }, 502);
     }
-    bumpSyncGeneration(db, partyId);
-    afterQueueChange(db, partyId);
+    try {
+      await forcePartySync(db, spotify, partyId);
+    } catch (e) {
+      if (e instanceof PartySyncError) {
+        return c.json(
+          { error: e.message, code: e.code },
+          e.status as 400 | 403 | 404 | 409 | 429 | 500 | 503,
+        );
+      }
+      throw e;
+    }
     return c.json({ ok: true });
   });
 
@@ -780,10 +789,9 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     if (party.status !== "on") {
       return c.json({ error: "Party is off", code: "PARTY_OFF" }, 403);
     }
-    try {
-      await spotify.play();
-    } catch {
-      return c.json({ error: "Play failed", code: "SPOTIFY_ERROR" }, 502);
+    const result = await resumePartyPlayback(spotify);
+    if (!result.ok) {
+      return c.json({ error: result.message, code: result.code }, result.status);
     }
     bumpSyncGeneration(db, partyId);
     afterQueueChange(db, partyId);
@@ -799,10 +807,9 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     if (party.status !== "on") {
       return c.json({ error: "Party is off", code: "PARTY_OFF" }, 403);
     }
-    try {
-      await spotify.pause();
-    } catch {
-      return c.json({ error: "Pause failed", code: "SPOTIFY_ERROR" }, 502);
+    const result = await pausePartyPlayback(spotify);
+    if (!result.ok) {
+      return c.json({ error: result.message, code: result.code }, result.status);
     }
     bumpSyncGeneration(db, partyId);
     afterQueueChange(db, partyId);

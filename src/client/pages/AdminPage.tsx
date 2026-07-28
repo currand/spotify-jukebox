@@ -419,11 +419,17 @@ export function AdminPage() {
   }
 
   async function hostAction(path: string, method = "POST", body?: unknown) {
-    await api(path, {
-      method,
-      body: body ? JSON.stringify(body) : "{}",
-    });
-    await load();
+    try {
+      setError(null);
+      await api(path, {
+        method,
+        body: body ? JSON.stringify(body) : "{}",
+      });
+      await load();
+    } catch (e) {
+      setError(formatApiError(e));
+      await load();
+    }
   }
 
   const joinUrl = party ? `${window.location.origin}/p/${party.slug}` : "";
@@ -484,7 +490,7 @@ export function AdminPage() {
               {status.deviceRestricted && (
                 <div className="banner warn">
                   {status.lastError ??
-                    "This device doesn't support Spotify's queue API — use the Spotify app on your phone or computer."}
+                    "This device doesn't support remote playback control — use the Spotify app on your phone or computer."}
                   {status.deviceName && (
                     <p className="small" style={{ margin: "0.35rem 0 0" }}>
                       Active device: {status.deviceName}
@@ -640,22 +646,6 @@ export function AdminPage() {
                 }}
               />
             </div>
-            <label className="form-field">
-              <span>Downvotes to skip a song</span>
-              <input
-                type="number"
-                min={1}
-                max={20}
-                title="How many guest downvotes remove a track from the queue"
-                value={form.vetoThreshold}
-                onChange={(e) =>
-                  setForm({ ...form, vetoThreshold: Number(e.target.value) })
-                }
-              />
-              <span className="small">
-                How many guests must downvote before a track is skipped.
-              </span>
-            </label>
             <details className="admin-advanced">
               <summary>Advanced guest limits</summary>
               <GuestLimitsFields
@@ -751,6 +741,7 @@ export function AdminPage() {
                 disabled={
                   party.status !== "on" ||
                   !status?.deviceActive ||
+                  status?.deviceRestricted ||
                   status?.isPlaying === true
                 }
               >
@@ -762,6 +753,7 @@ export function AdminPage() {
                 disabled={
                   party.status !== "on" ||
                   !status?.deviceActive ||
+                  status?.deviceRestricted ||
                   status?.isPlaying !== true
                 }
               >
