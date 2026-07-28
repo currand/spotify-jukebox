@@ -120,6 +120,26 @@ export interface GuestMySongView {
   canRemove: boolean;
 }
 
+export interface GuestProfileStats {
+  upvotesGiven: number;
+  downvotesGiven: number;
+  boostsGiven: number;
+  songsAdded: number;
+  songsInQueue: number;
+  songsPlayed: number;
+}
+
+export interface GuestInfoResponse {
+  displayName: string | null;
+  quota: { add: number; upvote: number; veto: number; boost: number };
+  rateLimits: PartyRateLimits;
+  stats: GuestProfileStats;
+  active: GuestMySongView[];
+  history: GuestMySongView[];
+  boostUsed: boolean;
+  boostsLeft?: number;
+}
+
 export interface GuestMySongsResponse {
   active: GuestMySongView[];
   history: GuestMySongView[];
