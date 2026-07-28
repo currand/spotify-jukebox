@@ -221,9 +221,9 @@ openssl rand -hex 16   # HOST_SETUP_TOKEN — when required
 - Using [Cloudflare Tunnel](#cloudflare-tunnel) (`CLOUDFLARE_TUNNEL=1` is set automatically)
 - You explicitly set `DISABLE_HOST_SETUP_TOKEN=1`
 
-For a **machine-local** deployment (only you on that computer), set `BIND_HOST=127.0.0.1`, `BASE_URL=http://127.0.0.1:3000`, and map `"127.0.0.1:3000:3000"` in `docker-compose.yml` — no setup token needed.
+For a **machine-local** Docker deployment, set `BASE_URL=http://127.0.0.1:3000` in `.env.production` (match `JUKEBOX_PORT` if changed in project `.env`). No setup token needed when `BASE_URL` uses `127.0.0.1`.
 
-Use **https://** for public URLs. For http:// on a trusted home Wi‑Fi, set `ALLOW_INSECURE_HTTP=1` and use your LAN IP in `BASE_URL` and the Spotify redirect URI.
+Use **https://** for public URLs. For http:// on a trusted home Wi‑Fi, set `ALLOW_INSECURE_HTTP=1` and use your LAN IP in `BASE_URL` and the Spotify redirect URI (requires a non-Docker deployment or reverse proxy — Docker publishes on `127.0.0.1` only).
 
 ### 2. Start
 
@@ -286,7 +286,7 @@ If no Spotify device is active, guests can still add and vote — you will see a
 |---|---|
 | `.env.production` | Spotify credentials, secrets, `BASE_URL` — used by the `jukebox` container |
 | `.env.cloudflared` | `TUNNEL_TOKEN` only — used when running the tunnel profile |
-| `.env` | Optional Compose overrides (`JUKEBOX_IMAGE`, `JUKEBOX_PORT`) |
+| `.env` | Optional Compose overrides (`JUKEBOX_IMAGE`, `JUKEBOX_PORT` — host port at `127.0.0.1`) |
 
 Copy from `.env.production.example`, `.env.cloudflared.example`, and `.env.example`.
 
@@ -301,7 +301,8 @@ Copy from `.env.production.example`, `.env.cloudflared.example`, and `.env.examp
 | `ENCRYPTION_KEY` | yes | `openssl rand -hex 32`; encrypts Spotify tokens in the database |
 | `HOST_SETUP_TOKEN` | usually | Not needed for localhost-only or Cloudflare Tunnel |
 | `ALLOW_INSECURE_HTTP` | no | Set `1` for http:// LAN deployments |
-| `BIND_HOST` | no | `127.0.0.1` for localhost-only |
+| `BIND_HOST` | no | Listen address for `bun run dev` (`127.0.0.1` or `0.0.0.0`). Docker uses `0.0.0.0:3000` internally |
+| `JUKEBOX_PORT` | no | Docker only (project `.env`): host port at `127.0.0.1` → container `:3000` (default `3000`) |
 | `TUNNEL_TOKEN` | tunnel only | In `.env.cloudflared`, not `.env.production` |
 
 Full reference: `.env.production.example`, [docs/SECURITY.md](docs/SECURITY.md).

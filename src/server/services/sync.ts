@@ -32,7 +32,7 @@ import {
 import { withSpotifyCallerAsync } from "./spotify-caller";
 
 const SYNC_INTERVAL_MS = 10_000;
-const SYNC_INTERVAL_NO_PARTY_MS = 60_000;
+const SYNC_INTERVAL_NO_PARTY_MS = 15_000;
 const SYNC_MAX_SLEEP_MS = 5 * 60_000;
 const SYNC_NEAR_END_MIN_MS = 1_000;
 
@@ -985,9 +985,6 @@ async function runSyncTick(db: Db, spotify: SpotifyClient): Promise<void> {
   }
 
   const party = getActiveParty(db);
-  if (!party) {
-    return;
-  }
 
   try {
     const token = await spotify.getAccessToken();
@@ -1017,6 +1014,7 @@ async function runSyncTick(db: Db, spotify: SpotifyClient): Promise<void> {
         deviceName: snapshot.deviceName,
         currentUri: snapshot.currentUri,
         rateLimited: isRateLimited(),
+        hasParty: Boolean(party),
       });
     } catch (e) {
       handlePlayerError(e);
@@ -1024,6 +1022,10 @@ async function runSyncTick(db: Db, spotify: SpotifyClient): Promise<void> {
     }
 
     if (isRateLimited()) {
+      return;
+    }
+
+    if (!party) {
       return;
     }
 
@@ -1251,6 +1253,14 @@ async function fillSpotifyBufferIfEmpty(
     }
     throw e;
   }
+}
+
+/** @internal test helper */
+export async function runSyncTickForTests(
+  db: Db,
+  spotify: SpotifyClient,
+): Promise<void> {
+  return runSyncTick(db, spotify);
 }
 
 /** @internal test helper */

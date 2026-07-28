@@ -64,8 +64,17 @@ app.route("/api/v1", api);
 app.get("/health", (c) => c.json({ ok: true }));
 
 const clientDir = join(import.meta.dir, "../../dist/client");
+const serveBuiltClient =
+  existsSync(clientDir) &&
+  (config.env !== "development" ||
+    config.spotifyMode === "mock" ||
+    process.env.JUKEBOX_SERVE_CLIENT === "1");
 
-if (config.env === "development" && config.spotifyMode !== "mock") {
+if (
+  config.env === "development" &&
+  config.spotifyMode !== "mock" &&
+  process.env.JUKEBOX_SERVE_CLIENT !== "1"
+) {
   // API only on :3000 — UI runs on Vite :5173 (HMR breaks through a proxy)
   app.get("*", (c) => {
     const url = new URL(c.req.url);
@@ -74,7 +83,7 @@ if (config.env === "development" && config.spotifyMode !== "mock") {
     }
     return c.redirect(`${config.baseUrl}${url.pathname}${url.search}`);
   });
-} else if (existsSync(clientDir)) {
+} else if (serveBuiltClient) {
   app.use(
     "*",
     serveStatic({

@@ -41,7 +41,10 @@ import {
   listMetricsSnapshots,
 } from "../services/metrics-recorder";
 import { getSyncState, requestPartySync, forcePartySync, PartySyncError, resumePartyPlayback, pausePartyPlayback } from "../services/sync";
-import { sanitizeErrorForPublicStatus } from "../services/spotify-errors";
+import {
+  sanitizeErrorForPublicStatus,
+  SpotifyApiError,
+} from "../services/spotify-errors";
 import {
   getPartyById,
   isPartyOn,
@@ -167,7 +170,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
   const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
   function assertHostSetupToken(c: import("hono").Context): boolean {
-    if (!config.hostSetupToken) return true;
+    if (!config.hostSetupTokenRequired || !config.hostSetupToken) return true;
     const token =
       c.req.query("token")?.trim() ?? c.req.header("X-Host-Setup-Token")?.trim();
     if (!token) return false;
@@ -304,6 +307,35 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
   authed.get("/settings/default-rate-limits", (c) => {
     const defaults = getDefaultGuestLimits(db, config);
     return c.json(defaults);
+  });
+
+  authed.get("/spotify/playlists", async (c) => {
+    try {
+      const playlists = await spotify.getUserPlaylists();
+      return c.json({ playlists });
+    } catch (e) {
+      if (e instanceof SpotifyApiError && e.status === 429) {
+        return c.json(
+          {
+            error: "Spotify rate limit — try again shortly",
+            code: "RATE_LIMITED",
+            retryAfterMs: e.retryAfterMs,
+          },
+          429,
+        );
+      }
+      if (e instanceof Error && e.message === "NOT_CONNECTED") {
+        return c.json(
+          { error: "Spotify not connected", code: "NOT_CONNECTED" },
+          503,
+        );
+      }
+      console.error("Failed to list Spotify playlists:", e);
+      return c.json(
+        { error: "Could not load playlists", code: "SPOTIFY_ERROR" },
+        503,
+      );
+    }
   });
 
   authed.patch("/settings/default-rate-limits", async (c) => {

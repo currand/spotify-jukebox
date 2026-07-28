@@ -214,6 +214,29 @@ function parseBindHost(
   return isProduction || spotifyMode === "mock" ? "0.0.0.0" : "127.0.0.1";
 }
 
+function isLocalHostHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  return (
+    normalized === "127.0.0.1" ||
+    normalized === "localhost" ||
+    normalized === "::1"
+  );
+}
+
+function isLocalhostOnlyDeployment(
+  bindHost: string,
+  baseUrl: string,
+  hostIp: string | null,
+): boolean {
+  if (bindHost === "127.0.0.1") return true;
+  if (hostIp === "127.0.0.1") return true;
+  try {
+    return isLocalHostHostname(new URL(baseUrl).hostname);
+  } catch {
+    return false;
+  }
+}
+
 function parseHostSetupTokenPolicy(
   env: AppEnv,
   isProduction: boolean,
@@ -222,15 +245,14 @@ function parseHostSetupTokenPolicy(
 ): { hostSetupToken: string | null; hostSetupTokenRequired: boolean } {
   if (!isProduction) {
     const token = process.env.HOST_SETUP_TOKEN?.trim() || null;
-    return { hostSetupToken: token, hostSetupTokenRequired: Boolean(token) };
+    return { hostSetupToken: token, hostSetupTokenRequired: false };
   }
 
   const cloudflareTunnel =
     parseBoolean("CLOUDFLARE_TUNNEL", false) ||
     parseBoolean("JUKEBOX_CLOUDFLARE_TUNNEL", false);
-  const localhostOnly =
-    bindHost === "127.0.0.1" ||
-    new URL(baseUrl).hostname === "127.0.0.1";
+  const hostIp = process.env.HOST_IP?.trim() || null; // set by Docker Compose (127.0.0.1)
+  const localhostOnly = isLocalhostOnlyDeployment(bindHost, baseUrl, hostIp);
   const explicitlyDisabled = parseBoolean("DISABLE_HOST_SETUP_TOKEN", false);
 
   if (cloudflareTunnel || localhostOnly || explicitlyDisabled) {

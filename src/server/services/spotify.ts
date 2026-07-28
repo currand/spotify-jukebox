@@ -5,7 +5,7 @@ import { getSpotifyApiCaller } from "./spotify-caller";
 import { acquireSpotifyApiBudgetSlot } from "./spotify-api-budget";
 import { decrypt, encrypt } from "../crypto";
 import type { Db } from "../db/schema";
-import type { SpotifyTrack } from "@/shared/types";
+import type { HostSeedPlaylist, SpotifyTrack } from "@/shared/types";
 import { resolveSpotifyRateLimitMs, SpotifyApiError } from "./spotify-errors";
 
 type SpotifyRateLimitHandler = (error: unknown) => void;
@@ -62,6 +62,8 @@ export interface SpotifyClient {
     options?: { limit?: number; offset?: number },
   ): Promise<SpotifyTrack[]>;
   getPlaylistTracks(playlistId: string): Promise<SpotifyTrack[]>;
+  /** Current user's non-empty playlists (GET /me/playlists; track count only, no duration). */
+  getUserPlaylists(): Promise<HostSeedPlaylist[]>;
   getCurrentlyPlaying(): Promise<{
     uri: string | null;
     isPlaying: boolean;
@@ -203,6 +205,26 @@ function playbackTimingFromBody(data: {
     durationMs:
       typeof data.item?.duration_ms === "number" ? data.item.duration_ms : null,
   };
+}
+
+/** Normalize Spotify paginated `next` URLs to API paths under spotifyApiBaseUrl. */
+export function spotifyApiPathFromNext(
+  next: string | null | undefined,
+  apiBaseUrl: string,
+): string | null {
+  if (!next) return null;
+  const base = apiBaseUrl.replace(/\/$/, "");
+  if (next.startsWith(base)) {
+    const path = next.slice(base.length);
+    return path.startsWith("/") ? path : `/${path}`;
+  }
+  try {
+    const url = new URL(next);
+    const suffix = url.pathname.replace(/^\/v1(?=\/|$)/, "") + url.search;
+    return suffix.startsWith("/") ? suffix : `/${suffix}`;
+  } catch {
+    return null;
+  }
 }
 
 async function readJsonBody<T>(res: Response): Promise<T | null> {
@@ -575,11 +597,51 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
         for (const entry of data.items) {
           if (entry.item?.uri) tracks.push(mapTrack(entry.item));
         }
-        path = data.next
-          ? data.next.replace(config.spotifyApiBaseUrl, "")
-          : null;
+        path = spotifyApiPathFromNext(data.next, config.spotifyApiBaseUrl);
       }
       return tracks;
+    },
+
+    async getUserPlaylists() {
+      type UserPlaylistsPage = {
+        items: {
+          id: string;
+          name: string;
+          collaborative: boolean;
+          description: string | null;
+          public: boolean | null;
+          external_urls?: { spotify?: string };
+          images?: { url: string }[];
+          owner?: { display_name: string | null };
+          items?: { total: number };
+          tracks?: { total: number };
+        }[];
+        next: string | null;
+      };
+
+      const playlists: HostSeedPlaylist[] = [];
+      let path: string | null = "/me/playlists?limit=50";
+      while (path) {
+        const data: UserPlaylistsPage = await api<UserPlaylistsPage>(path);
+        for (const item of data.items) {
+          const trackCount = item.items?.total ?? item.tracks?.total ?? 0;
+          if (trackCount <= 0) continue;
+          const description = item.description?.trim();
+          playlists.push({
+            id: item.id,
+            name: item.name,
+            trackCount,
+            imageUrl: item.images?.[0]?.url ?? null,
+            description: description ? description : null,
+            ownerName: item.owner?.display_name ?? null,
+            isPublic: item.public ?? null,
+            collaborative: item.collaborative,
+            spotifyUrl: item.external_urls?.spotify ?? null,
+          });
+        }
+        path = spotifyApiPathFromNext(data.next, config.spotifyApiBaseUrl);
+      }
+      return playlists;
     },
 
     async getCurrentlyPlaying() {

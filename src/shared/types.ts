@@ -190,6 +190,19 @@ export interface SearchResult {
   artists: { id: string; name: string; imageUrl: string | null }[];
 }
 
+/** Spotify playlist eligible as a party seed (non-empty; from GET /me/playlists). */
+export interface HostSeedPlaylist {
+  id: string;
+  name: string;
+  trackCount: number;
+  imageUrl: string | null;
+  description: string | null;
+  ownerName: string | null;
+  isPublic: boolean | null;
+  collaborative: boolean;
+  spotifyUrl: string | null;
+}
+
 export interface HostSpotifyStatus {
   connected: boolean;
   authenticated: boolean;

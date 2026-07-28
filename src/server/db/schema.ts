@@ -136,7 +136,7 @@ function runOptional(db: Db, sql: string): void {
 
 function migrateVetoTableName(db: Db): void {
   if (tableExists(db, "vetoes") && !tableExists(db, "downvotes")) {
-    db.run(`ALTER TABLE downvotes RENAME TO downvotes`);
+    db.run(`ALTER TABLE vetoes RENAME TO downvotes`);
   }
 }
 
@@ -170,20 +170,20 @@ function migrateHostSettingsGuestLimitsJson(db: Db): void {
     let changed = false;
 
     if (
-      typeof parsed.downvoteThreshold === "number" &&
+      typeof parsed.vetoThreshold === "number" &&
       parsed.downvoteThreshold == null
     ) {
-      parsed.downvoteThreshold = parsed.downvoteThreshold;
-      delete parsed.downvoteThreshold;
+      parsed.downvoteThreshold = parsed.vetoThreshold;
+      delete parsed.vetoThreshold;
       changed = true;
     }
 
     const rateLimits = parsed.rateLimits;
     if (rateLimits && typeof rateLimits === "object") {
       const limits = rateLimits as Record<string, unknown>;
-      if (limits.downvote && !limits.downvote) {
-        limits.downvote = limits.downvote;
-        delete limits.downvote;
+      if (limits.veto && !limits.downvote) {
+        limits.downvote = limits.veto;
+        delete limits.veto;
         changed = true;
       }
     }
@@ -214,15 +214,15 @@ function migrateVetoToDownvote(db: Db): void {
   migrateVetoTableName(db);
   runOptional(
     db,
-    `ALTER TABLE parties RENAME COLUMN downvote_threshold TO downvote_threshold`,
+    `ALTER TABLE parties RENAME COLUMN veto_threshold TO downvote_threshold`,
   );
   runOptional(
     db,
-    `ALTER TABLE queue_items RENAME COLUMN downvote_count TO downvote_count`,
+    `ALTER TABLE queue_items RENAME COLUMN veto_count TO downvote_count`,
   );
   db.run(`UPDATE queue_items SET status = 'downvoted' WHERE status = 'vetoed'`);
   db.run(
-    `UPDATE rate_limit_events SET action = 'downvote' WHERE action = 'downvote'`,
+    `UPDATE rate_limit_events SET action = 'downvote' WHERE action = 'veto'`,
   );
   migratePartyRateLimitsJson(db);
   migrateHostSettingsGuestLimitsJson(db);

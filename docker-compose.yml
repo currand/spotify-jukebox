@@ -1,19 +1,32 @@
 # Jukebox runtime — Docker Compose profiles:
 #
 #   docker compose --profile default up --build -d
-#     Production (port 3000 exposed)
+#     Production (.env.production)
+#
+#   docker compose --profile dev up --build -d
+#     Local Docker dev with live Spotify (.env.development)
+#
+#   docker compose --profile mock up --build -d
+#     Mock Spotify sidecar
 #
 #   docker compose --profile default --profile tunnel \
 #     -f docker-compose.yml -f docker-compose.tunnel.yml up --build -d
-#     Production + Cloudflare tunnel (no host port)
 #
-#   docker compose --profile mock up --build -d
-#     Mock Spotify sidecar (no real Spotify credentials)
+# Docker networking (fixed):
+#   Container listens on 0.0.0.0:3000. Host publishes 127.0.0.1:JUKEBOX_PORT → :3000.
+#   Override host port only via JUKEBOX_PORT in project .env (default 3000).
 #
-#   docker compose --profile default --env-file .env up -d
-#     Run pre-built image from JUKEBOX_IMAGE in .env
-#
-# Compose interpolation vars: .env (see .env.example)
+# App config: each service env_file (.env.production or .env.development).
+# --env-file on the compose command only affects JUKEBOX_PORT / JUKEBOX_IMAGE interpolation.
+
+x-jukebox-ports: &jukebox-ports
+  - "127.0.0.1:${JUKEBOX_PORT:-3000}:3000"
+
+x-jukebox-runtime: &jukebox-runtime
+  BIND_HOST: "0.0.0.0"
+  PORT: "3000"
+  HOST_IP: "127.0.0.1"
+  DATABASE_PATH: /data/jukebox.db
 
 services:
   jukebox:
@@ -22,20 +35,41 @@ services:
       dockerfile: Dockerfile
     image: ${JUKEBOX_IMAGE:-jukebox:local}
     restart: unless-stopped
-    ports:
-      - "${JUKEBOX_PORT:-3000}:3000"
+    ports: *jukebox-ports
     volumes:
       - jukebox-data:/data
     env_file:
       - .env.production
     environment:
+      <<: *jukebox-runtime
       NODE_ENV: production
       JUKEBOX_ENV: production
-      DATABASE_PATH: /data/jukebox.db
-      PORT: 3000
     profiles:
       - default
       - tunnel
+
+  jukebox-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${JUKEBOX_IMAGE:-jukebox:local}
+    restart: unless-stopped
+    ports: *jukebox-ports
+    volumes:
+      - jukebox-dev-data:/data
+    env_file:
+      - .env.development
+    environment:
+      <<: *jukebox-runtime
+      NODE_ENV: development
+      JUKEBOX_ENV: development
+      BASE_URL: http://127.0.0.1:${JUKEBOX_PORT:-3000}
+      SPOTIFY_REDIRECT_URI: http://127.0.0.1:${JUKEBOX_PORT:-3000}/api/v1/host/spotify/callback
+      ALLOW_INSECURE_HTTP: "1"
+      JUKEBOX_SERVE_CLIENT: "1"
+      DEBUG: spotify
+    profiles:
+      - dev
 
   jukebox-mock:
     build:
@@ -43,25 +77,23 @@ services:
       dockerfile: Dockerfile
     image: ${JUKEBOX_IMAGE:-jukebox:local}
     restart: unless-stopped
-    ports:
-      - "${JUKEBOX_PORT:-3000}:3000"
+    ports: *jukebox-ports
     volumes:
       - jukebox-mock-data:/data
     env_file:
       - .env.development
     environment:
+      <<: *jukebox-runtime
       NODE_ENV: development
       JUKEBOX_ENV: development
-      DATABASE_PATH: /data/jukebox.db
-      PORT: 3000
-      BASE_URL: http://127.0.0.1:3000
+      BASE_URL: http://127.0.0.1:${JUKEBOX_PORT:-3000}
       ALLOW_INSECURE_HTTP: "1"
       SPOTIFY_MODE: mock
       SPOTIFY_API_BASE_URL: http://spotify-mock:8080/v1
       SPOTIFY_ACCOUNTS_BASE_URL: http://spotify-mock:8080
       SPOTIFY_CLIENT_ID: mock-client
       SPOTIFY_CLIENT_SECRET: mock-secret
-      SPOTIFY_REDIRECT_URI: http://127.0.0.1:3000/api/v1/host/spotify/callback
+      SPOTIFY_REDIRECT_URI: http://127.0.0.1:${JUKEBOX_PORT:-3000}/api/v1/host/spotify/callback
       ENCRYPTION_KEY: dev-only-change-me
     depends_on:
       - spotify-mock
@@ -91,4 +123,5 @@ services:
 
 volumes:
   jukebox-data:
+  jukebox-dev-data:
   jukebox-mock-data:

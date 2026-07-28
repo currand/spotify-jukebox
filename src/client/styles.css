@@ -48,6 +48,12 @@ input {
   color: #fff;
 }
 
+input[type="radio"],
+input[type="checkbox"] {
+  width: auto;
+  padding: 0;
+}
+
 .app {
   max-width: 720px;
   width: 100%;
@@ -1292,8 +1298,177 @@ button.danger:hover {
   margin-top: 0.75rem;
 }
 
+.create-party-name-field {
+  margin-top: 0.75rem;
+}
+
+.create-party-name-field > span {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-bottom: 0.4rem;
+}
+
+.create-party-name-field input {
+  font-size: 1.125rem;
+  font-weight: 600;
+  padding: 0.85rem 0.9rem;
+}
+
+.seed-playlist-picker {
+  margin-top: 0.75rem;
+}
+
+.seed-playlist-status {
+  margin: 0.35rem 0 0;
+}
+
+.seed-playlist-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+}
+
+.seed-playlist-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.55rem 0.65rem;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.seed-playlist-option:last-child {
+  border-bottom: none;
+}
+
+.seed-playlist-option--selected {
+  background: rgba(29, 185, 84, 0.12);
+}
+
+.seed-playlist-option input {
+  margin-top: 0.35rem;
+  flex-shrink: 0;
+}
+
+.seed-playlist-art {
+  width: 48px;
+  height: 48px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.seed-playlist-art--placeholder {
+  display: block;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.seed-playlist-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.seed-playlist-name {
+  font-weight: 600;
+}
+
+.seed-playlist-meta,
+.seed-playlist-description,
+.seed-playlist-selected {
+  margin: 0;
+}
+
+.seed-playlist-description {
+  color: rgba(255, 255, 255, 0.65);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .party-controls {
   margin-top: 0.75rem;
+}
+
+.queue-controls {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.queue-controls-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.queue-controls-row--playback {
+  justify-content: center;
+  padding-top: 0.15rem;
+}
+
+.queue-controls-group {
+  align-items: center;
+}
+
+.queue-controls-divider {
+  width: 1px;
+  align-self: stretch;
+  min-height: 2rem;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.playback-control-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  padding: 0;
+  border-radius: 999px;
+  background: #2a2a32;
+  color: #f5f5f7;
+}
+
+.playback-control-btn--primary {
+  width: 3.25rem;
+  height: 3.25rem;
+  background: #1db954;
+  color: #000;
+}
+
+.playback-control-btn:disabled {
+  opacity: 0.45;
+}
+
+.playback-icon {
+  width: 1.35rem;
+  height: 1.35rem;
+  display: block;
+}
+
+.playback-control-btn--primary .playback-icon {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.blocked-action-slot--blocked {
+  cursor: not-allowed;
+}
+
+.blocked-action-slot--blocked button:disabled {
+  pointer-events: none;
+}
+
+@media (max-width: 640px) {
+  .queue-controls-divider {
+    display: none;
+  }
 }
 
 .admin-search-row {
@@ -1319,12 +1494,47 @@ button.danger:hover {
   margin-bottom: 1rem;
 }
 
+.admin-ended-banner-title {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+}
+
+.admin-ended-banner .form-field {
+  margin-top: 0;
+}
+
+.admin-ended-banner select {
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid #333;
+  background: #1a1a20;
+  color: #fff;
+}
+
+.admin-ended-actions {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.75rem;
+}
+
+.admin-ended-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+}
+
 .admin-ended-banner-meta {
   margin: 0.35rem 0 0;
 }
 
 .admin-checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
   cursor: pointer;
+  min-height: 2.25rem;
 }
 
 .admin-history-list {

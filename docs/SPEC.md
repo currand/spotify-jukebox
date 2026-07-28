@@ -298,7 +298,7 @@ Return `429` with `{ error: "<action-specific message>", code: "RATE_LIMITED", r
 ### Host authentication
 
 - Host admin (`/admin`) session is established via **Spotify OAuth** (Authorization Code flow for the host Premium account); successful OAuth sets a host session cookie.
-- **Production** may require `HOST_SETUP_TOKEN` (`openssl rand -hex 16`) as a query param or `X-Host-Setup-Token` header on `/host/spotify/login`, so a leaked public URL alone cannot be used to connect a stranger's Spotify account and take over admin. **Not required** when binding to `127.0.0.1` only (`BIND_HOST=127.0.0.1`), when `BASE_URL` uses `127.0.0.1`, when using Cloudflare Tunnel (`CLOUDFLARE_TUNNEL=1`, set automatically by `docker-compose.tunnel.yml`), or when `DISABLE_HOST_SETUP_TOKEN=1`. Optional in development.
+- **Production** may require `HOST_SETUP_TOKEN` (`openssl rand -hex 16`) as a query param or `X-Host-Setup-Token` header on `/host/spotify/login`, so a leaked public URL alone cannot be used to connect a stranger's Spotify account and take over admin. **Not required** when binding to `127.0.0.1` only (`BIND_HOST=127.0.0.1`), when Docker publishes on localhost only (default `127.0.0.1:JUKEBOX_PORT`), when `BASE_URL` uses `127.0.0.1`, when using Cloudflare Tunnel (`CLOUDFLARE_TUNNEL=1`, set automatically by `docker-compose.tunnel.yml`), or when `DISABLE_HOST_SETUP_TOKEN=1`. Never required in development (`JUKEBOX_ENV=development`).
 - When the setup token is disabled, admin UI hides the **Host setup token** field; `/host/spotify/status` returns `hostSetupTokenRequired: false`.
 - No separate host password/PIN beyond the setup token (when enabled) — see `docs/SECURITY.md`.
 - Spotify Developer Dashboard should keep the app in **Development mode** with only the host's account allowlisted.
@@ -531,6 +531,7 @@ Base path: `/api/v1`
 | GET | `/host/spotify/login` | Redirect to Spotify OAuth |
 | GET | `/host/spotify/callback` | OAuth callback → host session |
 | GET | `/host/spotify/status` | Connected, token expiry, sync/device warnings, `hostSetupTokenRequired` |
+| GET | `/host/spotify/playlists` | Current user's non-empty Spotify playlists for seed picker (track count from list API; no duration) |
 | POST | `/host/logout` | Clear host session |
 | POST | `/host/parties` | Create party (archives previous active party; imports seed) |
 | GET | `/host/parties/current` | Current non-archived party |
@@ -610,7 +611,7 @@ Guests poll `GET /parties/:slug/queue` every **3 seconds** when party is on. `ET
 ### Host (`/admin`)
 
 - Spotify connect status
-- Create party (archives previous) + seed playlist picker (search or paste URL)
+- Create party (archives previous) + seed playlist picker (Spotify account playlists)
 - On/off toggle (prominent)
 - Warning when no active Spotify device / Spotify unreachable
 - downvote threshold + rate-limit config
@@ -638,7 +639,10 @@ services:
   jukebox:
     profiles: [default, tunnel]
     env_file: [.env.production]
-    ports: ["${JUKEBOX_PORT:-3000}:3000"]
+    ports: ["127.0.0.1:${JUKEBOX_PORT:-3000}:3000"]
+    environment:
+      BIND_HOST: "0.0.0.0"
+      PORT: "3000"
 
   jukebox-mock:
     profiles: [mock]
