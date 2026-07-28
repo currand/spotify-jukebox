@@ -904,6 +904,7 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
       name?: string;
       artistName?: string;
       albumArtUrl?: string | null;
+      durationMs?: number | null;
     };
     if (!body.uri?.startsWith("spotify:track:")) {
       return c.json({ error: "Invalid URI", code: "INVALID_URI" }, 400);

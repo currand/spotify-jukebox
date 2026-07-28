@@ -60,15 +60,7 @@ export interface SpotifyClient {
     artistId: string,
     artistName?: string,
     options?: { limit?: number; offset?: number },
-  ): Promise<
-    {
-      uri: string;
-      id: string;
-      name: string;
-      artists: { id: string; name: string }[];
-      album: { images: { url: string }[] };
-    }[]
-  >;
+  ): Promise<SpotifyTrack[]>;
   getPlaylistTracks(playlistId: string): Promise<SpotifyTrack[]>;
   getCurrentlyPlaying(): Promise<{
     uri: string | null;

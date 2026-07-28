@@ -121,16 +121,6 @@ export function partyNeedsSpotifyQueueSync(
   return (partyLastSyncedGeneration.get(partyId) ?? -1) < syncGeneration;
 }
 
-export function partyHasPendingBufferWork(db: Db, partyId: string): boolean {
-  return getQueueItems(db, partyId).some((item) => item.status === "pending");
-}
-
-export function partyHasActiveQueueItems(db: Db, partyId: string): boolean {
-  return getQueueItems(db, partyId).some(
-    (item) => item.status === "playing" || item.status === "queued",
-  );
-}
-
 export { hasActiveParty };
 
 /** Adaptive delay between scheduled polls when not rate-limited or event-driven. */
@@ -747,7 +737,7 @@ export class PartySyncError extends Error {
 
 export type PlaybackControlResult =
   | { ok: true }
-  | { ok: false; code: string; message: string; status: number };
+  | { ok: false; code: string; message: string; status: 403 | 502 };
 
 async function refreshPlayerSnapshot(
   spotify: SpotifyClient,
@@ -1003,13 +993,15 @@ async function runSyncTick(db: Db, spotify: SpotifyClient): Promise<void> {
     const token = await spotify.getAccessToken();
     if (!token) {
       syncState = {
+        ...syncState,
         deviceActive: false,
         spotifyReachable: false,
         deviceRestricted: false,
         deviceName: null,
+        isPlaying: false,
         lastError: "Spotify not connected",
         rateLimitedUntil: null,
-        lastSyncedAt: syncState.lastSyncedAt,
+        playbackTiming: null,
       };
       return;
     }
