@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS parties (
   boost_cap INTEGER,
   seed_playlist_id TEXT NOT NULL, rate_limits TEXT NOT NULL,
   sync_generation INTEGER NOT NULL DEFAULT 0,
+  bootstrap_playlist_id TEXT, target_spotify_device_id TEXT,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS guests (
@@ -74,6 +75,10 @@ function createMockSpotify(): SpotifyClient & {
   _snapshot: PlayerSnapshot;
   _apiCalls: string[];
   _should429: boolean;
+  _playlistNames: Map<string, string>;
+  _devices: { id: string; name: string; type: string; is_active: boolean; is_restricted: boolean }[];
+  _createdPlaylists: string[];
+  _deletedPlaylists: string[];
 } {
   const state = {
     _searchResults: new Map<string, SpotifyTrack[]>(),
@@ -90,6 +95,19 @@ function createMockSpotify(): SpotifyClient & {
     } as PlayerSnapshot,
     _apiCalls: [] as string[],
     _should429: false,
+    _playlistNames: new Map<string, string>(),
+    _devices: [
+      {
+        id: "test-device",
+        name: "Test Speaker",
+        type: "Speaker",
+        is_active: true,
+        is_restricted: false,
+      },
+    ],
+    _createdPlaylists: [] as string[],
+    _deletedPlaylists: [] as string[],
+    _nextPlaylistId: 1,
   };
 
   return {
@@ -143,11 +161,11 @@ function createMockSpotify(): SpotifyClient & {
       state._apiCalls.push("getQueue");
       return state._queueData;
     },
-    async addToQueue(uri: string) {
-      state._apiCalls.push(`addToQueue:${uri}`);
+    async addToQueue(uri: string, deviceId?: string | null) {
+      state._apiCalls.push(deviceId ? `addToQueue:${uri}:${deviceId}` : `addToQueue:${uri}`);
     },
-    async skipNext() {
-      state._apiCalls.push("skipNext");
+    async skipNext(deviceId?: string | null) {
+      state._apiCalls.push(deviceId ? `skipNext:${deviceId}` : "skipNext");
     },
     async play(deviceId?: string | null) {
       state._apiCalls.push(deviceId ? `play:${deviceId}` : "play");
@@ -157,6 +175,36 @@ function createMockSpotify(): SpotifyClient & {
     },
     async getPlaybackState() {
       return { deviceActive: state._snapshot.deviceActive, isPlaying: state._snapshot.isPlaying, deviceRestricted: state._snapshot.deviceRestricted, deviceName: state._snapshot.deviceName };
+    },
+    async getAvailableDevices() {
+      state._apiCalls.push("getAvailableDevices");
+      return state._devices.map((device) => ({
+        id: device.id,
+        name: device.name,
+        type: device.type,
+        isActive: device.is_active,
+        isRestricted: device.is_restricted,
+        compatible: !device.is_restricted,
+      }));
+    },
+    async findUserPlaylistByName(name: string) {
+      const id = state._playlistNames.get(name);
+      return id ? { id, name } : null;
+    },
+    async createPrivatePlaylist(name: string) {
+      const id = `created-${state._nextPlaylistId++}`;
+      state._createdPlaylists.push(id);
+      state._playlistNames.set(name, id);
+      return { id, uri: `spotify:playlist:${id}` };
+    },
+    async addTracksToPlaylist() {
+      state._apiCalls.push("addTracksToPlaylist");
+    },
+    async startPlaylistPlayback(playlistId: string, deviceId: string) {
+      state._apiCalls.push(`startPlaylistPlayback:${playlistId}:${deviceId}`);
+    },
+    async deletePlaylist(id: string) {
+      state._deletedPlaylists.push(id);
     },
   } as unknown as SpotifyClient & typeof state;
 }
@@ -199,7 +247,7 @@ function testDb(): Database {
 }
 
 function hostSessionCookie(db: Database): string {
-  const id = "test-host-session";
+  const id = crypto.randomUUID();
   const now = new Date().toISOString();
   const expires = new Date(Date.now() + 3600_000).toISOString();
   db.run(`INSERT INTO host_sessions (id, created_at, expires_at) VALUES (?, ?, ?)`, [
@@ -1070,5 +1118,114 @@ describe("host spotify playlists", () => {
     const app = createTestApp(db, createMockSpotify());
     const res = await app.request("/api/v1/host/spotify/playlists");
     expect(res.status).toBe(401);
+  });
+});
+
+describe("host playback bootstrap", () => {
+  test("GET /host/spotify/devices returns compatible devices", async () => {
+    const db = testDb();
+    const spotify = createMockSpotify();
+    const app = createTestApp(db, spotify);
+    const res = await app.request("/api/v1/host/spotify/devices", {
+      headers: { Cookie: hostSessionCookie(db) },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { devices: { id: string; compatible: boolean }[] };
+    expect(body.devices[0]).toEqual(
+      expect.objectContaining({ id: "test-device", compatible: true }),
+    );
+  });
+
+  test("POST /host/parties rejects playlist name collision", async () => {
+    const db = testDb();
+    const spotify = createMockSpotify();
+    spotify._playlistNames.set("Collision Party", "existing");
+    const app = createTestApp(db, spotify);
+    const res = await app.request("/api/v1/host/parties", {
+      method: "POST",
+      headers: {
+        Cookie: hostSessionCookie(db),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Collision Party",
+        seedPlaylistId: "playlist-1",
+      }),
+    });
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("PLAYLIST_NAME_COLLISION");
+  });
+
+  test("PATCH status=on requires target device", async () => {
+    const db = testDb();
+    const spotify = createMockSpotify();
+    const app = createTestApp(db, spotify);
+    const partyId = makeParty(db, { status: "off" }).id;
+    const res = await app.request(`/api/v1/host/parties/${partyId}`, {
+      method: "PATCH",
+      headers: {
+        Cookie: hostSessionCookie(db),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ status: "on" }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("DEVICE_REQUIRED");
+  });
+
+  test("PATCH device + Turn ON bootstraps playback", async () => {
+    const db = testDb();
+    const spotify = createMockSpotify();
+    const app = createTestApp(db, spotify);
+    const partyId = makeParty(db, { status: "off" }).id;
+    db.run(
+      `INSERT INTO queue_items (id, party_id, spotify_uri, track_name, artist_name, status, added_at)
+       VALUES (?, ?, 'spotify:track:1', 'One', 'Artist', 'pending', ?)`,
+      [crypto.randomUUID(), partyId, new Date().toISOString()],
+    );
+
+    const deviceRes = await app.request(`/api/v1/host/parties/${partyId}`, {
+      method: "PATCH",
+      headers: {
+        Cookie: hostSessionCookie(db),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ spotifyDeviceId: "test-device" }),
+    });
+    expect(deviceRes.status).toBe(200);
+
+    const onRes = await app.request(`/api/v1/host/parties/${partyId}`, {
+      method: "PATCH",
+      headers: {
+        Cookie: hostSessionCookie(db),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ status: "on" }),
+    });
+    expect(onRes.status).toBe(200);
+    expect(spotify._createdPlaylists).toHaveLength(1);
+    expect(spotify._apiCalls.some((call) => call.startsWith("startPlaylistPlayback:"))).toBe(
+      true,
+    );
+  });
+
+  test("DELETE /host/parties/:id removes archived party and bootstrap playlist", async () => {
+    const db = testDb();
+    const spotify = createMockSpotify();
+    const app = createTestApp(db, spotify);
+    const partyId = makeParty(db, { status: "archived" }).id;
+    db.run(`UPDATE parties SET bootstrap_playlist_id = ? WHERE id = ?`, [
+      "bootstrap-123",
+      partyId,
+    ]);
+
+    const res = await app.request(`/api/v1/host/parties/${partyId}`, {
+      method: "DELETE",
+      headers: { Cookie: hostSessionCookie(db) },
+    });
+    expect(res.status).toBe(200);
+    expect(spotify._deletedPlaylists).toEqual(["bootstrap-123"]);
+    const row = db.query(`SELECT id FROM parties WHERE id = ?`).get(partyId);
+    expect(row).toBeNull();
   });
 });

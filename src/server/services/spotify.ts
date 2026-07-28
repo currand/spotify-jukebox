@@ -5,7 +5,7 @@ import { getSpotifyApiCaller } from "./spotify-caller";
 import { acquireSpotifyApiBudgetSlot } from "./spotify-api-budget";
 import { decrypt, encrypt } from "../crypto";
 import type { Db } from "../db/schema";
-import type { HostSeedPlaylist, SpotifyTrack } from "@/shared/types";
+import type { HostSeedPlaylist, SpotifyConnectDevice, SpotifyTrack } from "@/shared/types";
 import { resolveSpotifyRateLimitMs, SpotifyApiError } from "./spotify-errors";
 
 type SpotifyRateLimitHandler = (error: unknown) => void;
@@ -70,10 +70,20 @@ export interface SpotifyClient {
     deviceActive: boolean;
   }>;
   getQueue(): Promise<{ currentlyPlaying: SpotifyTrack | null; queue: SpotifyTrack[] }>;
-  addToQueue(uri: string): Promise<void>;
-  skipNext(): Promise<void>;
+  addToQueue(uri: string, deviceId?: string | null): Promise<void>;
+  skipNext(deviceId?: string | null): Promise<void>;
   play(deviceId?: string | null): Promise<void>;
   pause(deviceId?: string | null): Promise<void>;
+  getAvailableDevices(): Promise<SpotifyConnectDevice[]>;
+  findUserPlaylistByName(name: string): Promise<{ id: string; name: string } | null>;
+  createPrivatePlaylist(name: string): Promise<{ id: string; uri: string }>;
+  addTracksToPlaylist(playlistId: string, uris: string[]): Promise<void>;
+  startPlaylistPlayback(
+    playlistId: string,
+    deviceId: string,
+    offset?: number,
+  ): Promise<void>;
+  deletePlaylist(playlistId: string): Promise<void>;
   /** @deprecated use getPlayerSnapshot */
   getPlaybackState(): Promise<{
     deviceActive: boolean;
@@ -121,6 +131,56 @@ function isRestrictedDeviceType(type: string | undefined): boolean {
     normalized === "tv" ||
     normalized === "game_console"
   );
+}
+
+export function isSpotifyDeviceRestricted(device: {
+  type?: string;
+  is_restricted?: boolean;
+  name?: string;
+}): boolean {
+  return (
+    Boolean(device.is_restricted) ||
+    isRestrictedDeviceType(device.type) ||
+    (device.name?.toLowerCase().includes("airplay") ?? false)
+  );
+}
+
+export function mapSpotifyConnectDevice(device: {
+  id: string;
+  name: string;
+  type: string;
+  is_active?: boolean;
+  is_restricted?: boolean;
+}): SpotifyConnectDevice {
+  const restricted = isSpotifyDeviceRestricted(device);
+  let incompatibleReason: string | undefined;
+  if (restricted) {
+    if (device.type?.toLowerCase() === "tv") {
+      incompatibleReason = "TV devices cannot be controlled remotely";
+    } else if (device.name?.toLowerCase().includes("airplay")) {
+      incompatibleReason = "AirPlay targets do not support remote queue control";
+    } else {
+      incompatibleReason = "This device type does not support remote playback control";
+    }
+  }
+  return {
+    id: device.id,
+    name: device.name,
+    type: device.type,
+    isActive: Boolean(device.is_active),
+    isRestricted: restricted,
+    compatible: !restricted,
+    incompatibleReason,
+  };
+}
+
+export function sortSpotifyConnectDevices(
+  devices: SpotifyConnectDevice[],
+): SpotifyConnectDevice[] {
+  return [...devices].sort((a, b) => {
+    if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
+    return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  });
 }
 
 export function isPlaybackActive(
@@ -193,7 +253,8 @@ function emptyPlayerSnapshot(): PlayerSnapshot {
 
 function playerControlPath(base: string, deviceId?: string | null): string {
   if (!deviceId) return base;
-  return `${base}?device_id=${encodeURIComponent(deviceId)}`;
+  const separator = base.includes("?") ? "&" : "?";
+  return `${base}${separator}device_id=${encodeURIComponent(deviceId)}`;
 }
 
 function playbackTimingFromBody(data: {
@@ -678,14 +739,20 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
       };
     },
 
-    async addToQueue(uri) {
-      await apiVoid(`/me/player/queue?uri=${encodeURIComponent(uri)}`, {
-        method: "POST",
-      });
+    async addToQueue(uri, deviceId) {
+      await apiVoid(
+        playerControlPath(
+          `/me/player/queue?uri=${encodeURIComponent(uri)}`,
+          deviceId,
+        ),
+        { method: "POST" },
+      );
     },
 
-    async skipNext() {
-      await apiVoid("/me/player/next", { method: "POST" });
+    async skipNext(deviceId) {
+      await apiVoid(playerControlPath("/me/player/next", deviceId), {
+        method: "POST",
+      });
     },
 
     async play(deviceId) {
@@ -704,6 +771,75 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
         deviceRestricted: snapshot.deviceRestricted,
         deviceName: snapshot.deviceName,
       };
+    },
+
+    async getAvailableDevices() {
+      const data = await api<{
+        devices: {
+          id: string;
+          name: string;
+          type: string;
+          is_active?: boolean;
+          is_restricted?: boolean;
+        }[];
+      }>("/me/player/devices");
+      return sortSpotifyConnectDevices(
+        (data.devices ?? []).map(mapSpotifyConnectDevice),
+      );
+    },
+
+    async findUserPlaylistByName(name) {
+      let path: string | null = "/me/playlists?limit=50";
+      while (path) {
+        const data: {
+          items: { id: string; name: string }[];
+          next: string | null;
+        } = await api(path);
+        const match = data.items.find((item) => item.name === name);
+        if (match) return match;
+        path = spotifyApiPathFromNext(data.next, config.spotifyApiBaseUrl);
+      }
+      return null;
+    },
+
+    async createPrivatePlaylist(name) {
+      const data = await api<{ id: string; uri: string }>("/me/playlists", {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          public: false,
+          collaborative: false,
+          description: "Ephemeral Jukebox party playlist",
+        }),
+      });
+      return { id: data.id, uri: data.uri };
+    },
+
+    async addTracksToPlaylist(playlistId, uris) {
+      if (uris.length === 0) return;
+      await apiVoid(
+        `/playlists/${encodeURIComponent(playlistId)}/items?uris=${encodeURIComponent(uris.join(","))}`,
+        { method: "POST" },
+      );
+    },
+
+    async startPlaylistPlayback(playlistId, deviceId, offset = 0) {
+      await apiVoid(
+        playerControlPath("/me/player/play", deviceId),
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            context_uri: `spotify:playlist:${playlistId}`,
+            offset: { position: offset },
+          }),
+        },
+      );
+    },
+
+    async deletePlaylist(playlistId) {
+      await apiVoid(`/playlists/${encodeURIComponent(playlistId)}`, {
+        method: "DELETE",
+      });
     },
   };
 }

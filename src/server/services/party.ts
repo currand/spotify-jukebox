@@ -19,6 +19,8 @@ export interface PartyRow {
   rate_limits: string;
   sync_generation: number;
   updated_at: string;
+  bootstrap_playlist_id?: string | null;
+  target_spotify_device_id?: string | null;
 }
 
 export class ResumePartyError extends Error {
@@ -187,7 +189,15 @@ export function formatPartyView(
     downvoteThreshold: party.downvote_threshold,
     boostCap: party.boost_cap ?? null,
     rateLimits,
+    spotifyDeviceId: party.target_spotify_device_id ?? null,
   };
+}
+
+export function getPartyTargetDeviceId(db: Db, partyId: string): string | null {
+  const row = db
+    .query(`SELECT target_spotify_device_id FROM parties WHERE id = ?`)
+    .get(partyId) as { target_spotify_device_id: string | null } | null;
+  return row?.target_spotify_device_id ?? null;
 }
 
 export function getBoostCapStats(

@@ -68,4 +68,19 @@ describe("initDb migrations", () => {
     expect(tables.some((row) => row.name === "downvotes")).toBe(true);
     expect(tables.some((row) => row.name === "vetoes")).toBe(false);
   });
+
+  test("adds bootstrap and target device columns to parties", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "jukebox-db-"));
+    const dbPath = join(tempDir, "parties.db");
+    initDb({ ...baseConfig, databasePath: dbPath });
+
+    const db = new Database(dbPath);
+    const columns = db
+      .query(`PRAGMA table_info(parties)`)
+      .all() as { name: string }[];
+    db.close();
+
+    expect(columns.some((col) => col.name === "bootstrap_playlist_id")).toBe(true);
+    expect(columns.some((col) => col.name === "target_spotify_device_id")).toBe(true);
+  });
 });

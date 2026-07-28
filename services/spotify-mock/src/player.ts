@@ -167,6 +167,24 @@ export function createPlayerState(options: CreatePlayerOptions = {}) {
       tick();
       state.isPlaying = false;
     },
+    setDevice(device: PlayerState["device"]) {
+      state.device = device;
+    },
+    startTrack(uri: string, tracksByUri: Map<string, MockTrack>) {
+      tick();
+      const track =
+        tracksByUri.get(uri) ??
+        ({
+          uri,
+          id: uri.split(":").pop() ?? uri,
+          name: uri,
+          artists: [{ id: "unknown", name: "Unknown" }],
+          album: { images: [] },
+          duration_ms: durationMs,
+        } satisfies MockTrack);
+      state.queue = [];
+      startTrack(track);
+    },
     isRateLimited() {
       return state.rateLimitUntil != null && now() < state.rateLimitUntil;
     },

@@ -244,9 +244,10 @@ export function DiagnosticsSummaryPanels({
             tone={diagnostics.search.cacheMisses > diagnostics.search.cacheHits ? "warn" : "default"}
           />
           <StatTile
-            label="Uptime"
-            value={formatDuration(diagnostics.uptimeMs)}
-            meta={`${diagnostics.spotifyApi.last24h} Spotify calls in 24h`}
+            label="API calls"
+            value={diagnostics.spotifyApi.last24h.toLocaleString()}
+            meta={`Last 24h · session uptime ${formatDuration(diagnostics.uptimeMs)}`}
+            tone={diagnostics.spotifyApi.dailyWarnExceeded ? "warn" : "default"}
           />
         </StatGrid>
       </StatPanel>

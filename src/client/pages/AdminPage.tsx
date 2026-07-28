@@ -10,6 +10,7 @@ import type {
   QueueItemView,
   QueueSnapshot,
   SearchResult,
+  SpotifyConnectDevice,
   TrackInfo,
 } from "@/shared/types";
 import { factoryDefaultGuestLimits } from "@/shared/types";
@@ -46,7 +47,7 @@ function startPlaybackBlockedReason(
     );
   }
   if (!status?.deviceActive) {
-    return "Start playback in the Spotify app on your desired device first, then try again.";
+    return "Playback is not active on the target device — try Turn ON again or refresh devices.";
   }
   if (status.isPlaying) {
     return "Playback is already running.";
@@ -68,7 +69,7 @@ function stopPlaybackBlockedReason(
     );
   }
   if (!status?.deviceActive) {
-    return "Start playback in the Spotify app on your desired device first, then try again.";
+    return "Playback is not active on the target device — try Turn ON again or refresh devices.";
   }
   if (status.isPlaying !== true) {
     return "Nothing is playing right now.";
@@ -189,6 +190,10 @@ export function AdminPage() {
     null,
   );
   const [resuming, setResuming] = React.useState(false);
+  const [spotifyDevices, setSpotifyDevices] = React.useState<SpotifyConnectDevice[]>([]);
+  const [loadingDevices, setLoadingDevices] = React.useState(false);
+  const [devicesError, setDevicesError] = React.useState<string | null>(null);
+  const [deletingParty, setDeletingParty] = React.useState(false);
   const selectedArchivedIdRef = React.useRef<string | null>(null);
   const createFormDirtyRef = React.useRef(false);
   const seedPlaylistsLoadRef = React.useRef(0);
@@ -333,6 +338,25 @@ export function AdminPage() {
     if (party || !status?.authenticated) return;
     void loadSeedPlaylists();
   }, [party, status?.authenticated, loadSeedPlaylists]);
+
+  const loadSpotifyDevices = React.useCallback(async () => {
+    setLoadingDevices(true);
+    setDevicesError(null);
+    try {
+      const data = await api<{ devices: SpotifyConnectDevice[] }>("/host/spotify/devices");
+      setSpotifyDevices(data.devices);
+    } catch (e) {
+      setSpotifyDevices([]);
+      setDevicesError(e instanceof Error ? e.message : "Failed to load devices");
+    } finally {
+      setLoadingDevices(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (!party || !status?.authenticated) return;
+    void loadSpotifyDevices();
+  }, [party?.id, status?.authenticated, loadSpotifyDevices]);
 
   async function selectArchivedParty(partyId: string) {
     selectedArchivedIdRef.current = partyId;
@@ -489,13 +513,68 @@ export function AdminPage() {
       ? "Choose a seed playlist or import a previous party track list."
       : null;
 
+  async function saveTargetDevice(deviceId: string | null) {
+    if (!party) return;
+    try {
+      setError(null);
+      await api(`/host/parties/${party.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ spotifyDeviceId: deviceId }),
+      });
+      await load();
+    } catch (e) {
+      setError(formatApiError(e));
+    }
+  }
+
+  async function deleteArchivedParty() {
+    if (!selectedArchivedId || !selectedArchivedParty) return;
+    if (
+      !confirm(
+        `Delete "${selectedArchivedParty.partyName}" permanently?\n\nThis removes the party record and deletes its bootstrap Spotify playlist if one exists.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      setDeletingParty(true);
+      setError(null);
+      await api(`/host/parties/${selectedArchivedId}`, { method: "DELETE" });
+      selectedArchivedIdRef.current = null;
+      setSelectedArchivedId(null);
+      setEndedExport(null);
+      setShowHistoryList(false);
+      setNotice("Party deleted.");
+      await load();
+    } catch (e) {
+      setError(formatApiError(e));
+    } finally {
+      setDeletingParty(false);
+    }
+  }
+
   async function toggleParty(on: boolean) {
     if (!party) return;
-    await api(`/host/parties/${party.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ status: on ? "on" : "off" }),
-    });
-    await load();
+    try {
+      setError(null);
+      const result = await api<{
+        ok: boolean;
+        bootstrapNotice?: string;
+      }>(`/host/parties/${party.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: on ? "on" : "off" }),
+      });
+      if (result.bootstrapNotice) {
+        setNotice(null);
+        setError(result.bootstrapNotice);
+      } else if (on) {
+        setError(null);
+        setNotice("Party is ON — guests can join.");
+      }
+      await load();
+    } catch (e) {
+      setError(formatApiError(e));
+    }
   }
 
   function clearHostSearch() {
@@ -669,16 +748,18 @@ export function AdminPage() {
           {status?.connected && status.authenticated ? (
             <>
               <p>Connected · expires {status.expiresAt}</p>
-              {!status.deviceActive && (
-                <div className="banner warn">
-                  No active Spotify device — start playback on a device. Guests
-                  can still queue.
-                </div>
-              )}
               {status.retryAfterMs != null && status.retryAfterMs > 0 && (
                 <div className="banner warn">
                   {status.lastError ??
                     `Spotify rate limited — retrying in ${Math.ceil(status.retryAfterMs / 1000)}s`}
+                </div>
+              )}
+              {!status.deviceActive &&
+                !(status.retryAfterMs != null && status.retryAfterMs > 0) && (
+                <div className="banner warn">
+                  No active playback on the target device — if the party is off,
+                  select a player below and Turn ON. If the party is already on,
+                  refresh devices or open Spotify on that speaker.
                 </div>
               )}
               {status.deviceRestricted && (
@@ -833,6 +914,14 @@ export function AdminPage() {
                       disabled={!endedExport?.tracks.length}
                     >
                       {showHistoryList ? "Hide" : "Show"} tracks
+                    </button>
+                    <button
+                      type="button"
+                      className="danger"
+                      onClick={() => void deleteArchivedParty()}
+                      disabled={deletingParty}
+                    >
+                      {deletingParty ? "Deleting…" : "Delete party"}
                     </button>
                   </div>
                 </div>
@@ -997,6 +1086,57 @@ export function AdminPage() {
               onDefaultGuestLimitsChange={setDefaultGuestLimits}
               onSaved={() => void load()}
             />
+            <div className="admin-device-picker">
+              <div className="admin-device-picker-header">
+                <h3>Target player</h3>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => void loadSpotifyDevices()}
+                  disabled={loadingDevices}
+                >
+                  {loadingDevices ? "Refreshing…" : "Refresh devices"}
+                </button>
+              </div>
+              {devicesError && <p className="error small">{devicesError}</p>}
+              {spotifyDevices.length === 0 && !loadingDevices && !devicesError ? (
+                <p className="small muted">
+                  No Spotify Connect devices found — open Spotify on your speaker or
+                  computer, then refresh.
+                </p>
+              ) : (
+                <div className="admin-device-list">
+                  {spotifyDevices.map((device) => (
+                    <label
+                      key={device.id}
+                      className={`admin-device-option${device.compatible ? "" : " admin-device-option--disabled"}`}
+                      title={device.incompatibleReason}
+                    >
+                      <input
+                        type="radio"
+                        name="target-device"
+                        value={device.id}
+                        checked={party.spotifyDeviceId === device.id}
+                        disabled={!device.compatible}
+                        onChange={() => void saveTargetDevice(device.id)}
+                      />
+                      <span>
+                        {device.name}
+                        {device.isActive ? " (active)" : ""}
+                        {!device.compatible && device.incompatibleReason
+                          ? ` — ${device.incompatibleReason}`
+                          : ""}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
+              {!party.spotifyDeviceId && (
+                <p className="small seed-playlist-status">
+                  Select a compatible player before turning the party ON.
+                </p>
+              )}
+            </div>
             <div className="party-controls">
               <button type="button" className="danger" onClick={() => void endParty()}>
                 End party
@@ -1017,7 +1157,12 @@ export function AdminPage() {
                   <button
                     type="button"
                     onClick={() => void toggleParty(true)}
-                    disabled={party.status === "on"}
+                    disabled={party.status === "on" || !party.spotifyDeviceId}
+                    title={
+                      !party.spotifyDeviceId
+                        ? "Select a target Spotify player first"
+                        : undefined
+                    }
                   >
                     Turn ON
                   </button>

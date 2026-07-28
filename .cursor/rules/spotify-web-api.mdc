@@ -9,7 +9,10 @@ alwaysApply: false
 - **OpenAPI**: Use https://developer.spotify.com/reference/web-api/open-api-schema.yaml for paths, params, and response fields. Do not guess.
 - **Auth**: Authorization Code flow on the server (secure backend). Never Implicit Grant. Never expose Client Secret client-side.
 - **Redirect URIs**: HTTPS in production; `http://127.0.0.1` only for local dev. Never `localhost` or wildcards.
-- **Scopes**: Request minimum scopes only (`user-modify-playback-state`, `user-read-playback-state`, `playlist-read-private`).
+- **Scopes**: Request minimum scopes only (`user-modify-playback-state`, `user-read-playback-state`, `playlist-read-private`, `playlist-modify-private`).
+- **Devices**: `GET /me/player/devices` for the host target-player picker; validate device IDs on PATCH.
+- **Bootstrap playlists**: `POST /me/playlists` (private), `POST /playlists/{id}/items`, `DELETE /playlists/{id}`; start playback with `PUT /me/player/play?device_id=…` and `{ context_uri, offset: { position: 0 } }`.
+- **Write targeting**: Pass `device_id` on `play`, `pause`, `POST /me/player/queue`, and `POST /me/player/next` while a party is active.
 - **Tokens**: Encrypt at rest; refresh access tokens; on refresh failure (`invalid_grant`) require re-authorization.
 - **Rate limits**: On 429, honor `Retry-After` header and JSON `retryAfter`; use exponential backoff on repeated 429s; never retry in tight loops.
 - **Endpoints**: Use `/playlists/{id}/items` not `/tracks`. Do not call `/artists/{id}/top-tracks` (403 in dev mode) — use `/search?q=artist:{name}&type=track` instead. Catalog search uses one batched `/search?type=track,artist` call; artist catalogs are seeded from track hits and LRU-evicted under load.

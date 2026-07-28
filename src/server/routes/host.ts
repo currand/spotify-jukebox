@@ -40,19 +40,31 @@ import {
   listMetricsSessions,
   listMetricsSnapshots,
 } from "../services/metrics-recorder";
-import { getSyncState, requestPartySync, forcePartySync, PartySyncError, resumePartyPlayback, pausePartyPlayback } from "../services/sync";
+import {
+  getSyncState,
+  requestPartySync,
+  forcePartySync,
+  PartySyncError,
+  resumePartyPlayback,
+  pausePartyPlayback,
+  markBootstrapPlaybackStarted,
+  refreshSyncPlayerSnapshot,
+} from "../services/sync";
+import { getPartyTargetDeviceId } from "../services/party";
 import {
   sanitizeErrorForPublicStatus,
   SpotifyApiError,
 } from "../services/spotify-errors";
 import {
   getPartyById,
+  getArchivedPartyById,
   isPartyOn,
   listArchivedParties,
   ResumePartyError,
   resumeParty,
   PARTY_OFF_RESPONSE,
 } from "../services/party";
+import { bootstrapSpotifyPlayback } from "../services/playback-bootstrap";
 import {
   cacheSpotifyTracksMetadata,
   getPartyArtistTracks,
@@ -309,6 +321,22 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     return c.json(defaults);
   });
 
+  authed.get("/spotify/devices", async (c) => {
+    try {
+      const devices = await spotify.getAvailableDevices();
+      return c.json({ devices });
+    } catch (e) {
+      if (e instanceof SpotifyApiError && e.status === 401) {
+        return c.json({ error: "Spotify not connected", code: "NOT_CONNECTED" }, 401);
+      }
+      console.error("Failed to list Spotify devices:", e);
+      return c.json(
+        { error: "Could not load devices", code: "SPOTIFY_ERROR" },
+        503,
+      );
+    }
+  });
+
   authed.get("/spotify/playlists", async (c) => {
     try {
       const playlists = await spotify.getUserPlaylists();
@@ -405,6 +433,25 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     const slug =
       body.slug?.trim() ||
       slugify(body.name) + "-" + Date.now().toString(36).slice(-4);
+
+    try {
+      const collision = await spotify.findUserPlaylistByName(body.name.trim());
+      if (collision) {
+        return c.json(
+          {
+            error: `A Spotify playlist named "${body.name.trim()}" already exists — choose a different party name or delete that playlist`,
+            code: "PLAYLIST_NAME_COLLISION",
+          },
+          409,
+        );
+      }
+    } catch (e) {
+      console.error("Party create playlist collision check failed:", e);
+      return c.json(
+        { error: "Could not verify party name with Spotify", code: "SPOTIFY_ERROR" },
+        503,
+      );
+    }
 
     db.run(
       `UPDATE parties SET status = 'archived', updated_at = ? WHERE status IN ('on', 'off')`,
@@ -575,6 +622,41 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     return c.json({ ...formatParty(party), guestCount });
   });
 
+  authed.delete("/parties/:id", async (c) => {
+    const partyId = c.req.param("id");
+    const party = getArchivedPartyById(db, partyId);
+    if (!party) {
+      return c.json(
+        { error: "Party not found or not archived", code: "NOT_FOUND" },
+        404,
+      );
+    }
+
+    const bootstrapId = (
+      db.query(`SELECT bootstrap_playlist_id FROM parties WHERE id = ?`).get(partyId) as
+        | { bootstrap_playlist_id: string | null }
+        | null
+    )?.bootstrap_playlist_id;
+
+    if (bootstrapId) {
+      try {
+        await spotify.deletePlaylist(bootstrapId);
+      } catch (e) {
+        console.error("Failed to delete bootstrap playlist:", e);
+        return c.json(
+          {
+            error: "Could not delete Spotify playlist — try again or remove it manually",
+            code: "PLAYLIST_DELETE_FAILED",
+          },
+          502,
+        );
+      }
+    }
+
+    deletePartyCascade(db, partyId);
+    return c.json({ ok: true });
+  });
+
   authed.post("/parties/:id/end", async (c) => {
     const partyId = c.req.param("id");
     const party = db
@@ -629,8 +711,11 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
       boostCap?: number | null;
       rateLimits?: PartyRateLimits;
       name?: string;
+      spotifyDeviceId?: string | null;
     };
-    const party = db.query(`SELECT * FROM parties WHERE id = ?`).get(id);
+    const party = db.query(`SELECT * FROM parties WHERE id = ?`).get(id) as
+      | Record<string, unknown>
+      | null;
     if (!party) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404);
 
     const configError = validatePartyConfigPatch(body);
@@ -638,9 +723,84 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
       return c.json({ error: configError.message, code: configError.code }, 400);
     }
 
+    if (body.spotifyDeviceId !== undefined) {
+      if (body.spotifyDeviceId === null) {
+        db.run(
+          `UPDATE parties SET target_spotify_device_id = NULL, updated_at = ? WHERE id = ?`,
+          [new Date().toISOString(), id],
+        );
+      } else {
+        try {
+          const devices = await spotify.getAvailableDevices();
+          const selected = devices.find((device) => device.id === body.spotifyDeviceId);
+          if (!selected) {
+            return c.json(
+              {
+                error: "Device not found — refresh the device list and try again",
+                code: "DEVICE_NOT_FOUND",
+              },
+              400,
+            );
+          }
+          if (!selected.compatible) {
+            return c.json(
+              {
+                error:
+                  selected.incompatibleReason ??
+                  "This device cannot be used for remote playback control",
+                code: "DEVICE_INCOMPATIBLE",
+              },
+              400,
+            );
+          }
+          db.run(
+            `UPDATE parties SET target_spotify_device_id = ?, updated_at = ? WHERE id = ?`,
+            [body.spotifyDeviceId, new Date().toISOString(), id],
+          );
+        } catch (e) {
+          console.error("Failed to validate Spotify device:", e);
+          return c.json(
+            { error: "Could not verify device with Spotify", code: "SPOTIFY_ERROR" },
+            503,
+          );
+        }
+      }
+    }
+
     const updates: string[] = [];
     const values: unknown[] = [];
     if (body.status) {
+      if (body.status === "on") {
+        const targetDeviceId = (
+          db.query(`SELECT target_spotify_device_id FROM parties WHERE id = ?`).get(id) as
+            | { target_spotify_device_id: string | null }
+            | null
+        )?.target_spotify_device_id;
+        const bootstrapId = (
+          db.query(`SELECT bootstrap_playlist_id FROM parties WHERE id = ?`).get(id) as
+            | { bootstrap_playlist_id: string | null }
+            | null
+        )?.bootstrap_playlist_id;
+        const needsBootstrap =
+          !bootstrapId ||
+          (
+            db
+              .query(
+                `SELECT COUNT(*) as count FROM queue_items
+                 WHERE party_id = ? AND status IN ('playing', 'queued')`,
+              )
+              .get(id) as { count: number }
+          ).count === 0;
+        if (needsBootstrap && !targetDeviceId) {
+          return c.json(
+            {
+              error: "Select a target Spotify player before turning the party on",
+              code: "DEVICE_REQUIRED",
+            },
+            400,
+          );
+        }
+      }
       updates.push("status = ?");
       values.push(body.status);
     }
@@ -669,7 +829,35 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     );
     if (body.status === "on") {
       purgeStalePartyGuests(db, id);
-      requestPartySync(db, id);
+      const bootstrap = await bootstrapSpotifyPlayback(db, spotify, id);
+      if ("ok" in bootstrap && bootstrap.ok) {
+        const targetDeviceId = getPartyTargetDeviceId(db, id);
+        if (targetDeviceId) {
+          let deviceName: string | null = null;
+          try {
+            const devices = await spotify.getAvailableDevices();
+            deviceName =
+              devices.find((device) => device.id === targetDeviceId)?.name ?? null;
+          } catch {
+            /* best-effort label */
+          }
+          markBootstrapPlaybackStarted(targetDeviceId, deviceName);
+          try {
+            await refreshSyncPlayerSnapshot(spotify);
+          } catch {
+            /* keep optimistic state until next sync tick */
+          }
+        }
+        requestPartySync(db, id);
+      } else if ("skipped" in bootstrap) {
+        requestPartySync(db, id);
+      } else if ("ok" in bootstrap && !bootstrap.ok) {
+        return c.json({
+          ok: true,
+          bootstrapNotice: bootstrap.message,
+          bootstrapCode: bootstrap.code,
+        });
+      }
     }
     return c.json({ ok: true });
   });
@@ -1139,6 +1327,7 @@ function formatParty(row: Record<string, unknown>) {
     downvoteThreshold: row.downvote_threshold,
     boostCap: row.boost_cap ?? null,
     seedPlaylistId: row.seed_playlist_id,
+    spotifyDeviceId: row.target_spotify_device_id ?? null,
     rateLimits: parseRateLimits(row.rate_limits as string),
     createdAt: row.created_at,
     updatedAt: row.updated_at,

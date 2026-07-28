@@ -124,7 +124,9 @@ The same value goes in `.env.production` as `SPOTIFY_REDIRECT_URI`. Its hostname
 
 For personal home use, leave the app in **Development mode** and add your Spotify account under **User Management → Add user**. That is the normal setup for a self-hosted party app — you are not publishing a public Spotify integration.
 
-**Required OAuth scopes** (requested automatically when you click Connect Spotify): `user-modify-playback-state`, `user-read-playback-state`, `playlist-read-private`.
+**Required OAuth scopes** (requested automatically when you click Connect Spotify): `user-modify-playback-state`, `user-read-playback-state`, `playlist-read-private`, `playlist-modify-private`.
+
+**After upgrading** from an older Jukebox version, click **Connect Spotify** once in admin so the host account grants the new playlist scope. Jukebox creates a private ephemeral playlist named after each party when you Turn ON, and deletes it when you delete an archived party.
 
 ### 5. Policy reminder
 
@@ -270,13 +272,15 @@ docker compose --profile default --profile tunnel \
 
 ## Running a party
 
-1. **Before guests arrive** — Open `/admin`, connect Spotify, create a party (name + seed playlist), configure downvote threshold and guest limits if you want stricter rules than defaults.
-2. **Start playback** — Open Spotify on your speaker, TV, or phone (Spotify Connect). Jukebox controls whichever device is currently active.
-3. **Share the party** — Show the QR code or copy the guest link. Guests set a display name, then search and interact.
-4. **During the party** — Toggle the party **on** to allow guest actions; **off** to freeze the queue. Use admin controls to skip, shuffle, or recover from a bad streak of adds.
-5. **Afterward** — Turn the party off. Stop the tunnel or container when you are done if it was publicly reachable.
+1. **Connect Spotify** — Open `/admin` and connect (re-connect once after upgrade for the `playlist-modify-private` scope).
+2. **Create a party** — Name + seed playlist. The party name must **not** match an existing Spotify playlist on your account (Jukebox creates a private playlist with that exact name when you go live).
+3. **Select target player** — In the party card, pick a compatible Spotify Connect device and **Refresh devices** if the list is empty (open Spotify on that speaker or computer first).
+4. **Turn party ON** — Jukebox creates a short bootstrap playlist on the selected device and starts playback, then sync keeps the virtual queue aligned.
+5. **Share the party** — Show the QR code or copy the guest link. Guests set a display name, then search and interact.
+6. **During the party** — Toggle **off** to freeze guest actions; use admin controls to skip, shuffle, or recover from a bad streak of adds.
+7. **Afterward** — End the party to archive it (resume later) or delete archived parties from **Previous parties** (removes the bootstrap Spotify playlist too).
 
-If no Spotify device is active, guests can still add and vote — you will see a warning in admin until you start playback somewhere.
+If bootstrap fails (device offline, name collision), admin shows a notice — refresh devices, fix the party name, or start playback manually in Spotify as a fallback.
 
 ---
 

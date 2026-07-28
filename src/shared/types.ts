@@ -108,6 +108,19 @@ export interface PartyView {
   downvoteThreshold: number;
   boostCap: number | null;
   rateLimits: PartyRateLimits;
+  /** Selected Spotify Connect device for playback (host setup). */
+  spotifyDeviceId?: string | null;
+}
+
+/** Spotify Connect device for host target-player picker. */
+export interface SpotifyConnectDevice {
+  id: string;
+  name: string;
+  type: string;
+  isActive: boolean;
+  isRestricted: boolean;
+  compatible: boolean;
+  incompatibleReason?: string;
 }
 
 export interface GuestMe {
