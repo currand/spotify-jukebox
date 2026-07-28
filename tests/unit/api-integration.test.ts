@@ -940,6 +940,69 @@ describe("API Integration: Display name requirements", () => {
     const data = await res.json();
     expect(data.displayName.length).toBe(48);
   });
+
+  test("similar name reclaim succeeds after confirmReclaim", async () => {
+    const existing = await joinParty(app, party.slug);
+    const existingToken = existing.body.sessionToken ?? existing.body.id;
+    const existingNameRes = await setDisplayName(
+      app,
+      party.slug,
+      existingToken,
+      "David Curran",
+    );
+    expect(existingNameRes.status).toBe(200);
+
+    const newcomer = await joinParty(app, party.slug);
+    const newcomerToken = newcomer.body.sessionToken ?? newcomer.body.id;
+
+    const promptRes = await setDisplayName(
+      app,
+      party.slug,
+      newcomerToken,
+      "David Curren",
+    );
+    expect(promptRes.status).toBe(409);
+    expect((await promptRes.json()).code).toBe("NAME_TAKEN");
+
+    const reclaimRes = await app.request(`/api/v1/parties/${party.slug}/me`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: `guest_session_${party.slug}=${newcomerToken}`,
+      },
+      body: JSON.stringify({
+        displayName: "David Curren",
+        confirmReclaim: true,
+      }),
+    });
+    expect(reclaimRes.status).toBe(200);
+    const reclaimed = await reclaimRes.json();
+    expect(reclaimed.id).toBe(existing.body.id);
+    expect(reclaimed.displayName).toBe("David Curran");
+  });
+
+  test("fuzzy name passes after confirmDistinctName", async () => {
+    const existing = await joinParty(app, party.slug);
+    const existingToken = existing.body.sessionToken ?? existing.body.id;
+    await setDisplayName(app, party.slug, existingToken, "David Curran");
+
+    const newcomer = await joinParty(app, party.slug);
+    const newcomerToken = newcomer.body.sessionToken ?? newcomer.body.id;
+
+    const distinctRes = await app.request(`/api/v1/parties/${party.slug}/me`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: `guest_session_${party.slug}=${newcomerToken}`,
+      },
+      body: JSON.stringify({
+        displayName: "David Curren",
+        confirmDistinctName: true,
+      }),
+    });
+    expect(distinctRes.status).toBe(200);
+    expect((await distinctRes.json()).displayName).toBe("David Curren");
+  });
 });
 
 function spike(arr: string[], prefix: string): boolean {

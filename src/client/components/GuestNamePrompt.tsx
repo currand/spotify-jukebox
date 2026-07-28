@@ -1,4 +1,5 @@
 import * as React from "react";
+import type { DisplayNameConflictKind } from "@/shared/dedup";
 import type { GuestMe } from "@/shared/types";
 import { ApiError, api } from "../http";
 import { setStoredGuestSession } from "../utils/guest-session";
@@ -12,10 +13,16 @@ export function GuestNamePrompt({
 }) {
   const [name, setName] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
-  const [nameTaken, setNameTaken] = React.useState<string | null>(null);
+  const [nameTaken, setNameTaken] = React.useState<{
+    existingName: string;
+    matchKind: DisplayNameConflictKind;
+  } | null>(null);
   const [saving, setSaving] = React.useState(false);
 
-  async function saveName(confirmReclaim = false) {
+  async function saveName(options?: {
+    confirmReclaim?: boolean;
+    confirmDistinctName?: boolean;
+  }) {
     const trimmed = name.trim();
     if (!trimmed) return;
     setSaving(true);
@@ -28,7 +35,11 @@ export function GuestNamePrompt({
         sessionToken?: string;
       }>(`/parties/${slug}/me`, {
         method: "PATCH",
-        body: JSON.stringify({ displayName: trimmed, confirmReclaim }),
+        body: JSON.stringify({
+          displayName: trimmed,
+          confirmReclaim: options?.confirmReclaim,
+          confirmDistinctName: options?.confirmDistinctName,
+        }),
       });
       if (result.sessionToken) {
         setStoredGuestSession(slug, result.sessionToken);
@@ -38,7 +49,10 @@ export function GuestNamePrompt({
       onSaved(profile);
     } catch (e) {
       if (e instanceof ApiError && e.code === "NAME_TAKEN") {
-        setNameTaken(trimmed);
+        setNameTaken({
+          existingName: e.displayName ?? trimmed,
+          matchKind: e.matchKind ?? "exact",
+        });
         setError(null);
       } else {
         setError(e instanceof Error ? e.message : "Could not save name");
@@ -60,14 +74,14 @@ export function GuestNamePrompt({
         {nameTaken ? (
           <div className="guest-name-taken">
             <p>
-              Someone named <strong>{nameTaken}</strong> is already here. Is
-              that you?
+              Someone named <strong>{nameTaken.existingName}</strong> is already
+              here. Is that you?
             </p>
             <div className="guest-name-taken-actions">
               <button
                 type="button"
                 disabled={saving}
-                onClick={() => void saveName(true)}
+                onClick={() => void saveName({ confirmReclaim: true })}
               >
                 Yes, that&apos;s me
               </button>
@@ -76,11 +90,17 @@ export function GuestNamePrompt({
                 className="secondary"
                 disabled={saving}
                 onClick={() => {
+                  if (nameTaken.matchKind === "fuzzy") {
+                    void saveName({ confirmDistinctName: true });
+                    return;
+                  }
                   setNameTaken(null);
                   setName("");
                 }}
               >
-                No, pick another name
+                {nameTaken.matchKind === "fuzzy"
+                  ? "No, that's not me"
+                  : "No, pick another name"}
               </button>
             </div>
           </div>

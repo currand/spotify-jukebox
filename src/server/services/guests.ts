@@ -1,6 +1,6 @@
 import type { Db } from "../db/schema";
 import type { GuestAdminView, GuestMySongView, QueueItemStatus } from "@/shared/types";
-import { isDuplicateDisplayName } from "@/shared/dedup";
+import { displayNameConflictKind, type DisplayNameConflictKind } from "@/shared/dedup";
 import {
   getNextUpcomingItem,
   getQueueItems,
@@ -177,13 +177,13 @@ interface NamedGuestRow {
   boost_used: number;
 }
 
-/** Find another guest with a case-insensitive / fuzzy matching display name. */
-export function findSimilarNamedGuest(
+/** Find another guest with an exact or similar display name. */
+export function findConflictingNamedGuest(
   db: Db,
   partyId: string,
   name: string,
   excludeGuestId: string,
-): NamedGuestRow | null {
+): (NamedGuestRow & { matchKind: DisplayNameConflictKind }) | null {
   const rows = db
     .query(
       `SELECT id, display_name, last_ip, session_token, boost_used FROM guests
@@ -191,10 +191,15 @@ export function findSimilarNamedGuest(
     )
     .all(partyId, excludeGuestId) as NamedGuestRow[];
 
-  const match = rows.find((row) =>
-    isDuplicateDisplayName(name, [row.display_name]),
-  );
-  return match ?? null;
+  let fuzzyMatch: (NamedGuestRow & { matchKind: "fuzzy" }) | null = null;
+  for (const row of rows) {
+    const kind = displayNameConflictKind(name, row.display_name);
+    if (kind === "exact") return { ...row, matchKind: "exact" };
+    if (kind === "fuzzy" && !fuzzyMatch) {
+      fuzzyMatch = { ...row, matchKind: "fuzzy" };
+    }
+  }
+  return fuzzyMatch;
 }
 
 /** Delete the anonymous guest and return the existing guest's session for reclaim. */

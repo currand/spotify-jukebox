@@ -1,3 +1,4 @@
+import type { DisplayNameConflictKind } from "@/shared/dedup";
 import {
   getStoredGuestSession,
   partySlugFromPath,
@@ -11,6 +12,7 @@ export class ApiError extends Error {
     message: string,
     readonly code?: string,
     readonly displayName?: string,
+    readonly matchKind?: DisplayNameConflictKind,
   ) {
     super(message);
     this.name = "ApiError";
@@ -43,8 +45,14 @@ export async function api<T>(
       error?: string;
       code?: string;
       displayName?: string;
+      matchKind?: DisplayNameConflictKind;
     };
-    throw new ApiError(err.error ?? res.statusText, err.code, err.displayName);
+    throw new ApiError(
+      err.error ?? res.statusText,
+      err.code,
+      err.displayName,
+      err.matchKind,
+    );
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
