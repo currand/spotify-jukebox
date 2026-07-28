@@ -1,5 +1,5 @@
 import type { Db } from "../db/schema";
-import type { ExportTrack, QueueItemStatus } from "@/shared/types";
+import type { DedupTrack, ExportTrack, QueueItemStatus } from "@/shared/types";
 import { isDuplicateTrack } from "@/shared/dedup";
 import { newId } from "../crypto";
 import type { TrackInfo } from "./spotify";
@@ -327,32 +327,32 @@ export function nextBoostPosition(db: Db, partyId: string): number {
   return (row.maxPos ?? -1) + 1;
 }
 
-export function getDedupTracks(
-  db: Db,
-  partyId: string,
-): { trackName: string; artistName: string; durationMs: number | null }[] {
+export function getDedupTracks(db: Db, partyId: string): DedupTrack[] {
   const active = db
     .query(
-      `SELECT track_name, artist_name, duration_ms FROM queue_items
+      `SELECT spotify_uri, track_name, artist_name, duration_ms FROM queue_items
        WHERE party_id = ? AND status IN ('pending', 'queued', 'playing')`,
     )
     .all(partyId) as {
+    spotify_uri: string;
     track_name: string;
     artist_name: string;
     duration_ms: number | null;
   }[];
   const recent = db
     .query(
-      `SELECT track_name, artist_name, duration_ms FROM queue_items
+      `SELECT spotify_uri, track_name, artist_name, duration_ms FROM queue_items
        WHERE party_id = ? AND status IN ('played', 'vetoed')
        ORDER BY finished_at DESC LIMIT 20`,
     )
     .all(partyId) as {
+    spotify_uri: string;
     track_name: string;
     artist_name: string;
     duration_ms: number | null;
   }[];
   return [...active, ...recent].map((r) => ({
+    spotifyUri: r.spotify_uri,
     trackName: r.track_name,
     artistName: r.artist_name,
     durationMs: r.duration_ms,
@@ -496,6 +496,7 @@ export function insertQueueItem(db: Db, input: InsertQueueItemInput): string {
             trackName: input.name,
             artistName: input.artistName,
             durationMs: input.durationMs,
+            spotifyUri: input.uri,
           },
           tracks,
         )

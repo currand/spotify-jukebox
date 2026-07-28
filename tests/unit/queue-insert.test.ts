@@ -105,4 +105,23 @@ describe("insertQueueItem", () => {
       }),
     ).toThrow(DuplicateQueueItemError);
   });
+
+  test("dedup blocks same URI with different display name", () => {
+    const db = testDb();
+    const uri = "spotify:track:5ubvP9oKmxLUVq506fgLhk";
+    insertQueueItem(db, {
+      ...track,
+      uri,
+      name: "Stayin Alive",
+      artistName: "Bee Gees",
+    });
+    expect(() =>
+      insertQueueItem(db, {
+        ...track,
+        uri,
+        name: 'Stayin\' Alive - From "Saturday Night Fever" Soundtrack',
+        artistName: "Bee Gees",
+      }),
+    ).toThrow(DuplicateQueueItemError);
+  });
 });

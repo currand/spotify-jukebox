@@ -7,6 +7,9 @@ const COSMETIC_SUFFIX =
   /\s*(?:[-–—]\s*)?(?:\([^)]*\)|\[[^\]]*\])\s*$/i;
 const COSMETIC_SUFFIX_KEYWORDS =
   /\b(?:remaster(?:ed)?|explicit|clean)\b/i;
+/** Strips trailing " - From \"…\" Soundtrack" style album/source labels. */
+const FROM_SOURCE_SUFFIX =
+  /\s*(?:[-–—]\s*)?from\s+(?:"[^"]*"|'[^']*')(?:\s+(?:original\s+)?(?:motion\s+picture\s+)?(?:soundtrack|album))?\s*$/i;
 
 export function normalizeTitle(title: string): string {
   return title
@@ -21,7 +24,7 @@ function stripCombiningMarks(text: string): string {
 }
 
 function stripCosmeticSuffixes(title: string): string {
-  let result = title.trim();
+  let result = title.trim().replace(FROM_SOURCE_SUFFIX, "").trim();
   for (let i = 0; i < 4; i++) {
     const match = result.match(COSMETIC_SUFFIX);
     if (!match) break;
@@ -118,11 +121,21 @@ export function isDuplicateTitle(
   });
 }
 
+function uriMatch(candidate: DedupTrack, entry: DedupTrack): boolean {
+  return (
+    candidate.spotifyUri != null &&
+    entry.spotifyUri != null &&
+    candidate.spotifyUri === entry.spotifyUri
+  );
+}
+
 export function isDuplicateTrack(
   candidate: DedupTrack,
   existing: DedupTrack[],
 ): boolean {
-  return existing.some((entry) => foldedMetadataMatch(candidate, entry));
+  return existing.some(
+    (entry) => uriMatch(candidate, entry) || foldedMetadataMatch(candidate, entry),
+  );
 }
 
 export function normalizeDisplayName(name: string): string {

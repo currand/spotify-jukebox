@@ -36,3 +36,4 @@ _(none currently)_
 ## Data integrity
 
 - [x] Duplicate add race (two tabs) — transaction + partial unique index on active `(party_id, spotify_uri)`
+- [x] Track dedup misses same URI / soundtrack suffixes (GH #17) — URI-first check + strip `- From "…" Soundtrack`

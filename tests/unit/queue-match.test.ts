@@ -41,6 +41,27 @@ describe("isTrackInPartyQueue", () => {
     ).toBe(true);
   });
 
+  test("matches recent history by Spotify URI even when title differs", () => {
+    const queue = {
+      nowPlaying: null,
+      boostLane: [],
+      upcoming: [],
+      dedupTracks: [
+        {
+          spotifyUri: "spotify:track:abc",
+          trackName: "Bohemian Rhapsody",
+          artistName: "Queen",
+        },
+      ],
+    };
+    expect(
+      isTrackInPartyQueue(
+        { uri: "spotify:track:abc", name: "Different Title", artistName: "X" },
+        queue,
+      ),
+    ).toBe(true);
+  });
+
   test("matches recent history by fuzzy title and artist", () => {
     const queue = {
       nowPlaying: null,
