@@ -2,6 +2,7 @@ import * as React from "react";
 import {
   ThumbsDownIcon,
   ThumbsUpIcon,
+  BoostButton,
 } from "./QueueUi";
 import { api } from "../http";
 
@@ -19,7 +20,7 @@ const STEPS = [
   {
     title: "Boost once per party",
     body: "Use your one boost to jump a song into the fast lane — higher upvotes play sooner there.",
-    icon: <span className="guest-tutorial-boost-icon">Boost</span>,
+    icon: <BoostButton disabled />,
   },
 ] as const;
 

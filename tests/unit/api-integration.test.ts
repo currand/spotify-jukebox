@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS queue_items (
   track_name TEXT NOT NULL, artist_name TEXT NOT NULL, album_art_url TEXT,
   upvote_count INTEGER NOT NULL DEFAULT 0, veto_count INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'pending', is_boosted INTEGER NOT NULL DEFAULT 0,
-  boost_position INTEGER, manual_order INTEGER, added_by_guest_id TEXT,
+  boost_position INTEGER, boosted_by_guest_id TEXT, manual_order INTEGER, added_by_guest_id TEXT,
   added_at TEXT NOT NULL, finished_at TEXT,
   from_seed INTEGER NOT NULL DEFAULT 0, from_spotify INTEGER NOT NULL DEFAULT 0,
   duration_ms INTEGER
@@ -752,6 +752,18 @@ describe("API Integration: Boost mechanics", () => {
     });
     const me = await meRes.json();
     expect(me.boostUsed).toBe(true);
+
+    const queueRes = await app.request(`/api/v1/parties/${party.slug}/queue`, {
+      headers: { Cookie: `guest_session_${party.slug}=${boosterToken}` },
+    });
+    const queue = await queueRes.json();
+    const boostedItem = [
+      ...(queue.boostLane ?? []),
+      ...(queue.upcoming ?? []),
+      ...(queue.upcomingOrder ?? []),
+    ].find((item: { id: string }) => item.id === targetId);
+    expect(boostedItem?.isBoosted).toBe(true);
+    expect(boostedItem?.boostedBy).toBe("Booster");
 
     // Second boost should fail (BOOST_USED)
     const boostRes2 = await boostTrack(app, party.slug, target2Id, boosterToken);

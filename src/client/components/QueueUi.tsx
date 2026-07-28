@@ -51,21 +51,50 @@ export function DownvoteCount({ count }: { count: number }) {
   );
 }
 
-export function BoostBadge() {
-  return <span className="boost-badge">Boosted</span>;
+export function BoostBadge({ boostedBy }: { boostedBy?: string | null }) {
+  return (
+    <span className="boost-indicator">
+      <span className="boost-badge">Boosted</span>
+      {boostedBy ? <span className="boost-by">by {boostedBy}</span> : null}
+    </span>
+  );
+}
+
+export function BoostButton({
+  disabled,
+  onClick,
+  className,
+}: {
+  disabled?: boolean;
+  onClick?: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      className={`boost-badge${disabled ? " boost-badge--disabled" : ""}${className ? ` ${className}` : ""}`}
+      aria-disabled={disabled}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      Boost
+    </button>
+  );
 }
 
 export function TrackTitle({
   name,
   boosted,
+  boostedBy,
 }: {
   name: string;
   boosted?: boolean;
+  boostedBy?: string | null;
 }) {
   return (
     <h3 className="track-title">
       <span className="track-title-name">{name}</span>
-      {boosted ? <BoostBadge /> : null}
+      {boosted ? <BoostBadge boostedBy={boostedBy} /> : null}
     </h3>
   );
 }
@@ -99,7 +128,7 @@ export function NowPlayingBanner({
           <strong>Now playing</strong>
           <div className="now-playing-title">
             <span className="track-title-name">{item.trackName}</span>
-            {item.isBoosted ? <BoostBadge /> : null}
+            {item.isBoosted ? <BoostBadge boostedBy={item.boostedBy} /> : null}
           </div>
           <div className="now-playing-sub">{item.artistName} · {item.addedBy}</div>
         </div>
@@ -128,7 +157,11 @@ export function UpNextLockedSection({
       <div className="track up-next-locked-track">
         {item.albumArtUrl && <img src={item.albumArtUrl} alt="" />}
         <div className="track-meta">
-          <TrackTitle name={item.trackName} boosted={item.isBoosted} />
+          <TrackTitle
+            name={item.trackName}
+            boosted={item.isBoosted}
+            boostedBy={item.boostedBy}
+          />
           <p>
             {item.artistName} · {item.addedBy} · <UpvoteCount count={item.upvoteCount} /> ·{" "}
             <DownvoteCount count={item.vetoCount} />
@@ -207,7 +240,11 @@ export function ReadOnlyQueueRow({ item }: { item: QueueItemView }) {
     >
       {item.albumArtUrl && <img src={item.albumArtUrl} alt="" />}
       <div className="track-meta">
-        <TrackTitle name={item.trackName} boosted={item.isBoosted} />
+        <TrackTitle
+          name={item.trackName}
+          boosted={item.isBoosted}
+          boostedBy={item.boostedBy}
+        />
         <p>
           {item.artistName} · {item.addedBy}
           {item.spotifyLocked ? " · Locked in Spotify" : ""}
@@ -247,7 +284,11 @@ export function AdminQueueRow({
     >
       {item.albumArtUrl && <img src={item.albumArtUrl} alt="" />}
       <div className="track-meta">
-        <TrackTitle name={item.trackName} boosted={item.isBoosted} />
+        <TrackTitle
+          name={item.trackName}
+          boosted={item.isBoosted}
+          boostedBy={item.boostedBy}
+        />
         <p>
           {item.artistName} · {item.addedBy} · <UpvoteCount count={item.upvoteCount} />
           {locked ? " · Locked in Spotify" : ""}

@@ -660,8 +660,8 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
 
     const pos = nextBoostPosition(db, party.id);
     db.run(
-      `UPDATE queue_items SET is_boosted = 1, boost_position = ?, status = 'pending' WHERE id = ?`,
-      [pos, itemId],
+      `UPDATE queue_items SET is_boosted = 1, boost_position = ?, boosted_by_guest_id = ?, status = 'pending' WHERE id = ?`,
+      [pos, guest.id, itemId],
     );
     db.run(`UPDATE guests SET boost_used = 1 WHERE id = ?`, [guest.id]);
     requestPartySync(db, party.id);
@@ -785,7 +785,7 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
     }
 
     db.run(
-      `UPDATE queue_items SET is_boosted = 0, boost_position = NULL, status = 'pending' WHERE id = ?`,
+      `UPDATE queue_items SET is_boosted = 0, boost_position = NULL, boosted_by_guest_id = NULL, status = 'pending' WHERE id = ?`,
       [itemId],
     );
     if (guest.boostUsed) {

@@ -4,6 +4,7 @@ import type { GuestMe, QueueItemView, QueueResponse, SearchResult, TrackInfo } f
 import { getSearchTrackQueueState } from "@/shared/queue-match";
 import {
   formatApiError,
+  BoostButton,
   NowPlayingBanner,
   SearchFilterChips,
   SearchNav,
@@ -418,9 +419,13 @@ function GuestApp({ slug }: { slug: string }) {
         />
       )}
 
-      {!queue?.nowPlaying && !upNext && (
-          <div className="banner warn">Add something!</div>
-        )}
+      {queue == null && !showingSearch && (
+        <p className="small guest-queue-loading">Loading queue…</p>
+      )}
+
+      {queue != null && !queue.nowPlaying && !upNext && (
+        <div className="banner warn">Add something!</div>
+      )}
 
       {me?.quota && (
         <p className="small">
@@ -561,14 +566,7 @@ function QueueRowActions({
       >
         <ThumbsDownIcon />
       </button>
-      <button
-        type="button"
-        className={`boost-action${boostDisabled ? " boost-action--disabled" : ""}`}
-        aria-disabled={boostDisabled}
-        onClick={handleBoost}
-      >
-        Boost
-      </button>
+      <BoostButton disabled={boostDisabled} onClick={handleBoost} />
     </>
   );
 }
@@ -605,7 +603,11 @@ function QueueRow({
     >
       {item.albumArtUrl && <img src={item.albumArtUrl} alt="" />}
       <div className="track-meta">
-        <TrackTitle name={item.trackName} boosted={item.isBoosted} />
+        <TrackTitle
+          name={item.trackName}
+          boosted={item.isBoosted}
+          boostedBy={item.boostedBy}
+        />
         <p>
           {item.artistName} · {item.addedBy} · <UpvoteCount count={item.upvoteCount} /> ·{" "}
           <DownvoteCount count={item.vetoCount} />

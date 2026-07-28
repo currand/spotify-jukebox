@@ -14,6 +14,7 @@ const base = (overrides: Partial<QueueItemRow>): QueueItemRow => ({
   status: "pending",
   is_boosted: 0,
   boost_position: null,
+  boosted_by_guest_id: null,
   manual_order: null,
   added_by_guest_id: null,
   from_seed: 0,

@@ -2,7 +2,7 @@
 
 ## General UI
 
-- [x] Flash of "Party is paused" when navigating My Songs → Queue (GH #6) — fixed: only show paused banner when party status is known
+- [x] Flash of "Party is paused" when navigating My Songs → Queue (GH #6, #18) — only show paused/empty banners after queue loads
 
 ## Guest Search
 

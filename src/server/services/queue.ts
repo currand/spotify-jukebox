@@ -16,6 +16,7 @@ export interface QueueItemRow {
   status: QueueItemStatus;
   is_boosted: number;
   boost_position: number | null;
+  boosted_by_guest_id: string | null;
   manual_order: number | null;
   added_by_guest_id: string | null;
   from_seed: number;
@@ -24,6 +25,7 @@ export interface QueueItemRow {
   finished_at: string | null;
   duration_ms: number | null;
   guest_display_name?: string | null;
+  booster_display_name?: string | null;
 }
 
 const ACTIVE_STATUSES: QueueItemStatus[] = ["pending", "queued", "playing"];
@@ -37,9 +39,10 @@ export function getQueueItems(
     const placeholders = statuses.map(() => "?").join(", ");
     return db
       .query(
-        `SELECT q.*, g.display_name as guest_display_name
+        `SELECT q.*, g.display_name as guest_display_name, bg.display_name as booster_display_name
          FROM queue_items q
          LEFT JOIN guests g ON g.id = q.added_by_guest_id
+         LEFT JOIN guests bg ON bg.id = q.boosted_by_guest_id
          WHERE q.party_id = ? AND q.status IN (${placeholders})
          ORDER BY q.added_at ASC`,
       )
@@ -47,9 +50,10 @@ export function getQueueItems(
   }
   return db
     .query(
-      `SELECT q.*, g.display_name as guest_display_name
+      `SELECT q.*, g.display_name as guest_display_name, bg.display_name as booster_display_name
        FROM queue_items q
        LEFT JOIN guests g ON g.id = q.added_by_guest_id
+       LEFT JOIN guests bg ON bg.id = q.boosted_by_guest_id
        WHERE q.party_id = ?
        ORDER BY q.added_at ASC`,
     )
@@ -392,6 +396,8 @@ export function toQueueItemView(row: QueueItemRow) {
     status: row.status,
     isBoosted: row.is_boosted === 1,
     boostPosition: row.boost_position,
+    boostedBy:
+      row.is_boosted === 1 ? (row.booster_display_name ?? null) : null,
     addedBy,
     addedByGuestId: row.added_by_guest_id,
     addedAt: row.added_at,
