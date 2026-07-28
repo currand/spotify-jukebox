@@ -9,6 +9,7 @@ import {
 import { getSpotifyApiBudgetSnapshot } from "./spotify-api-budget";
 import { getSearchCacheSnapshot, getPartySearchBudgetSnapshot, normalizeRateLimits } from "./spotify-search";
 import { getSyncState } from "./sync";
+import { getLimitHitMetricsSnapshot } from "./limit-metrics";
 import { getCurrentMetricsSessionId } from "./metrics-recorder";
 
 export interface BuildHostDiagnosticsOptions {
@@ -69,6 +70,7 @@ export function buildHostDiagnostics(
     partySearchBudget: partyId
       ? getPartySearchBudgetSnapshot(partyId, partySearchLimit)
       : null,
+    guestLimits: getLimitHitMetricsSnapshot(),
     sessionId: getCurrentMetricsSessionId(),
   };
 }

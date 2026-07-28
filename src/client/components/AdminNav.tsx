@@ -46,7 +46,7 @@ export function AdminNav({
         to="/admin/diagnostics"
         className={`admin-nav-link${onDiagnostics ? " admin-nav-link--active" : ""}`}
       >
-        Diagnostics
+        Stats
       </Link>
     </nav>
   );

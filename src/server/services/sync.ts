@@ -230,7 +230,12 @@ export function dedupeSpotifyQueueTracks(
   return deduped;
 }
 
-const TERMINAL_STATUSES: QueueItemRow["status"][] = ["played", "skipped", "vetoed"];
+const TERMINAL_STATUSES: QueueItemRow["status"][] = [
+  "played",
+  "skipped",
+  "vetoed",
+  "unblocked",
+];
 
 /** True when this URI already finished in the virtual queue (Spotify padding may still report it). */
 export function isTerminalQueueUri(items: QueueItemRow[], uri: string): boolean {

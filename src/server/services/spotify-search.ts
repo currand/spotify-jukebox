@@ -7,6 +7,7 @@ import {
   type RateLimitAction,
 } from "./rate-limit";
 import { recordSearchActivity } from "./spotify-metrics";
+import { recordLimitHit } from "./limit-metrics";
 import {
   pickArtistSearchTracks,
   trackFromSpotify,
@@ -434,6 +435,7 @@ function assertSearchAllowed(
   const normalized = normalizeRateLimits(limits);
   const partyRl = checkPartySearchLimit(partyId, normalized.partySearch);
   if (!partyRl.allowed) {
+    recordLimitHit("party_search");
     throw new SpotifySearchRateLimitedError(partyRl.retryAfterMs);
   }
   if (guestId) {
@@ -444,6 +446,7 @@ function assertSearchAllowed(
       normalized,
     );
     if (!guestRl.allowed) {
+      recordLimitHit("guest_search");
       throw new SpotifySearchRateLimitedError(guestRl.retryAfterMs ?? 0);
     }
   }
