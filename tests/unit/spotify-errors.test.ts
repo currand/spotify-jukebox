@@ -3,6 +3,7 @@ import {
   computeRateLimitBackoffMs,
   formatSpotifyErrorForUser,
   getSpotifyRetryAfterMs,
+  isPlaybackRestrictionError,
   isSpotifyRateLimitError,
   parseRetryAfterFromBody,
   parseRetryAfterHeader,
@@ -136,6 +137,38 @@ describe("formatSpotifyErrorForUser", () => {
         ),
       ),
     ).toBe("Restricted device");
+  });
+});
+
+describe("isPlaybackRestrictionError", () => {
+  test("detects Restricted device", () => {
+    expect(
+      isPlaybackRestrictionError(
+        new Error(
+          'SPOTIFY_403:{"error":{"status":403,"message":"Restricted device"}}',
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  test("detects Restriction violated", () => {
+    expect(
+      isPlaybackRestrictionError(
+        new Error(
+          'SPOTIFY_403:{"error":{"status":403,"message":"Player command failed: Restriction violated","reason":"UNKNOWN"}}',
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  test("ignores unrelated 403 errors", () => {
+    expect(
+      isPlaybackRestrictionError(
+        new Error(
+          'SPOTIFY_403:{"error":{"status":403,"message":"Insufficient client scope"}}',
+        ),
+      ),
+    ).toBe(false);
   });
 });
 

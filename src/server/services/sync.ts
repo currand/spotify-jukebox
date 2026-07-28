@@ -24,6 +24,7 @@ import {
   formatSpotifyErrorForUser,
   getSpotifyRetryAfterMs,
   isNoActiveDeviceError,
+  isPlaybackRestrictionError,
   isRestrictedDeviceError,
   isSpotifyRateLimitError,
   isSpotifyReauthRequired,
@@ -36,7 +37,7 @@ const SYNC_MAX_SLEEP_MS = 5 * 60_000;
 const SYNC_NEAR_END_MIN_MS = 1_000;
 
 const RESTRICTED_DEVICE_HINT =
-  "This device doesn't support Spotify's queue API — use the Spotify app on your phone or computer.";
+  "This device doesn't support remote playback control — use the Spotify app on your phone or computer.";
 
 export interface PlaybackTiming {
   currentUri: string | null;
@@ -90,6 +91,7 @@ const partyLastSyncedGeneration = new Map<string, number>();
 let consecutiveRateLimitHits = 0;
 let syncWorkerTimer: ReturnType<typeof setTimeout> | null = null;
 let syncWorkerTick: (() => void) | null = null;
+let activeDeviceId: string | null = null;
 
 let syncPollingConfig: SyncPollingConfig = {
   syncFastPoll: false,
@@ -471,6 +473,10 @@ export function currentlyPlayingFromSnapshot(
   const active = findActiveQueueItemByUri(items, snapshot.currentUri);
   if (active) return queueItemToCurrentlyPlaying(active);
 
+  if (isTerminalQueueUri(items, snapshot.currentUri)) {
+    return null;
+  }
+
   if (queueData.currentlyPlaying?.uri === snapshot.currentUri) {
     return queueData.currentlyPlaying;
   }
@@ -516,7 +522,7 @@ export function getSyncState(): SyncState {
 
 function restrictedMessage(deviceName: string | null): string {
   if (deviceName) {
-    return `${deviceName} doesn't support Spotify's queue API — use the Spotify app on your phone or computer.`;
+    return `${deviceName} doesn't support remote playback control — use the Spotify app on your phone or computer.`;
   }
   return RESTRICTED_DEVICE_HINT;
 }
@@ -604,6 +610,7 @@ function applyPlayerSnapshot(snapshot: PlayerSnapshot): void {
   if (!isRateLimited()) {
     consecutiveRateLimitHits = 0;
   }
+  activeDeviceId = snapshot.deviceId;
   const capturedAt = Date.now();
   syncState = {
     ...syncState,
@@ -730,6 +737,88 @@ export class PartySyncError extends Error {
   ) {
     super(message);
     this.name = "PartySyncError";
+  }
+}
+
+export type PlaybackControlResult =
+  | { ok: true }
+  | { ok: false; code: string; message: string; status: number };
+
+async function refreshPlayerSnapshot(
+  spotify: SpotifyClient,
+): Promise<PlayerSnapshot | null> {
+  try {
+    const snapshot = await spotify.getPlayerSnapshot();
+    applyPlayerSnapshot(snapshot);
+    return snapshot;
+  } catch {
+    return null;
+  }
+}
+
+async function handlePlaybackRestriction(
+  spotify: SpotifyClient,
+  error: unknown,
+  desiredPlaying: boolean,
+  fallbackMessage: string,
+): Promise<PlaybackControlResult> {
+  const snapshot = await refreshPlayerSnapshot(spotify);
+  if (snapshot && snapshot.isPlaying === desiredPlaying) {
+    return { ok: true };
+  }
+  if (snapshot?.deviceRestricted) {
+    return {
+      ok: false,
+      code: "DEVICE_RESTRICTED",
+      message: restrictedMessage(snapshot.deviceName),
+      status: 403,
+    };
+  }
+  return {
+    ok: false,
+    code: "SPOTIFY_ERROR",
+    message: formatSpotifyErrorForUser(error) ?? fallbackMessage,
+    status: 502,
+  };
+}
+
+/** Resume Spotify playback on the active device, recovering from stale state. */
+export async function resumePartyPlayback(
+  spotify: SpotifyClient,
+): Promise<PlaybackControlResult> {
+  try {
+    await spotify.play(activeDeviceId);
+    return { ok: true };
+  } catch (e) {
+    if (!isPlaybackRestrictionError(e)) {
+      return {
+        ok: false,
+        code: "SPOTIFY_ERROR",
+        message: formatSpotifyErrorForUser(e) ?? "Play failed",
+        status: 502,
+      };
+    }
+    return handlePlaybackRestriction(spotify, e, true, "Play failed");
+  }
+}
+
+/** Pause Spotify playback on the active device, recovering from stale state. */
+export async function pausePartyPlayback(
+  spotify: SpotifyClient,
+): Promise<PlaybackControlResult> {
+  try {
+    await spotify.pause(activeDeviceId);
+    return { ok: true };
+  } catch (e) {
+    if (!isPlaybackRestrictionError(e)) {
+      return {
+        ok: false,
+        code: "SPOTIFY_ERROR",
+        message: formatSpotifyErrorForUser(e) ?? "Pause failed",
+        status: 502,
+      };
+    }
+    return handlePlaybackRestriction(spotify, e, false, "Pause failed");
   }
 }
 
@@ -1095,6 +1184,9 @@ async function reconcilePlayingState(
   let match = findActiveQueueItemByUri(freshItems, current.uri);
 
   if (!match) {
+    if (isTerminalQueueUri(freshItems, current.uri)) {
+      return;
+    }
     const id = adoptSpotifyTrack(db, partyId, trackFromSpotify(current), "playing");
     db.run(
       `UPDATE queue_items SET status = 'pending'
@@ -1170,6 +1262,7 @@ export function resetSyncStateForTests(): void {
     clearTimeout(syncWorkerTimer);
     syncWorkerTimer = null;
   }
+  activeDeviceId = null;
   setSpotifyRateLimitHandler(null);
   setSpotifyRateLimitedGate(null);
   syncState = {

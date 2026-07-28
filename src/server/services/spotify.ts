@@ -32,6 +32,7 @@ export interface PlayerSnapshot {
   deviceActive: boolean;
   isPlaying: boolean;
   deviceRestricted: boolean;
+  deviceId: string | null;
   deviceName: string | null;
   currentUri: string | null;
   progressMs: number | null;
@@ -77,8 +78,8 @@ export interface SpotifyClient {
   getQueue(): Promise<{ currentlyPlaying: SpotifyTrack | null; queue: SpotifyTrack[] }>;
   addToQueue(uri: string): Promise<void>;
   skipNext(): Promise<void>;
-  play(): Promise<void>;
-  pause(): Promise<void>;
+  play(deviceId?: string | null): Promise<void>;
+  pause(deviceId?: string | null): Promise<void>;
   /** @deprecated use getPlayerSnapshot */
   getPlaybackState(): Promise<{
     deviceActive: boolean;
@@ -188,11 +189,17 @@ function emptyPlayerSnapshot(): PlayerSnapshot {
     deviceActive: false,
     isPlaying: false,
     deviceRestricted: false,
+    deviceId: null,
     deviceName: null,
     currentUri: null,
     progressMs: null,
     durationMs: null,
   };
+}
+
+function playerControlPath(base: string, deviceId?: string | null): string {
+  if (!deviceId) return base;
+  return `${base}?device_id=${encodeURIComponent(deviceId)}`;
 }
 
 function playbackTimingFromBody(data: {
@@ -413,6 +420,7 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
       deviceActive: true,
       isPlaying: Boolean(data.is_playing),
       deviceRestricted: false,
+      deviceId: null,
       deviceName: null,
       currentUri: data.item.uri,
       ...playbackTimingFromBody(data),
@@ -455,6 +463,7 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
         deviceActive: true,
         isPlaying: false,
         deviceRestricted: true,
+        deviceId: null,
         deviceName: null,
         currentUri: null,
         progressMs: null,
@@ -474,6 +483,7 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
       deviceActive: isPlaybackActive(device, data.item),
       isPlaying: Boolean(data.is_playing),
       deviceRestricted,
+      deviceId: device?.id ?? null,
       deviceName: device?.name ?? null,
       currentUri: data.item?.uri ?? null,
       ...playbackTimingFromBody(data),
@@ -624,12 +634,12 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
       await apiVoid("/me/player/next", { method: "POST" });
     },
 
-    async play() {
-      await apiVoid("/me/player/play", { method: "PUT" });
+    async play(deviceId) {
+      await apiVoid(playerControlPath("/me/player/play", deviceId), { method: "PUT" });
     },
 
-    async pause() {
-      await apiVoid("/me/player/pause", { method: "PUT" });
+    async pause(deviceId) {
+      await apiVoid(playerControlPath("/me/player/pause", deviceId), { method: "PUT" });
     },
 
     async getPlaybackState() {

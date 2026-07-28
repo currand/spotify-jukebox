@@ -82,6 +82,7 @@ function createMockSpotify(): SpotifyClient & {
       deviceActive: true,
       isPlaying: true,
       deviceRestricted: false,
+      deviceId: "test-device",
       deviceName: "Test Speaker",
       currentUri: null,
       progressMs: null,
@@ -133,11 +134,11 @@ function createMockSpotify(): SpotifyClient & {
     async skipNext() {
       state._apiCalls.push("skipNext");
     },
-    async play() {
-      state._apiCalls.push("play");
+    async play(deviceId?: string | null) {
+      state._apiCalls.push(deviceId ? `play:${deviceId}` : "play");
     },
-    async pause() {
-      state._apiCalls.push("pause");
+    async pause(deviceId?: string | null) {
+      state._apiCalls.push(deviceId ? `pause:${deviceId}` : "pause");
     },
     async getPlaybackState() {
       return { deviceActive: state._snapshot.deviceActive, isPlaying: state._snapshot.isPlaying, deviceRestricted: state._snapshot.deviceRestricted, deviceName: state._snapshot.deviceName };

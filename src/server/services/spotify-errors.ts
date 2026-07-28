@@ -182,10 +182,19 @@ export function isSpotifyReauthRequired(error: unknown): boolean {
   return message === "SPOTIFY_REAUTH_REQUIRED";
 }
 
-export function isRestrictedDeviceError(error: unknown): boolean {
+export function isPlaybackRestrictionError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   const { status, spotifyMessage } = parseSpotifyError(message);
-  return status === 403 && spotifyMessage === "Restricted device";
+  if (status !== 403 || !spotifyMessage) return false;
+  return (
+    spotifyMessage === "Restricted device" ||
+    /restriction violated/i.test(spotifyMessage)
+  );
+}
+
+/** @deprecated Use isPlaybackRestrictionError */
+export function isRestrictedDeviceError(error: unknown): boolean {
+  return isPlaybackRestrictionError(error);
 }
 
 export function isNoActiveDeviceError(error: unknown): boolean {
