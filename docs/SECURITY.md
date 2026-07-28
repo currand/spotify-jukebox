@@ -41,19 +41,28 @@ Generate strong values:
 
 ```bash
 openssl rand -hex 32   # ENCRYPTION_KEY (required in production, ≥ 32 characters)
-openssl rand -hex 16   # HOST_SETUP_TOKEN (required in production)
+openssl rand -hex 16   # HOST_SETUP_TOKEN (when required — see below)
 ```
 
 ## HOST_SETUP_TOKEN
 
-Gates **host Spotify OAuth** in production so visitors who find your tunnel URL cannot connect their Spotify account and take over admin.
+Gates **host Spotify OAuth** in production so visitors who find your public URL cannot connect their Spotify account and take over admin.
+
+**Not required** when any of these apply:
+
+- Server binds to **`127.0.0.1` only** (`BIND_HOST=127.0.0.1`) — localhost-only deployment
+- **`BASE_URL`** uses `http://127.0.0.1` — local production without network exposure
+- **`CLOUDFLARE_TUNNEL=1`** — Cloudflare Tunnel profile (`docker-compose.tunnel.yml` overlay); use Cloudflare Access or your own frontend for admin protection instead
+- **`DISABLE_HOST_SETUP_TOKEN=1`** — explicit opt-out
+
+When required:
 
 1. Add to `.env.production`: `HOST_SETUP_TOKEN=<value from openssl rand -hex 16>`
 2. Restart: `docker compose up -d`
 3. Open `/admin` → paste the same value in **Host setup token**
 4. Click **Connect Spotify**
 
-Guests never need this token. Optional in development (`bun run dev`).
+Guests never need this token. Optional in local development — see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 If the token leaks, generate a new one, update `.env.production`, restart, and use the new value in admin.
 
@@ -61,7 +70,7 @@ If the token leaks, generate a new one, update `.env.production`, restart, and u
 
 | Control | What it does |
 |---|---|
-| `HOST_SETUP_TOKEN` | Required in production. Spotify OAuth login URL must include `?token=…` or `X-Host-Setup-Token` header. |
+| `HOST_SETUP_TOKEN` | Required in production except localhost-only (`BIND_HOST=127.0.0.1`), `BASE_URL` on `127.0.0.1`, or Cloudflare tunnel. OAuth login URL must include `?token=…` or `X-Host-Setup-Token` header when enabled. |
 | Host session cookie | `httpOnly`, `secure`, `SameSite=Lax`. Admin API requires valid session. |
 | Guest session cookie | Same cookie flags; per-party cookie name. |
 | CORS | Production API only accepts credentialed requests from `BASE_URL`. |
@@ -83,7 +92,7 @@ When the tunnel is **up**:
 ## Known trade-offs
 
 - **Guest sessions in production** no longer return `sessionToken` in JSON (cookie-only). Safari/in-app browser users should use “Open in Safari” so the httpOnly cookie persists.
-- **Host OAuth** is protected by `HOST_SETUP_TOKEN`, not a full user account system — sufficient for a single-host home deployment.
+- **Host OAuth** is protected by `HOST_SETUP_TOKEN` when enabled (public deployments). Localhost-only and Cloudflare tunnel modes skip it — use network isolation or Cloudflare Access instead.
 - **No IP limits on guest party APIs** — 50+ guests on the same Wi‑Fi share one public IP; per-guest action quotas still apply.
 - **IP rate limits** on probe guard are in-memory per container; they reset on restart.
 
@@ -91,7 +100,7 @@ When the tunnel is **up**:
 
 1. Pause or end the party from admin.
 2. Stop the tunnel (`docker compose stop cloudflared` or disable in Cloudflare).
-3. Rotate `HOST_SETUP_TOKEN` and restart.
+3. Rotate `HOST_SETUP_TOKEN` and restart (if you use one).
 4. If you suspect host takeover, rotate Spotify app secret and `ENCRYPTION_KEY` (requires re-auth and clears encrypted tokens).
 
 ## Reporting

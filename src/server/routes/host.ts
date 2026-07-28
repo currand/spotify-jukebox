@@ -278,6 +278,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     return c.json({
       connected: Boolean(creds),
       authenticated,
+      hostSetupTokenRequired: config.hostSetupTokenRequired,
       expiresAt: creds?.expires_at ?? null,
       deviceActive: sync.deviceActive,
       isPlaying: sync.isPlaying,

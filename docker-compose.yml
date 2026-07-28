@@ -1,11 +1,19 @@
-# Jukebox runtime — one compose file, optional profiles:
+# Jukebox runtime — Docker Compose profiles:
 #
-#   bun run docker:up              # prod (profile: default)
-#   bun run docker:up:tunnel         # prod + cloudflared (profiles: default,tunnel)
-#   bun run docker:up:mock           # dev + spotify-mock (profile: mock)
-#   bun run docker:up:registry       # prod from JUKEBOX_IMAGE in .env
+#   docker compose --profile default up --build -d
+#     Production (port 3000 exposed)
 #
-# Compose interpolation vars live in .env (see .env.example).
+#   docker compose --profile default --profile tunnel \
+#     -f docker-compose.yml -f docker-compose.tunnel.yml up --build -d
+#     Production + Cloudflare tunnel (no host port)
+#
+#   docker compose --profile mock up --build -d
+#     Mock Spotify sidecar (no real Spotify credentials)
+#
+#   docker compose --profile default --env-file .env up -d
+#     Run pre-built image from JUKEBOX_IMAGE in .env
+#
+# Compose interpolation vars: .env (see .env.example)
 
 services:
   jukebox:

@@ -193,6 +193,8 @@ export interface SearchResult {
 export interface HostSpotifyStatus {
   connected: boolean;
   authenticated: boolean;
+  /** When false, Connect Spotify works without entering HOST_SETUP_TOKEN. */
+  hostSetupTokenRequired: boolean;
   expiresAt: string | null;
   deviceActive: boolean;
   isPlaying: boolean;

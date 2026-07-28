@@ -161,6 +161,8 @@ function testConfig(): Config {
     spotifyRedirectUri: "http://127.0.0.1:3000/api/v1/host/spotify/callback",
     encryptionKey: "dev-only-change-me-dev-only-chang",
     hostSetupToken: null,
+    hostSetupTokenRequired: false,
+    bindHost: "127.0.0.1",
     isProduction: false,
     secureCookies: false,
     spotifyApiBudgetCount: 90,

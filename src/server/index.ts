@@ -94,8 +94,7 @@ startMetricsRecorder(db, () => {
   });
 });
 
-const bindHost =
-  config.isProduction || config.spotifyMode === "mock" ? "0.0.0.0" : "127.0.0.1";
+const bindHost = config.bindHost;
 if (process.env.DEBUG) {
   const namespaces = ["spotify", "sync"].filter(isDebugEnabled);
   console.log(

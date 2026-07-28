@@ -18,6 +18,8 @@ const testConfig: Config = {
   spotifyRedirectUri: "http://127.0.0.1:3000/callback",
   encryptionKey: "01234567890123456789012345678901",
   hostSetupToken: null,
+  hostSetupTokenRequired: false,
+  bindHost: "127.0.0.1",
   isProduction: false,
   secureCookies: false,
   spotifyApiBudgetCount: 90,

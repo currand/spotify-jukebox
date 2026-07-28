@@ -1,12 +1,12 @@
 # Jukebox Endurance Test — Issues Found
 **Date:** 2026-07-26
-**Test environment:** Production (self-hosted deployment) or local mock stack (`bun run docker:up:mock`)
+**Test environment:** Production (self-hosted deployment) or local mock stack (`docker compose --profile mock up --build -d`)
 **Party:** test-1-v5vu ("Test 1")
 **Duration:** ~20 minutes of actual test runtime across multiple runs
 
-> **Recommendation:** Use `bun run docker:up:mock` and `JUKEBOX_BASE_URL=http://127.0.0.1:3000` for load/endurance runs to avoid Spotify rate limits. Reserve production + real Spotify for occasional integration checks.
+> **Recommendation:** Use `docker compose --profile mock up --build -d` and `JUKEBOX_BASE_URL=http://127.0.0.1:3000` for load/endurance runs to avoid Spotify rate limits. Reserve production + real Spotify for occasional integration checks. Endurance scripts require Bun — see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
-**Canonical script:** `bun run endurance` ([`scripts/endurance.ts`](../scripts/endurance.ts)) — phased party sim with joins spread over `--join-window-min` (default 60), standard guest/host routes only, 10s diagnostics poll, JSON report with `firstBlock` (outbound call index at first Spotify 429).
+**Canonical script:** `bun run endurance` ([`scripts/endurance.ts`](../scripts/endurance.ts)) — phased party sim with joins spread over `--join-window-min` (default 60), standard guest/host routes only, 10s diagnostics poll, JSON report with `firstBlock` (outbound call index at first Spotify 429). See [CONTRIBUTING.md](../CONTRIBUTING.md) for usage.
 
 ---
 
@@ -102,7 +102,7 @@
 ## Recommendations for next test run
 
 1. **Wait for rate limits to fully clear** (at least 5 minutes after last 429)
-2. **Use `bun run endurance`** with default phased behavior and 60-minute join window
+2. **Use `bun run endurance`** with default phased behavior and 60-minute join window (see [CONTRIBUTING.md](../CONTRIBUTING.md))
 3. **Optional:** `join-guests.ts` + `--guests-file` to reuse sessions across runs
 4. **Dev smoke:** `--guests 5 --join-window-min 5` against mock stack
 5. **Monitor `firstBlock`** in the JSON report or Admin diagnostics — records outbound call # at first 429
