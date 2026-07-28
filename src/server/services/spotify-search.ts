@@ -1,4 +1,11 @@
-import type { HostDiagnosticsCacheSnapshot, PartyRateLimits, SearchResult, SpotifyTrack, TrackInfo } from "@/shared/types";
+import type { SearchRateLimitKind } from "@/shared/rate-limit-messages";
+import type {
+  HostDiagnosticsCacheSnapshot,
+  PartyRateLimits,
+  SearchResult,
+  SpotifyTrack,
+  TrackInfo,
+} from "@/shared/types";
 import { DEFAULT_PARTY_SEARCH_LIMIT, DEFAULT_RATE_LIMITS } from "@/shared/types";
 import type { Db } from "../db/schema";
 import {
@@ -109,11 +116,13 @@ const partySearchBuckets = new Map<string, { count: number; resetAt: number }>()
 
 export class SpotifySearchRateLimitedError extends Error {
   readonly retryAfterMs: number;
+  readonly kind: SearchRateLimitKind;
 
-  constructor(retryAfterMs: number) {
+  constructor(retryAfterMs: number, kind: SearchRateLimitKind = "spotify_backoff") {
     super("Search rate limited");
     this.name = "SpotifySearchRateLimitedError";
     this.retryAfterMs = retryAfterMs;
+    this.kind = kind;
   }
 }
 
@@ -436,7 +445,7 @@ function assertSearchAllowed(
   const partyRl = checkPartySearchLimit(partyId, normalized.partySearch);
   if (!partyRl.allowed) {
     recordLimitHit("party_search");
-    throw new SpotifySearchRateLimitedError(partyRl.retryAfterMs);
+    throw new SpotifySearchRateLimitedError(partyRl.retryAfterMs, "party_search");
   }
   if (guestId) {
     const guestRl = checkRateLimit(
@@ -447,7 +456,7 @@ function assertSearchAllowed(
     );
     if (!guestRl.allowed) {
       recordLimitHit("guest_search");
-      throw new SpotifySearchRateLimitedError(guestRl.retryAfterMs ?? 0);
+      throw new SpotifySearchRateLimitedError(guestRl.retryAfterMs ?? 0, "guest_search");
     }
   }
 }
@@ -639,7 +648,7 @@ function staleSearchCacheOrThrow(
     logCatalogSearch(partyId, query, caller, true);
     return stale.data;
   }
-  throw new SpotifySearchRateLimitedError(spotifyRateLimitRetryAfterMs());
+  throw new SpotifySearchRateLimitedError(spotifyRateLimitRetryAfterMs(), "spotify_backoff");
 }
 
 function staleArtistTracksOrThrow(
@@ -662,7 +671,7 @@ function staleArtistTracksOrThrow(
     });
     return filter === "credited" ? stale.credited : stale.all;
   }
-  throw new SpotifySearchRateLimitedError(spotifyRateLimitRetryAfterMs());
+  throw new SpotifySearchRateLimitedError(spotifyRateLimitRetryAfterMs(), "spotify_backoff");
 }
 
 export async function searchPartyCatalog(
@@ -715,7 +724,7 @@ export async function searchPartyCatalog(
           logCatalogSearch(partyId, trimmed, caller, true);
           return stale.data;
         }
-        throw new SpotifySearchRateLimitedError(getSpotifyRetryAfterMs(e));
+        throw new SpotifySearchRateLimitedError(getSpotifyRetryAfterMs(e), "spotify_backoff");
       }
       throw e;
     }

@@ -1,4 +1,5 @@
 import type { QueueItemView } from "@/shared/types";
+import { resolveRateLimitMessage } from "@/shared/rate-limit-messages";
 import { ApiError } from "../http";
 
 export function upvoteBlockedMessage(
@@ -67,7 +68,10 @@ export function upvoteApiMessage(error: unknown): string | null {
     case "ALREADY_VOTED":
       return "You already upvoted this song";
     case "RATE_LIMITED":
-      return "Slow down — try again in a moment";
+      return resolveRateLimitMessage(
+        error.message,
+        "You've used all your upvotes.",
+      );
     case "PARTY_OFF":
       return "Party is paused — turn it on to vote";
     default:
@@ -85,7 +89,10 @@ export function downvoteApiMessage(error: unknown): string | null {
     case "NOW_PLAYING":
       return "Can't downvote what's playing now";
     case "RATE_LIMITED":
-      return "Slow down — try again in a moment";
+      return resolveRateLimitMessage(
+        error.message,
+        "You've used all your downvotes.",
+      );
     case "PARTY_OFF":
       return "Party is paused — turn it on to vote";
     default:
@@ -99,7 +106,10 @@ export function boostApiMessage(error: unknown): string | null {
     case "BOOST_USED":
       return "No boosts left";
     case "RATE_LIMITED":
-      return "Slow down — try again in a moment";
+      return resolveRateLimitMessage(
+        error.message,
+        "You've used your boost.",
+      );
     case "ALREADY_BOOSTED":
       return "Already boosted";
     case "NEXT_LOCKED":

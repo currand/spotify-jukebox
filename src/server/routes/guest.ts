@@ -53,6 +53,10 @@ import {
   type ArtistTrackFilter,
 } from "../services/spotify-search";
 import {
+  formatGuestRateLimitMessage,
+  formatSearchRateLimitMessage,
+} from "@/shared/rate-limit-messages";
+import {
   type PartyRateLimits,
   type QueueItemStatus,
 } from "@/shared/types";
@@ -384,9 +388,20 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
       return c.json(data);
     } catch (e) {
       if (e instanceof SpotifySearchRateLimitedError) {
+        const rateLimits = parseRateLimits(party.rate_limits);
+        const searchConfig =
+          e.kind === "guest_search"
+            ? rateLimits.search
+            : e.kind === "party_search"
+              ? rateLimits.partySearch
+              : undefined;
         return c.json(
           {
-            error: "Search rate limited",
+            error: formatSearchRateLimitMessage(
+              e.kind,
+              searchConfig,
+              e.retryAfterMs,
+            ),
             code: "RATE_LIMITED",
             retryAfterMs: e.retryAfterMs,
           },
@@ -419,9 +434,20 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
       return c.json({ tracks, filter });
     } catch (e) {
       if (e instanceof SpotifySearchRateLimitedError) {
+        const rateLimits = parseRateLimits(party.rate_limits);
+        const searchConfig =
+          e.kind === "guest_search"
+            ? rateLimits.search
+            : e.kind === "party_search"
+              ? rateLimits.partySearch
+              : undefined;
         return c.json(
           {
-            error: "Search rate limited",
+            error: formatSearchRateLimitMessage(
+              e.kind,
+              searchConfig,
+              e.retryAfterMs,
+            ),
             code: "RATE_LIMITED",
             retryAfterMs: e.retryAfterMs,
           },
@@ -494,7 +520,11 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
       recordLimitHit("guest_upvote");
       return c.json(
         {
-          error: "Rate limited",
+          error: formatGuestRateLimitMessage(
+            "upvote",
+            limits.upvote,
+            rl.retryAfterMs,
+          ),
           code: "RATE_LIMITED",
           retryAfterMs: rl.retryAfterMs,
         },
@@ -576,7 +606,11 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
       recordLimitHit("guest_veto");
       return c.json(
         {
-          error: "Rate limited",
+          error: formatGuestRateLimitMessage(
+            "veto",
+            limits.veto,
+            rl.retryAfterMs,
+          ),
           code: "RATE_LIMITED",
           retryAfterMs: rl.retryAfterMs,
         },
@@ -632,7 +666,11 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
       recordLimitHit("guest_boost");
       return c.json(
         {
-          error: "Rate limited",
+          error: formatGuestRateLimitMessage(
+            "boost",
+            limits.boost,
+            rl.retryAfterMs,
+          ),
           code: "RATE_LIMITED",
           retryAfterMs: rl.retryAfterMs,
         },
@@ -917,7 +955,11 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
         recordLimitHit("guest_add");
         return c.json(
           {
-            error: "Rate limited",
+            error: formatGuestRateLimitMessage(
+              "add",
+              limits.add,
+              rl.retryAfterMs,
+            ),
             code: "RATE_LIMITED",
             retryAfterMs: rl.retryAfterMs,
           },
