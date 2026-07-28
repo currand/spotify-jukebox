@@ -35,6 +35,7 @@ function testDb(): Db {
       status TEXT NOT NULL,
       is_boosted INTEGER NOT NULL DEFAULT 0,
       boost_position INTEGER,
+      boosted_by_guest_id TEXT,
       manual_order INTEGER,
       added_by_guest_id TEXT,
       from_seed INTEGER NOT NULL DEFAULT 0,

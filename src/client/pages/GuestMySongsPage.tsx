@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import type { GuestMySongsResponse, PartyView } from "@/shared/types";
 import { GuestNav } from "../components/GuestNav";
 import { GuestNamePrompt } from "../components/GuestNamePrompt";
-import { BoostBadge, formatApiError, TrackTitle, UpvoteCount, DownvoteCount } from "../components/QueueUi";
+import { BoostBadge, BoostButton, formatApiError, TrackTitle, UpvoteCount, DownvoteCount } from "../components/QueueUi";
 import { usePopup } from "../hooks/usePopup";
 import { boostApiMessage } from "../utils/queue-action-messages";
 import { api, joinParty } from "../http";
@@ -132,7 +132,7 @@ export function GuestMySongsPage() {
             <div className="track-meta">
               <h3 className="track-title">
                 <span className="track-title-name">{song.trackName}</span>
-                {song.isBoosted ? <BoostBadge /> : null}
+                {song.isBoosted ? <BoostBadge boostedBy={song.boostedBy} /> : null}
               </h3>
               <p>
                 {song.artistName}
@@ -205,7 +205,11 @@ export function GuestMySongsPage() {
           >
             {song.albumArtUrl && <img src={song.albumArtUrl} alt="" />}
             <div className="track-meta">
-              <TrackTitle name={song.trackName} boosted={song.isBoosted} />
+              <TrackTitle
+                name={song.trackName}
+                boosted={song.isBoosted}
+                boostedBy={song.boostedBy}
+              />
               <p>
                 {song.artistName} · <UpvoteCount count={song.upvoteCount} /> ·{" "}
                 <DownvoteCount count={song.vetoCount} />
@@ -216,12 +220,10 @@ export function GuestMySongsPage() {
             </div>
             <div className="actions">
               {song.canBoost && (
-                <button
+                <BoostButton
                   disabled={!canMutate}
                   onClick={() => void boost(song.id)}
-                >
-                  Boost
-                </button>
+                />
               )}
               {song.canUnboost && (
                 <button

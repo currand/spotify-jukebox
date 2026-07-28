@@ -62,6 +62,7 @@ export interface QueueItemView {
   status: QueueItemStatus;
   isBoosted: boolean;
   boostPosition: number | null;
+  boostedBy: string | null;
   addedBy: string;
   addedByGuestId: string | null;
   addedAt: string;
@@ -105,6 +106,7 @@ export interface GuestMySongView {
   albumArtUrl: string | null;
   status: QueueItemStatus;
   isBoosted: boolean;
+  boostedBy: string | null;
   upvoteCount: number;
   vetoCount: number;
   addedAt: string;

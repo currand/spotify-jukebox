@@ -172,16 +172,6 @@ input {
   min-height: 2.5rem;
 }
 
-.guest-tutorial-boost-icon {
-  display: inline-block;
-  padding: 0.35rem 0.75rem;
-  border-radius: 999px;
-  background: #3d2f6b;
-  color: #f0e8ff;
-  font-size: 0.9rem;
-  font-weight: 600;
-}
-
 .guest-tutorial-body {
   color: #d0d0d8;
   margin: 0 0 1.25rem;
@@ -302,6 +292,13 @@ input {
   min-width: 0;
 }
 
+.boost-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
 .boost-badge {
   display: inline-block;
   font-size: 0.65rem;
@@ -313,7 +310,27 @@ input {
   background: #3d2e00;
   color: #ffc857;
   border: 1px solid #a67c00;
-  flex-shrink: 0;
+}
+
+button.boost-badge {
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.2;
+}
+
+.boost-badge--disabled,
+button.boost-badge:disabled {
+  opacity: 0.35;
+  filter: grayscale(1);
+  cursor: not-allowed;
+}
+
+.boost-by {
+  font-size: 0.75rem;
+  color: #8a8a96;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 .track.card.track--boosted {
@@ -683,11 +700,9 @@ button.danger:hover {
   cursor: not-allowed;
 }
 
-.boost-action--disabled,
-.boost-action:disabled {
-  opacity: 0.35;
-  filter: grayscale(1);
-  cursor: not-allowed;
+.guest-queue-loading {
+  color: #8a8a96;
+  margin: 0.5rem 0 1rem;
 }
 
 .queue-item--highlight {

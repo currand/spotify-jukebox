@@ -69,13 +69,28 @@ export function getGuestMySongs(
 ): { active: GuestMySongView[]; history: GuestMySongView[] } {
   const rows = db
     .query(
-      `SELECT id, track_name, artist_name, album_art_url, upvote_count, veto_count,
-              status, is_boosted, added_at, finished_at
-       FROM queue_items
-       WHERE party_id = ? AND added_by_guest_id = ? AND from_seed = 0
-       ORDER BY added_at DESC`,
+      `SELECT q.id, q.track_name, q.artist_name, q.album_art_url, q.upvote_count, q.veto_count,
+              q.status, q.is_boosted, q.added_at, q.finished_at, bg.display_name as booster_display_name
+       FROM queue_items q
+       LEFT JOIN guests bg ON bg.id = q.boosted_by_guest_id
+       WHERE q.party_id = ? AND q.added_by_guest_id = ? AND q.from_seed = 0
+       ORDER BY q.added_at DESC`,
     )
-    .all(partyId, guestId) as QueueItemRow[];
+    .all(partyId, guestId) as Array<
+    Pick<
+      QueueItemRow,
+      | "id"
+      | "track_name"
+      | "artist_name"
+      | "album_art_url"
+      | "upvote_count"
+      | "veto_count"
+      | "status"
+      | "is_boosted"
+      | "added_at"
+      | "finished_at"
+    > & { booster_display_name?: string | null }
+  >;
 
   const partyActive = getQueueItems(db, partyId, ACTIVE_STATUSES);
   const upcoming = getUpcomingPlayOrder(partyActive);
@@ -92,6 +107,8 @@ export function getGuestMySongs(
       albumArtUrl: row.album_art_url,
       status: row.status,
       isBoosted: row.is_boosted === 1,
+      boostedBy:
+        row.is_boosted === 1 ? (row.booster_display_name ?? null) : null,
       upvoteCount: row.upvote_count,
       vetoCount: row.veto_count,
       addedAt: row.added_at,
@@ -297,6 +314,11 @@ function deleteGuestsAndRelatedData(db: Db, partyId: string, guestIds: string[])
     [partyId, ...guestIds],
   );
   db.run(
+    `UPDATE queue_items SET boosted_by_guest_id = NULL
+     WHERE party_id = ? AND boosted_by_guest_id IN (${placeholders})`,
+    [partyId, ...guestIds],
+  );
+  db.run(
     `DELETE FROM guests WHERE party_id = ? AND id IN (${placeholders})`,
     [partyId, ...guestIds],
   );
@@ -357,7 +379,7 @@ export function clearGuestBoost(
 ): number {
   const result = db.run(
     `UPDATE queue_items
-     SET is_boosted = 0, boost_position = NULL, status = 'pending'
+     SET is_boosted = 0, boost_position = NULL, boosted_by_guest_id = NULL, status = 'pending'
      WHERE party_id = ? AND added_by_guest_id = ? AND is_boosted = 1
        AND status IN ('pending', 'queued')`,
     [partyId, guestId],
