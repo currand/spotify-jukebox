@@ -174,17 +174,6 @@ export function getSpotifyBufferItem(
   return getUpcomingPlayOrder(items)[0] ?? null;
 }
 
-/** Pending next-up track — already first; upvote/boost won't change order. */
-export function isGuestNextUpPendingLocked(
-  items: QueueItemRow[],
-  itemId: string,
-): boolean {
-  const item = items.find((i) => i.id === itemId);
-  if (!item || item.status !== "pending") return false;
-  const buffer = getSpotifyBufferItem(items);
-  return buffer?.id === itemId;
-}
-
 /** Guest cannot reorder or veto tracks already in Spotify's queue. */
 export function isGuestSpotifyBufferLocked(
   items: QueueItemRow[],
@@ -393,22 +382,6 @@ export function unblockQueueItem(
     `UPDATE queue_items SET status = 'unblocked', finished_at = ? WHERE id = ?`,
     [new Date().toISOString(), itemId],
   );
-}
-
-export function markPriorItemsPlayed(
-  db: Db,
-  items: QueueItemRow[],
-  currentItemId: string,
-): void {
-  const order = getPlayOrder(items);
-  const idx = order.findIndex((i) => i.id === currentItemId);
-  if (idx <= 0) return;
-  for (let i = 0; i < idx; i++) {
-    const item = order[i];
-    if (item.status === "pending" || item.status === "queued") {
-      markFinished(db, item.id, "played");
-    }
-  }
 }
 
 export function toQueueItemView(row: QueueItemRow) {

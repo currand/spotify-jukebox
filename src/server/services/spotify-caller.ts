@@ -8,10 +8,6 @@ export function getSpotifyApiCaller(): SpotifyApiCaller {
   return callerStorage.getStore() ?? "other";
 }
 
-export function withSpotifyCaller<T>(caller: SpotifyApiCaller, fn: () => T): T {
-  return callerStorage.run(caller, fn);
-}
-
 export async function withSpotifyCallerAsync<T>(
   caller: SpotifyApiCaller,
   fn: () => Promise<T>,

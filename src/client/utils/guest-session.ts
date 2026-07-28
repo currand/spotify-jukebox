@@ -16,14 +16,6 @@ export function setStoredGuestSession(slug: string, token: string): void {
   }
 }
 
-export function clearStoredGuestSession(slug: string): void {
-  try {
-    localStorage.removeItem(storageKey(slug));
-  } catch {
-    /* ignore */
-  }
-}
-
 export function partySlugFromPath(): string | null {
   const match = window.location.pathname.match(/\/p\/([^/]+)/);
   return match?.[1]?.replace(/\/$/, "") ?? null;
