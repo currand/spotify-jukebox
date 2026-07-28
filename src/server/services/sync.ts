@@ -1,6 +1,6 @@
 import type { Config } from "../config";
 import type { Db } from "../db/schema";
-import { getActiveParty, hasActiveParty } from "./party";
+import { getActiveParty, getPartyTargetDeviceId, hasActiveParty } from "./party";
 import {
   adoptSpotifyTrack,
   bumpSyncGeneration,
@@ -92,6 +92,8 @@ let consecutiveRateLimitHits = 0;
 let syncWorkerTimer: ReturnType<typeof setTimeout> | null = null;
 let syncWorkerTick: (() => void) | null = null;
 let activeDeviceId: string | null = null;
+let bootstrapGraceUntil = 0;
+const BOOTSTRAP_GRACE_MS = 45_000;
 
 let syncPollingConfig: SyncPollingConfig = {
   syncFastPoll: false,
@@ -151,9 +153,42 @@ export function getSyncIntervalMs(
   if (!party) return SYNC_INTERVAL_NO_PARTY_MS;
   if (syncPollingConfig.syncFastPoll) return SYNC_INTERVAL_MS;
   if (partyNeedsSpotifyQueueSync(db, party.id, party.sync_generation)) {
-    return 0;
+    // Pending queue work — sync ASAP only when playback is already visible.
+    // Otherwise tight-loop GET /me/player while waiting for bootstrap (429 storm).
+    if (syncState.deviceActive || syncState.playbackTiming?.currentUri) {
+      return 0;
+    }
+    return syncPollingConfig.syncFallbackIntervalMs;
   }
   return computeAdaptiveSyncDelayMs();
+}
+
+/** Optimistic sync state after bootstrap starts playback on the target device. */
+export function markBootstrapPlaybackStarted(
+  deviceId: string,
+  deviceName: string | null,
+): void {
+  activeDeviceId = deviceId;
+  bootstrapGraceUntil = Date.now() + BOOTSTRAP_GRACE_MS;
+  syncState = {
+    ...syncState,
+    deviceActive: true,
+    isPlaying: true,
+    deviceRestricted: false,
+    deviceName,
+    spotifyReachable: true,
+    lastError: null,
+    rateLimitedUntil: null,
+  };
+}
+
+export async function refreshSyncPlayerSnapshot(
+  spotify: SpotifyClient,
+): Promise<void> {
+  const snapshot = await spotify.getPlayerSnapshot();
+  if (snapshot.deviceActive || snapshot.currentUri) {
+    applyPlayerSnapshot(snapshot);
+  }
 }
 
 /** Delay until the next sync tick — waits out Spotify backoff when active. */
@@ -605,15 +640,22 @@ function applyPlayerSnapshot(snapshot: PlayerSnapshot): void {
   if (!isRateLimited()) {
     consecutiveRateLimitHits = 0;
   }
-  activeDeviceId = snapshot.deviceId;
+  if (snapshot.deviceActive || snapshot.currentUri) {
+    bootstrapGraceUntil = 0;
+  }
+  const bootstrapGrace =
+    Date.now() < bootstrapGraceUntil &&
+    !snapshot.deviceActive &&
+    !snapshot.currentUri;
+  activeDeviceId = snapshot.deviceId ?? (bootstrapGrace ? activeDeviceId : null);
   const capturedAt = Date.now();
   syncState = {
     ...syncState,
-    deviceActive: snapshot.deviceActive,
-    isPlaying: snapshot.isPlaying,
+    deviceActive: bootstrapGrace || snapshot.deviceActive,
+    isPlaying: bootstrapGrace ? true : snapshot.isPlaying,
     spotifyReachable: true,
     deviceRestricted: snapshot.deviceRestricted,
-    deviceName: snapshot.deviceName,
+    deviceName: snapshot.deviceName ?? syncState.deviceName,
     lastSyncedAt: capturedAt,
     playbackTiming: snapshot.currentUri
       ? {
@@ -623,7 +665,9 @@ function applyPlayerSnapshot(snapshot: PlayerSnapshot): void {
           isPlaying: snapshot.isPlaying,
           capturedAt,
         }
-      : null,
+      : bootstrapGrace
+        ? syncState.playbackTiming
+        : null,
     lastError: snapshot.deviceRestricted
       ? restrictedMessage(snapshot.deviceName)
       : isRateLimited()
@@ -920,6 +964,7 @@ export async function forcePartySync(
       snapshot.isPlaying,
       spotify,
       snapshot.deviceName,
+      getPartyTargetDeviceId(db, partyId) ?? activeDeviceId,
     );
 
     if (queueConfirmed) {
@@ -939,6 +984,7 @@ export async function forcePartySync(
         spotify,
         effective,
         snapshot,
+        getPartyTargetDeviceId(db, partyId) ?? activeDeviceId,
       );
     }
     partyLastSyncedGeneration.set(partyId, refreshedParty.sync_generation);
@@ -1050,6 +1096,11 @@ async function runPartySync(
   party: { id: string; sync_generation: number },
   snapshot: PlayerSnapshot,
 ): Promise<void> {
+  const targetDeviceId = getPartyTargetDeviceId(db, party.id);
+  if (targetDeviceId) {
+    activeDeviceId = targetDeviceId;
+  }
+
   const items = getQueueItems(db, party.id);
 
   let queueData: SpotifyQueueSnapshot = {
@@ -1096,6 +1147,7 @@ async function runPartySync(
     snapshot.isPlaying,
     spotify,
     snapshot.deviceName,
+    targetDeviceId ?? activeDeviceId,
   );
 
   if (!queueApiAvailable || syncState.deviceRestricted) {
@@ -1117,6 +1169,7 @@ async function runPartySync(
     spotify,
     effective,
     snapshot,
+    targetDeviceId ?? activeDeviceId,
   );
 
   partyLastSyncedGeneration.set(party.id, party.sync_generation);
@@ -1125,9 +1178,10 @@ async function runPartySync(
 async function skipCurrentTrack(
   spotify: SpotifyClient,
   deviceName: string | null,
+  deviceId?: string | null,
 ): Promise<void> {
   try {
-    await spotify.skipNext();
+    await spotify.skipNext(deviceId);
   } catch (e) {
     if (isSpotifyRateLimitError(e)) {
       markRateLimited(e);
@@ -1150,6 +1204,7 @@ async function reconcilePlayingState(
   isPlaying: boolean,
   spotify: SpotifyClient,
   deviceName: string | null,
+  deviceId?: string | null,
 ): Promise<void> {
   const current = queueData.currentlyPlaying;
   const playing = items.find((i) => i.status === "playing");
@@ -1196,12 +1251,12 @@ async function reconcilePlayingState(
   }
 
   if (shouldSkipTerminalPlayback(match)) {
-    await skipCurrentTrack(spotify, deviceName);
+    await skipCurrentTrack(spotify, deviceName, deviceId);
     return;
   }
 
   if (match.status === "played") {
-    await skipCurrentTrack(spotify, deviceName);
+    await skipCurrentTrack(spotify, deviceName, deviceId);
     return;
   }
 
@@ -1221,6 +1276,7 @@ async function fillSpotifyBufferIfEmpty(
   spotify: SpotifyClient,
   queueData: SpotifyQueueSnapshot,
   snapshot: PlayerSnapshot,
+  deviceId?: string | null,
 ): Promise<void> {
   const bufferOccupied = isSpotifyBufferOccupied(queueData, items);
   const next = getVirtualNextToBuffer(items, queueData);
@@ -1240,7 +1296,7 @@ async function fillSpotifyBufferIfEmpty(
   }
 
   try {
-    await spotify.addToQueue(next.spotify_uri);
+    await spotify.addToQueue(next.spotify_uri, deviceId);
     db.run(`UPDATE queue_items SET status = 'queued' WHERE id = ?`, [next.id]);
   } catch (e) {
     if (isSpotifyRateLimitError(e)) {
@@ -1270,6 +1326,7 @@ export function resetSyncStateForTests(): void {
     syncWorkerTimer = null;
   }
   activeDeviceId = null;
+  bootstrapGraceUntil = 0;
   setSpotifyRateLimitHandler(null);
   setSpotifyRateLimitedGate(null);
   syncState = {

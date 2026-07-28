@@ -247,6 +247,8 @@ export function initDb(config: Config): Db {
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_party_active_uri
       ON queue_items(party_id, spotify_uri)
       WHERE status IN ('pending', 'queued', 'playing')`,
+    `ALTER TABLE parties ADD COLUMN bootstrap_playlist_id TEXT`,
+    `ALTER TABLE parties ADD COLUMN target_spotify_device_id TEXT`,
   ]) {
     try {
       db.run(sql);

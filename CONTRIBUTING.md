@@ -94,6 +94,10 @@ docker compose --profile mock up --build -d
 
 Connect Spotify from Admin — mock mode auto-connects without leaving the app.
 
+The mock exposes multiple Connect devices (one compatible speaker + one restricted TV), playlist create/add/delete, and context playback with `device_id`. Bootstrap Turn ON works end-to-end against the mock without OAuth.
+
+**Re-auth note:** When testing against **live Spotify** locally, reconnect after scope changes (`playlist-modify-private` was added for bootstrap playlists).
+
 The mock starts idle (device present, nothing playing). Tracks play when Jukebox queues them and advance after ~3 minutes by default (`MOCK_TRACK_DURATION_MS` on the `spotify-mock` service).
 
 ```bash

@@ -71,6 +71,29 @@ function requireBearer(c: { req: { header: (name: string) => string | undefined 
 export function createApp({ player, tracks, durationMs }: AppDeps) {
   const tracksByUri = new Map(tracks.map((track) => [track.uri, track]));
   const artists = uniqueArtists(tracks);
+  const userPlaylists = new Map<
+    string,
+    { id: string; name: string; uri: string; trackUris: string[] }
+  >();
+  let nextPlaylistNum = 1;
+  const mockDevices = [
+    {
+      id: "mock-device-1",
+      name: "Mock Jukebox Speaker",
+      type: "Speaker",
+      is_active: true,
+      is_restricted: false,
+      volume_percent: 50,
+    },
+    {
+      id: "mock-device-2",
+      name: "Living Room TV",
+      type: "TV",
+      is_active: false,
+      is_restricted: true,
+      volume_percent: 0,
+    },
+  ];
   const app = new Hono();
 
   app.post("/api/token", async (c) => {
@@ -79,7 +102,7 @@ export function createApp({ player, tracks, durationMs }: AppDeps) {
       refresh_token: "mock-refresh-token",
       token_type: "Bearer",
       expires_in: 86400 * 365,
-      scope: "user-modify-playback-state user-read-playback-state playlist-read-private",
+      scope: "user-modify-playback-state user-read-playback-state playlist-read-private playlist-modify-private",
     });
   });
 
@@ -190,6 +213,35 @@ export function createApp({ player, tracks, durationMs }: AppDeps) {
         type: "playlist",
         uri: "spotify:playlist:mock-empty",
       },
+      ...[...userPlaylists.values()].map((playlist) => ({
+        collaborative: false,
+        description: "Ephemeral Jukebox party playlist",
+        external_urls: { spotify: `https://open.spotify.com/playlist/${playlist.id}` },
+        href: `https://api.spotify.com/v1/playlists/${playlist.id}`,
+        id: playlist.id,
+        images: [],
+        name: playlist.name,
+        owner: {
+          display_name: "Mock Host",
+          external_urls: { spotify: "https://open.spotify.com/user/mock-host" },
+          href: "https://api.spotify.com/v1/users/mock-host",
+          id: "mock-host",
+          type: "user",
+          uri: "spotify:user:mock-host",
+        },
+        public: false,
+        snapshot_id: `mock-${playlist.id}`,
+        items: {
+          href: `https://api.spotify.com/v1/playlists/${playlist.id}/items`,
+          total: playlist.trackUris.length,
+        },
+        tracks: {
+          href: `https://api.spotify.com/v1/playlists/${playlist.id}/tracks`,
+          total: playlist.trackUris.length,
+        },
+        type: "playlist",
+        uri: playlist.uri,
+      })),
     ];
     return c.json({
       href: "https://api.spotify.com/v1/me/playlists",
@@ -200,6 +252,58 @@ export function createApp({ player, tracks, durationMs }: AppDeps) {
       total: playlists.length,
       items: playlists.slice(0, limit),
     });
+  });
+
+  app.post("/v1/me/playlists", async (c) => {
+    const body = (await c.req.json()) as { name?: string };
+    const id = `mock-party-${nextPlaylistNum++}`;
+    const playlist = {
+      id,
+      name: body.name ?? "Untitled",
+      uri: `spotify:playlist:${id}`,
+      trackUris: [] as string[],
+    };
+    userPlaylists.set(id, playlist);
+    return c.json({
+      collaborative: false,
+      description: "Ephemeral Jukebox party playlist",
+      external_urls: { spotify: `https://open.spotify.com/playlist/${id}` },
+      followers: { href: null, total: 0 },
+      href: `https://api.spotify.com/v1/playlists/${id}`,
+      id,
+      images: [],
+      name: playlist.name,
+      owner: {
+        display_name: "Mock Host",
+        external_urls: { spotify: "https://open.spotify.com/user/mock-host" },
+        href: "https://api.spotify.com/v1/users/mock-host",
+        id: "mock-host",
+        type: "user",
+        uri: "spotify:user:mock-host",
+      },
+      public: false,
+      snapshot_id: `mock-${id}`,
+      tracks: { href: `https://api.spotify.com/v1/playlists/${id}/tracks`, total: 0 },
+      type: "playlist",
+      uri: playlist.uri,
+    });
+  });
+
+  app.post("/v1/playlists/:id/items", async (c) => {
+    const playlist = userPlaylists.get(c.req.param("id"));
+    if (!playlist) return c.json({ error: { message: "Not found" } }, 404);
+    const uris = (c.req.query("uris") ?? "").split(",").filter(Boolean);
+    playlist.trackUris.push(...uris);
+    return c.body(null, 201);
+  });
+
+  app.delete("/v1/playlists/:id", (c) => {
+    userPlaylists.delete(c.req.param("id"));
+    return c.body(null, 200);
+  });
+
+  app.get("/v1/me/player/devices", (c) => {
+    return c.json({ devices: mockDevices });
   });
 
   app.get("/v1/me/player", (c) => {
@@ -235,8 +339,35 @@ export function createApp({ player, tracks, durationMs }: AppDeps) {
     return c.body(null, 204);
   });
 
-  app.put("/v1/me/player/play", (c) => {
-    player.play();
+  app.put("/v1/me/player/play", async (c) => {
+    const deviceId = c.req.query("device_id");
+    if (deviceId) {
+      const device = mockDevices.find((entry) => entry.id === deviceId);
+      if (device) {
+        player.setDevice({
+          id: device.id,
+          name: device.name,
+          type: device.type,
+          is_restricted: device.is_restricted,
+        });
+      }
+    }
+    const body = await c.req.json().catch(() => null) as
+      | { context_uri?: string; offset?: { position?: number } }
+      | null;
+    if (body?.context_uri?.startsWith("spotify:playlist:")) {
+      const playlistId = body.context_uri.split(":").pop() ?? "";
+      const playlist = userPlaylists.get(playlistId);
+      if (playlist) {
+        const offset = body.offset?.position ?? 0;
+        const uri = playlist.trackUris[offset];
+        if (uri) {
+          player.startTrack(uri, tracksByUri);
+        }
+      }
+    } else {
+      player.play();
+    }
     return c.body(null, 204);
   });
 

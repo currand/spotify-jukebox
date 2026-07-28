@@ -10,6 +10,7 @@ import {
   computeAdaptiveSyncDelayMs,
   configureSyncPolling,
   getSyncState,
+  markBootstrapPlaybackStarted,
   resetSyncStateForTests,
   runSyncTickForTests,
   getVirtualNextToBuffer,
@@ -738,11 +739,25 @@ describe("sync pacing helpers", () => {
     ).toBe(10_000);
   });
 
-  test("syncs immediately when party generation is pending", () => {
+  test("syncs immediately when party generation is pending and playback is active", () => {
     resetSyncStateForTests();
+    markBootstrapPlaybackStarted("device-1", "Speaker");
     expect(
       getSyncIntervalMs({} as Db, { id: "party-a", sync_generation: 1 }),
     ).toBe(0);
+  });
+
+  test("waits out inactive device instead of tight-loop polling", () => {
+    resetSyncStateForTests();
+    configureSyncPolling({
+      syncFastPoll: false,
+      syncEndWindowMs: 7000,
+      syncFallbackIntervalMs: 30_000,
+      syncIdleIntervalMs: 60_000,
+    });
+    expect(
+      getSyncIntervalMs({} as Db, { id: "party-a", sync_generation: 1 }),
+    ).toBe(30_000);
   });
 
   test("schedules near-end poll from track timing", () => {

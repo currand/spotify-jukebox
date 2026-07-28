@@ -244,7 +244,9 @@ When a party is **on**, a background worker keeps the virtual queue aligned with
 
 **Host playback controls:** Admin can Start/Stop Spotify playback (`PUT /me/player/play` / `pause`) and Skip the current track.
 
-**Device targeting:** No explicit `device_id`; operate on whichever device is currently active on the host account.
+**Device targeting:** While a party is active, all Spotify **write** calls (`play`, `pause`, `queue`, `skip`, bootstrap start) use the party's selected `target_spotify_device_id`. Player **read** calls stay unscoped (`GET /me/player`) so sync can observe whichever device is playing after transfer.
+
+**Bootstrap on first Turn ON:** When `bootstrap_playlist_id` is null and the virtual queue is all `pending`, Jukebox creates a private playlist named exactly **`party.name`**, adds the first 1–2 upcoming tracks, and starts it on the selected device via `PUT /me/player/play?device_id=…` with `context_uri`. Resume skips bootstrap when a bootstrap playlist already exists and the queue has `playing`/`queued` items.
 
 ### Deduplication
 
@@ -306,12 +308,14 @@ Return `429` with `{ error: "<action-specific message>", code: "RATE_LIMITED", r
 ### Host controls
 
 - Spotify OAuth connect / disconnect
-- Create party (name, seed playlist, slug) — ends any previous active party
+- Create party (name, seed playlist, slug) — ends any previous active party; rejects party names that collide with an existing Spotify playlist (`409 PLAYLIST_NAME_COLLISION`)
+- **Target player picker** — list Spotify Connect devices (`GET /host/spotify/devices`); save selection on the party (`PATCH` with `spotifyDeviceId`); Turn ON requires a compatible device (`400 DEVICE_REQUIRED`)
 - Resume archived party (same slug; preserves guests, queue, votes) or import any archived party’s track list as seed for a new party
-- Party on/off switch
+- **Delete archived party** — removes party data and deletes the bootstrap Spotify playlist if present
+- Party on/off switch (Turn ON runs bootstrap playback on the selected device when needed)
 - Configure: downvote threshold, rate-limit windows
 - Display QR code + share link
-- Warning banner when Spotify has no active device
+- Warning banner when Spotify has no active playback on the target device (recovery state after bootstrap)
 - **Queue management (host overrides):**
   - Add tracks to the virtual queue (no guest rate limits; attributed to "Host")
   - **Shuffle:** Randomize all upcoming tracks in the **normal lane** (`pending` + `queued`, not playing). Leave **boost lane** order and **now-playing** untouched. Mark shuffled items back to `pending` as needed and **rebuild** the Spotify buffer (do not skip current track).
@@ -364,7 +368,7 @@ Host actions bypass guest rate limits and ownership restrictions.
 - **Optional.** `docker compose --profile mock up --build -d` runs `jukebox-mock` + `spotify-mock` sidecar.
 - Set `SPOTIFY_MODE=mock` (dev only) to point at `SPOTIFY_API_BASE_URL` / `SPOTIFY_ACCOUNTS_BASE_URL`.
 - No OAuth, encryption requirements, or real Spotify credentials needed for scale testing.
-- Mock service implements search, player, queue, playlist seed, and token refresh stubs.
+- Mock service implements search, player, queue, playlist seed, device list, playlist create/delete, context playback, and token refresh stubs.
 
 **Environment files:**
 
@@ -410,6 +414,8 @@ Spotify rejects `http://localhost`. Config validation enforces these rules at st
 | seed_playlist_id | TEXT | Spotify playlist ID |
 | rate_limits | JSON | `{ add, upvote, downvote, boost, search, partySearch }`, each `{ count, windowMs }` |
 | boost_cap | INTEGER NULL | Optional cap on concurrently boosted tracks |
+| bootstrap_playlist_id | TEXT NULL | Ephemeral Spotify playlist created on first Turn ON |
+| target_spotify_device_id | TEXT NULL | Selected Spotify Connect device for write calls |
 | created_at | DATETIME | |
 | updated_at | DATETIME | |
 
@@ -532,15 +538,17 @@ Base path: `/api/v1`
 | GET | `/host/spotify/callback` | OAuth callback → host session |
 | GET | `/host/spotify/status` | Connected, token expiry, sync/device warnings, `hostSetupTokenRequired` |
 | GET | `/host/spotify/playlists` | Current user's non-empty Spotify playlists for seed picker (track count from list API; no duration) |
+| GET | `/host/spotify/devices` | Spotify Connect devices for target-player picker (compatible + incompatible, sorted active first) |
 | POST | `/host/logout` | Clear host session |
-| POST | `/host/parties` | Create party (archives previous active party; imports seed) |
+| POST | `/host/parties` | Create party (archives previous active party; imports seed; `409 PLAYLIST_NAME_COLLISION` if name matches existing Spotify playlist) |
 | GET | `/host/parties/current` | Current non-archived party |
 | GET | `/host/parties/archived` | List archived parties with resume/export summary |
 | GET | `/host/parties/last-ended` | Most recent archived party export (backward compat) |
 | GET | `/host/parties/:id/export` | Export track list for any archived party |
 | POST | `/host/parties/:id/end` | Soft-archive party (preserves queue for resume) |
 | POST | `/host/parties/:id/resume` | Reactivate archived party (same slug; guests/tokens/queue intact) |
-| PATCH | `/host/parties/:id` | Update config, toggle on/off |
+| DELETE | `/host/parties/:id` | Delete archived party and its bootstrap Spotify playlist |
+| PATCH | `/host/parties/:id` | Update config, `spotifyDeviceId`, toggle on/off (`400 DEVICE_REQUIRED` without device on first Turn ON) |
 | GET | `/host/parties/:id/qr` | QR code PNG/SVG for join URL |
 | POST | `/host/parties/:id/queue` | Host add track `{ uri }` (no rate limit; attributed to Host) |
 | POST | `/host/parties/:id/queue/shuffle` | Shuffle normal upcoming lane; preserve boost lane + now-playing; rebuild buffer |
@@ -554,7 +562,7 @@ Base path: `/api/v1`
 | GET | `/host/parties/:id/search?q=` | Track search + artist matches |
 | GET | `/host/parties/:id/artists/:id/tracks?name=&filter=all\|credited` | Artist track search (same as guest) |
 | POST | `/host/parties/:id/sync` | Force an immediate sync tick |
-| POST | `/host/parties/:id/play` / `/pause` | Start/stop Spotify playback on the active device |
+| POST | `/host/parties/:id/play` / `/pause` | Start/stop Spotify playback on the party's target device |
 | GET | `/host/parties/:id/guests` | List guests with admin view (last seen, quota usage) |
 | DELETE | `/host/parties/:id/guests` | Clear all guests from the party |
 | POST | `/host/parties/:id/guests/purge-stale` | Remove guests inactive beyond a threshold |
@@ -680,9 +688,10 @@ Use **two Spotify apps** (recommended): one for development, one for production.
 
 Both apps:
 
-- Required scopes: `user-modify-playback-state`, `user-read-playback-state`, `playlist-read-private`
+- Required scopes: `user-modify-playback-state`, `user-read-playback-state`, `playlist-read-private`, `playlist-modify-private`
 - Host must have **Spotify Premium**
 - Development mode; allowlist only the host account
+- Existing installs must **re-connect Spotify** once after upgrading to grant `playlist-modify-private`
 
 **Setup order (production):** Spotify prod app → `.env.production` → `docker compose --profile default up --build -d` (or tunnel overlay + `.env.cloudflared`) → Admin (enter `HOST_SETUP_TOKEN` if required) → Connect Spotify
 
@@ -694,7 +703,11 @@ Both apps:
 
 ## Success Criteria
 
-- [ ] Host completes OAuth and creates a party with seed playlist import on create.
+- [ ] Host completes OAuth, picks a target Spotify Connect device, and creates a party with seed playlist import on create.
+- [ ] Party create rejects names that match an existing Spotify playlist (`PLAYLIST_NAME_COLLISION`).
+- [ ] Turn ON requires a selected compatible device; bootstrap playlist starts on that device.
+- [ ] Sync write calls target the party's selected device.
+- [ ] Delete archived party removes bootstrap Spotify playlist.
 - [ ] Creating a new party archives the previous one; only one non-archived party exists.
 - [ ] Guest cannot mutate until display name is set.
 - [ ] Guest joins via QR, adds a track, sees it in queue within one poll cycle.
@@ -706,7 +719,7 @@ Both apps:
 - [ ] Duplicate title (fuzzy) against active + last 20 terminal tracks is rejected.
 - [ ] Rate limits enforced with correct sliding windows; returns `429` with retry hint.
 - [ ] Party off switch blocks all guest mutations within one poll cycle.
-- [ ] No active Spotify device: guests can still add/vote; host sees warning; sync resumes when device active.
+- [ ] No active playback on target device: guests can still add/vote; host sees warning; bootstrap or manual recovery restores playback.
 - [ ] Empty upcoming queue shows “Add something!”; Jukebox does not invent filler tracks.
 - [ ] 50 concurrent guest sessions stable on target home hardware.
 - [ ] Host can add, remove, shuffle (normal lane), force-next, reorder, clear upcoming, skip now-playing, reset votes, and ban guests.
@@ -726,7 +739,7 @@ Both apps:
 5. **Virtual queue** — Add, upvote, downvote, boost, dedup, rate limits
 6. **Host overrides** — Add/remove/shuffle/force-next/reorder/clear/skip/ban/reset-votes/start-from-here + history view
 7. **Search** — Track + artist search via Spotify `/search` (dev-mode apps cannot use `/artists/{id}/top-tracks`)
-8. **Sync worker** — One-slot buffer, skip logic, inactive-device warning, restart soft-reconcile (refill buffer, never skip current)
+8. **Sync worker** — One-slot buffer, skip logic, device-targeted writes, bootstrap on Turn ON, inactive-device warning, restart soft-reconcile (refill buffer, never skip current)
 9. **Guest UI** — Mobile queue view, search, actions, polling
 10. **Host UI** — Admin, QR, config, device warning, full queue/history tools
 11. **cloudflared** — Tunnel wiring + docs
