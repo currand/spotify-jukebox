@@ -553,7 +553,9 @@ describe("API Integration: Rate limits", () => {
       uri: "spotify:track:song3", name: "Song 3", artistName: "Band",
     }, token);
     expect(res4.status).toBe(429);
-    expect((await res4.json()).code).toBe("RATE_LIMITED");
+    const body4 = await res4.json();
+    expect(body4.code).toBe("RATE_LIMITED");
+    expect(body4.error).toContain("added your limit of 3 songs");
   });
 
   test("upvote rate limit: returns 429 when limit exhausted", async () => {
@@ -585,7 +587,9 @@ describe("API Integration: Rate limits", () => {
     // Upvote should now be rate limited
     const res = await upvoteTrack(app, party.slug, target.id, token);
     expect(res.status).toBe(429);
-    expect((await res.json()).code).toBe("RATE_LIMITED");
+    const body = await res.json();
+    expect(body.code).toBe("RATE_LIMITED");
+    expect(body.error).toContain("used all 10 upvotes");
   });
 
   test("veto rate limit: returns 429 when limit exhausted", async () => {
@@ -617,7 +621,9 @@ describe("API Integration: Rate limits", () => {
     // Veto should now be rate limited
     const res = await vetoTrack(app, party.slug, target.id, token);
     expect(res.status).toBe(429);
-    expect((await res.json()).code).toBe("RATE_LIMITED");
+    const body = await res.json();
+    expect(body.code).toBe("RATE_LIMITED");
+    expect(body.error).toContain("used all 3 downvotes");
   });
 });
 
@@ -771,7 +777,9 @@ describe("API Integration: Boost mechanics", () => {
     // Second boost should fail (rate limited — default 1 per 10 min)
     const boostRes2 = await boostTrack(app, party.slug, target2Id, boosterToken);
     expect(boostRes2.status).toBe(429);
-    expect((await boostRes2.json()).code).toBe("RATE_LIMITED");
+    const boostBody = await boostRes2.json();
+    expect(boostBody.code).toBe("RATE_LIMITED");
+    expect(boostBody.error).toContain("used your boost");
   });
 
   test("cannot boost already-boosted track (returns NEXT_LOCKED or ALREADY_BOOSTED)", async () => {

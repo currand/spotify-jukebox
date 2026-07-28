@@ -2,6 +2,8 @@ import * as React from "react";
 import { queueItemAnchorId } from "@/shared/queue-match";
 import type { SearchQueueBlockReason } from "@/shared/queue-match";
 import type { QueueItemView, TrackInfo } from "@/shared/types";
+import { resolveRateLimitMessage } from "@/shared/rate-limit-messages";
+import { ApiError } from "../http";
 
 export function ThumbsUpIcon({ size = 16 }: { size?: number }) {
   return (
@@ -447,6 +449,12 @@ export function SearchFilterChips({
 
 export function formatApiError(error: unknown): string {
   if (!(error instanceof Error)) return "Something went wrong";
+  if (error instanceof ApiError && error.code === "RATE_LIMITED") {
+    return resolveRateLimitMessage(
+      error.message,
+      "You've reached your limit for that action.",
+    );
+  }
   const msg = error.message;
   if (
     msg === "This song is already in the queue" ||
@@ -465,7 +473,10 @@ export function formatApiError(error: unknown): string {
     return "We couldn't verify that name — pick a different one.";
   }
   if (msg.includes("Rate limited") || msg.includes("Search rate limited")) {
-    return "Slow down — try again in a moment.";
+    return resolveRateLimitMessage(
+      msg,
+      "You've reached your limit for that action.",
+    );
   }
   if (msg.includes("already queued in Spotify") || msg.includes("NEXT_LOCKED")) {
     return "That song is already queued in Spotify.";

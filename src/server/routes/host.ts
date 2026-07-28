@@ -69,9 +69,36 @@ import {
   isValidVetoThreshold,
   setDefaultGuestLimits,
 } from "../services/host-settings";
+import { formatSearchRateLimitMessage } from "@/shared/rate-limit-messages";
 import { DEFAULT_PARTY_SEARCH_LIMIT, type PartyRateLimits } from "@/shared/types";
 import { deleteCookie, getCookie } from "hono/cookie";
 import { SPOTIFY_SCOPES } from "../config";
+
+function searchRateLimitResponse(
+  db: Db,
+  config: Config,
+  partyId: string,
+  e: SpotifySearchRateLimitedError,
+) {
+  const rateLimits = parseRateLimits(
+    (
+      db.query(`SELECT rate_limits FROM parties WHERE id = ?`).get(partyId) as
+        | { rate_limits: string }
+        | null
+    )?.rate_limits ?? JSON.stringify(getDefaultRateLimits(db, config)),
+  );
+  const searchConfig =
+    e.kind === "guest_search"
+      ? rateLimits.search
+      : e.kind === "party_search"
+        ? rateLimits.partySearch
+        : undefined;
+  return {
+    error: formatSearchRateLimitMessage(e.kind, searchConfig, e.retryAfterMs),
+    code: "RATE_LIMITED" as const,
+    retryAfterMs: e.retryAfterMs,
+  };
+}
 
 function parseRateLimits(json: string): PartyRateLimits {
   return normalizeRateLimits(JSON.parse(json) as PartyRateLimits);
@@ -1025,14 +1052,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
       return c.json(data);
     } catch (e) {
       if (e instanceof SpotifySearchRateLimitedError) {
-        return c.json(
-          {
-            error: "Search rate limited",
-            code: "RATE_LIMITED",
-            retryAfterMs: e.retryAfterMs,
-          },
-          429,
-        );
+        return c.json(searchRateLimitResponse(db, config, partyId, e), 429);
       }
       return c.json({ error: "Search unavailable", code: "SPOTIFY_ERROR" }, 503);
     }
@@ -1067,14 +1087,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
       return c.json({ tracks, filter });
     } catch (e) {
       if (e instanceof SpotifySearchRateLimitedError) {
-        return c.json(
-          {
-            error: "Search rate limited",
-            code: "RATE_LIMITED",
-            retryAfterMs: e.retryAfterMs,
-          },
-          429,
-        );
+        return c.json(searchRateLimitResponse(db, config, partyId, e), 429);
       }
       return c.json({ error: "Search unavailable", code: "SPOTIFY_ERROR" }, 503);
     }
