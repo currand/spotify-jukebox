@@ -177,6 +177,21 @@ export function formatSpotifyErrorForUser(error: unknown): string | null {
   return null;
 }
 
+/**
+ * Sanitizes a sync `lastError` string for display on unauthenticated endpoints
+ * (e.g. public `/host/spotify/status`). Falls back to a generic message instead
+ * of leaking raw Spotify response bodies (`SPOTIFY_<status>:<body>`).
+ */
+export function sanitizeErrorForPublicStatus(lastError: string | null): string | null {
+  if (!lastError) return null;
+  const friendly = formatSpotifyErrorForUser(new Error(lastError));
+  if (friendly) return friendly;
+  if (/^SPOTIFY_\d+:/.test(lastError)) {
+    return "Spotify sync error — see host diagnostics for details.";
+  }
+  return lastError;
+}
+
 export function isSpotifyReauthRequired(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message === "SPOTIFY_REAUTH_REQUIRED";

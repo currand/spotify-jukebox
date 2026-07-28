@@ -1,4 +1,10 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+  timingSafeEqual,
+} from "crypto";
 
 function deriveKey(secret: string): Buffer {
   return createHash("sha256").update(secret).digest();
@@ -32,6 +38,14 @@ export function decrypt(ciphertext: string, secret: string): string {
 
 export function randomToken(): string {
   return randomBytes(32).toString("hex");
+}
+
+/** Constant-time string compare — use for secrets/tokens to avoid timing side-channels. */
+export function secureCompare(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, "utf8");
+  const bufB = Buffer.from(b, "utf8");
+  if (bufA.length !== bufB.length) return false;
+  return timingSafeEqual(bufA, bufB);
 }
 
 export function newId(): string {

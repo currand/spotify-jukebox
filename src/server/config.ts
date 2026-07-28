@@ -148,6 +148,26 @@ function optionalEnv(name: string, fallback: string): string {
   return value ? value : fallback;
 }
 
+const RATE_LIMIT_ACTION_KEYS = [
+  "add",
+  "upvote",
+  "veto",
+  "boost",
+  "search",
+  "partySearch",
+] as const;
+
+function isValidRateLimitConfigShape(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const { count, windowMs } = value as { count?: unknown; windowMs?: unknown };
+  return (
+    Number.isInteger(count) &&
+    (count as number) >= 1 &&
+    Number.isInteger(windowMs) &&
+    (windowMs as number) >= 1000
+  );
+}
+
 function parseDefaultRateLimitsFromEnv(): PartyRateLimits | null {
   const raw = process.env.JUKEBOX_DEFAULT_RATE_LIMITS?.trim();
   if (!raw) return null;
@@ -157,8 +177,20 @@ function parseDefaultRateLimitsFromEnv(): PartyRateLimits | null {
   } catch {
     throw new Error("JUKEBOX_DEFAULT_RATE_LIMITS must be valid JSON");
   }
-  if (!parsed || typeof parsed !== "object") {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("JUKEBOX_DEFAULT_RATE_LIMITS must be a JSON object");
+  }
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!(RATE_LIMIT_ACTION_KEYS as readonly string[]).includes(key)) {
+      throw new Error(
+        `JUKEBOX_DEFAULT_RATE_LIMITS has unknown key "${key}" (expected one of: ${RATE_LIMIT_ACTION_KEYS.join(", ")})`,
+      );
+    }
+    if (!isValidRateLimitConfigShape(value)) {
+      throw new Error(
+        `JUKEBOX_DEFAULT_RATE_LIMITS.${key} must be { count: integer >= 1, windowMs: integer >= 1000 }`,
+      );
+    }
   }
   return parsed as PartyRateLimits;
 }
