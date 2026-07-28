@@ -139,6 +139,69 @@ export function createApp({ player, tracks, durationMs }: AppDeps) {
     return c.json({ items: page, next: null });
   });
 
+  app.get("/v1/me/playlists", (c) => {
+    const limit = Math.min(50, Math.max(1, Number(c.req.query("limit") ?? 50)));
+    const playlists = [
+      {
+        collaborative: false,
+        description: "Mock seed playlist for local development",
+        external_urls: { spotify: "https://open.spotify.com/playlist/mock-seed" },
+        href: "https://api.spotify.com/v1/playlists/mock-seed",
+        id: "mock-seed",
+        images: tracks[0]
+          ? [{ url: `https://mock.spotify/album/${tracks[0].id}.jpg`, height: 300, width: 300 }]
+          : [],
+        name: "Mock Party Mix",
+        owner: {
+          display_name: "Mock Host",
+          external_urls: { spotify: "https://open.spotify.com/user/mock-host" },
+          href: "https://api.spotify.com/v1/users/mock-host",
+          id: "mock-host",
+          type: "user",
+          uri: "spotify:user:mock-host",
+        },
+        public: true,
+        snapshot_id: "mock-snapshot",
+        items: { href: "https://api.spotify.com/v1/playlists/mock-seed/items", total: tracks.length },
+        tracks: { href: "https://api.spotify.com/v1/playlists/mock-seed/tracks", total: tracks.length },
+        type: "playlist",
+        uri: "spotify:playlist:mock-seed",
+      },
+      {
+        collaborative: true,
+        description: null,
+        external_urls: { spotify: "https://open.spotify.com/playlist/mock-empty" },
+        href: "https://api.spotify.com/v1/playlists/mock-empty",
+        id: "mock-empty",
+        images: [],
+        name: "Empty Playlist",
+        owner: {
+          display_name: "Friend",
+          external_urls: { spotify: "https://open.spotify.com/user/friend" },
+          href: "https://api.spotify.com/v1/users/friend",
+          id: "friend",
+          type: "user",
+          uri: "spotify:user:friend",
+        },
+        public: false,
+        snapshot_id: "mock-empty",
+        items: { href: "https://api.spotify.com/v1/playlists/mock-empty/items", total: 0 },
+        tracks: { href: "https://api.spotify.com/v1/playlists/mock-empty/tracks", total: 0 },
+        type: "playlist",
+        uri: "spotify:playlist:mock-empty",
+      },
+    ];
+    return c.json({
+      href: "https://api.spotify.com/v1/me/playlists",
+      limit,
+      next: null,
+      offset: 0,
+      previous: null,
+      total: playlists.length,
+      items: playlists.slice(0, limit),
+    });
+  });
+
   app.get("/v1/me/player", (c) => {
     return c.json(toPlayerResponse(player));
   });

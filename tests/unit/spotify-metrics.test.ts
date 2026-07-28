@@ -13,6 +13,7 @@ describe("classifySpotifyEndpoint", () => {
     expect(classifySpotifyEndpoint("/search?q=test&type=track")).toBe("search");
     expect(classifySpotifyEndpoint("/me/player/queue")).toBe("player.queue");
     expect(classifySpotifyEndpoint("/me/player")).toBe("player.state");
+    expect(classifySpotifyEndpoint("/me/playlists?limit=50")).toBe("playlists.list");
     expect(classifySpotifyEndpoint("/artists/abc/top-tracks?market=US")).toBe(
       "artists.top-tracks",
     );

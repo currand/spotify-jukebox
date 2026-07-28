@@ -59,6 +59,23 @@ Serves UI and API together on the port in `.env.production` (default 3000).
 
 ---
 
+## Docker dev (live Spotify)
+
+Local container using **`.env.development`** (not `.env.production`). OAuth redirects stay on `127.0.0.1`.
+
+```bash
+cp -n .env.development.example .env.development
+# Fill SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET (dev app, redirect http://127.0.0.1:3000/...)
+bun run docker:up:dev
+# or: docker compose --profile dev up --build -d
+```
+
+Open http://127.0.0.1:3000/admin (or `http://127.0.0.1:$JUKEBOX_PORT/admin` if set in project `.env`).
+
+**Do not** use `--profile default` for local dev — that service loads `.env.production` regardless of `--env-file .env.development`.
+
+---
+
 ## Mock Spotify (local or Docker)
 
 ### Docker mock stack
@@ -147,7 +164,8 @@ These wrap `docker compose` for convenience during development:
 
 | Script | Underlying command |
 |---|---|
-| `bun run docker:up` | `docker compose --profile default up --build -d` |
+| `bun run docker:up` | `docker compose --profile default up --build -d` (`.env.production`) |
+| `bun run docker:up:dev` | `docker compose --profile dev up --build -d` (`.env.development`, live Spotify) |
 | `bun run docker:up:tunnel` | `docker compose --profile default --profile tunnel -f docker-compose.yml -f docker-compose.tunnel.yml up --build -d` |
 | `bun run docker:up:mock` | `docker compose --profile mock up --build -d` |
 | `bun run docker:up:registry` | `docker compose --profile default --env-file .env up -d` |

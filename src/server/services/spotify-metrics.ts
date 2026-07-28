@@ -62,6 +62,7 @@ export function classifySpotifyEndpoint(path: string): string {
   if (base.startsWith("/search")) return "search";
   if (base.includes("/top-tracks")) return "artists.top-tracks";
   if (base.startsWith("/artists/")) return "artists.get";
+  if (base === "/me/playlists") return "playlists.list";
   if (base.startsWith("/playlists/")) return "playlists.items";
   if (base === "/me/player/queue") return "player.queue";
   if (base === "/me/player/currently-playing") return "player.currently-playing";

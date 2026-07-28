@@ -3,6 +3,7 @@ import type {
   ArchivedPartySummary,
   DefaultGuestLimits,
   EndedPartyExport,
+  HostSeedPlaylist,
   HostSpotifyStatus,
   PartyRateLimits,
   PartyView,
@@ -30,6 +31,110 @@ import {
   SearchTrackRow,
   UpNextLockedSection,
 } from "../components/QueueUi";
+
+function startPlaybackBlockedReason(
+  party: PartyView,
+  status: HostSpotifyStatus | null,
+): string | null {
+  if (party.status !== "on") {
+    return "Turn the party ON before starting playback.";
+  }
+  if (status?.deviceRestricted) {
+    return (
+      status.lastError ??
+      "This device doesn't support remote playback control — use the Spotify app on your phone or computer."
+    );
+  }
+  if (!status?.deviceActive) {
+    return "Start playback in the Spotify app on your desired device first, then try again.";
+  }
+  if (status.isPlaying) {
+    return "Playback is already running.";
+  }
+  return null;
+}
+
+function stopPlaybackBlockedReason(
+  party: PartyView,
+  status: HostSpotifyStatus | null,
+): string | null {
+  if (party.status !== "on") {
+    return "Turn the party ON before controlling playback.";
+  }
+  if (status?.deviceRestricted) {
+    return (
+      status.lastError ??
+      "This device doesn't support remote playback control — use the Spotify app on your phone or computer."
+    );
+  }
+  if (!status?.deviceActive) {
+    return "Start playback in the Spotify app on your desired device first, then try again.";
+  }
+  if (status.isPlaying !== true) {
+    return "Nothing is playing right now.";
+  }
+  return null;
+}
+
+function PlayIcon() {
+  return (
+    <svg className="playback-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M8 5.14v13.72c0 .79.87 1.27 1.54.84l11.04-6.86a1 1 0 0 0 0-1.7L9.54 4.3A1 1 0 0 0 8 5.14Z" fill="currentColor" />
+    </svg>
+  );
+}
+
+function PauseIcon() {
+  return (
+    <svg className="playback-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M7 5h3v14H7V5Zm7 0h3v14h-3V5Z" fill="currentColor" />
+    </svg>
+  );
+}
+
+function SkipIcon() {
+  return (
+    <svg className="playback-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" fill="currentColor" />
+    </svg>
+  );
+}
+
+function BlockedActionButton({
+  blockedReason,
+  onBlocked,
+  onAction,
+  children,
+  className,
+  ariaLabel,
+}: {
+  blockedReason: string | null;
+  onBlocked: (message: string) => void;
+  onAction: () => void;
+  children: React.ReactNode;
+  className?: string;
+  ariaLabel: string;
+}) {
+  const blocked = blockedReason != null;
+  return (
+    <span
+      className={`blocked-action-slot${blocked ? " blocked-action-slot--blocked" : ""}`}
+      onClick={() => {
+        if (blocked) onBlocked(blockedReason);
+      }}
+    >
+      <button
+        type="button"
+        className={className}
+        aria-label={ariaLabel}
+        disabled={blocked}
+        onClick={() => onAction()}
+      >
+        {children}
+      </button>
+    </span>
+  );
+}
 
 interface PartyFull extends PartyView {
   id: string;
@@ -78,9 +183,15 @@ export function AdminPage() {
   );
   const [useImportHistory, setUseImportHistory] = React.useState(false);
   const [showHistoryList, setShowHistoryList] = React.useState(false);
+  const [seedPlaylists, setSeedPlaylists] = React.useState<HostSeedPlaylist[]>([]);
+  const [loadingSeedPlaylists, setLoadingSeedPlaylists] = React.useState(false);
+  const [seedPlaylistsError, setSeedPlaylistsError] = React.useState<string | null>(
+    null,
+  );
   const [resuming, setResuming] = React.useState(false);
   const selectedArchivedIdRef = React.useRef<string | null>(null);
   const createFormDirtyRef = React.useRef(false);
+  const seedPlaylistsLoadRef = React.useRef(0);
   const artistLoadRef = React.useRef(0);
   const scrollPendingRef = React.useRef<string | null>(null);
   const [highlightedItemId, setHighlightedItemId] = React.useState<string | null>(
@@ -96,7 +207,7 @@ export function AdminPage() {
 
   function spotifyLoginHref(): string {
     const base = "/api/v1/host/spotify/login";
-    if (status?.hostSetupTokenRequired === false) return base;
+    if (status?.hostSetupTokenRequired !== true) return base;
     const token = hostSetupToken.trim();
     if (!token) return base;
     return `${base}?token=${encodeURIComponent(token)}`;
@@ -141,6 +252,29 @@ export function AdminPage() {
     }));
     return defaults;
   }, [fetchDefaultGuestLimits]);
+
+  const loadSeedPlaylists = React.useCallback(async () => {
+    const loadId = ++seedPlaylistsLoadRef.current;
+    setLoadingSeedPlaylists(true);
+    setSeedPlaylistsError(null);
+    try {
+      const data = await api<{ playlists: HostSeedPlaylist[] }>(
+        "/host/spotify/playlists",
+      );
+      if (loadId !== seedPlaylistsLoadRef.current) return;
+      setSeedPlaylists(data.playlists);
+    } catch (e) {
+      if (loadId !== seedPlaylistsLoadRef.current) return;
+      setSeedPlaylists([]);
+      setSeedPlaylistsError(
+        e instanceof Error ? e.message : "Failed to load Spotify playlists",
+      );
+    } finally {
+      if (loadId === seedPlaylistsLoadRef.current) {
+        setLoadingSeedPlaylists(false);
+      }
+    }
+  }, []);
 
   const load = React.useCallback(async () => {
     try {
@@ -195,9 +329,15 @@ export function AdminPage() {
     }
   }, [loadArchivedExport, fetchDefaultGuestLimits]);
 
+  React.useEffect(() => {
+    if (party || !status?.authenticated) return;
+    void loadSeedPlaylists();
+  }, [party, status?.authenticated, loadSeedPlaylists]);
+
   async function selectArchivedParty(partyId: string) {
     selectedArchivedIdRef.current = partyId;
     setSelectedArchivedId(partyId);
+    setUseImportHistory(false);
     setShowHistoryList(false);
     try {
       await loadArchivedExport(partyId);
@@ -270,12 +410,13 @@ export function AdminPage() {
         { method: "POST", body: "{}" },
       );
       setEndedExport(result);
-      setUseImportHistory(result.trackCount > 0);
       selectedArchivedIdRef.current = result.partyId;
       setSelectedArchivedId(result.partyId);
       setParty(null);
       setQueue(null);
       setHistory([]);
+      setUseImportHistory(false);
+      setShowHistoryList(false);
       setForm((current) => ({ ...current, name: "", seedPlaylistId: "" }));
       createFormDirtyRef.current = false;
       await applyCreateFormDefaults();
@@ -291,7 +432,7 @@ export function AdminPage() {
   }
 
   async function resumeArchivedParty() {
-    if (!selectedArchivedId || !selectedArchivedParty?.canResume) return;
+    if (!selectedArchivedId || !selectedArchivedParty?.canResume || useImportHistory) return;
     if (
       !confirm(
         `Resume "${selectedArchivedParty.partyName}" at /${selectedArchivedParty.slug}?\n\nGuest join links and saved sessions will work again. Turn the party ON when ready.`,
@@ -315,23 +456,38 @@ export function AdminPage() {
     }
   }
 
-  function copyHistory() {
-    if (!endedExport?.tracks.length) return;
-    const text = endedExport.tracks
-      .map((t) => `${t.name} — ${t.artistName}`)
-      .join("\n");
-    void navigator.clipboard.writeText(text);
-    setNotice("Playlist copied to clipboard.");
-  }
-
   const selectedArchivedParty = archivedParties.find(
     (item) => item.partyId === selectedArchivedId,
+  ) ?? null;
+
+  function formatPlaylistMeta(playlist: HostSeedPlaylist): string {
+    const parts = [`${playlist.trackCount} track${playlist.trackCount === 1 ? "" : "s"}`];
+    if (playlist.collaborative) {
+      parts.push("collaborative");
+    } else if (playlist.isPublic === false) {
+      parts.push("private");
+    }
+    if (playlist.ownerName) {
+      parts.push(playlist.ownerName);
+    }
+    return parts.join(" · ");
+  }
+
+  const selectedSeedPlaylist = seedPlaylists.find(
+    (item) => item.id === form.seedPlaylistId,
   ) ?? null;
 
   const canCreate =
     form.name.trim() &&
     (form.seedPlaylistId.trim() ||
       (useImportHistory && (endedExport?.trackCount ?? 0) > 0));
+
+  const createPartyHint = !form.name.trim()
+    ? "Enter a party name to continue."
+    : !form.seedPlaylistId.trim() &&
+        !(useImportHistory && (endedExport?.trackCount ?? 0) > 0)
+      ? "Choose a seed playlist or import a previous party track list."
+      : null;
 
   async function toggleParty(on: boolean) {
     if (!party) return;
@@ -551,7 +707,7 @@ export function AdminPage() {
           ) : status?.connected && !status.authenticated ? (
             <>
               <p>Spotify is linked, but your host session expired.</p>
-              {status.hostSetupTokenRequired !== false && (
+              {status?.hostSetupTokenRequired === true && (
                 <label className="small">
                   Host setup token
                   <input
@@ -566,7 +722,7 @@ export function AdminPage() {
               <a href={spotifyLoginHref()}>
                 <button
                   disabled={
-                    status.hostSetupTokenRequired !== false &&
+                    status?.hostSetupTokenRequired === true &&
                     !hostSetupToken.trim()
                   }
                 >
@@ -576,7 +732,7 @@ export function AdminPage() {
             </>
           ) : (
             <>
-              {status?.hostSetupTokenRequired !== false && (
+              {status?.hostSetupTokenRequired === true && (
                 <label className="small">
                   Host setup token
                   <input
@@ -591,7 +747,7 @@ export function AdminPage() {
               <a href={spotifyLoginHref()}>
                 <button
                   disabled={
-                    status?.hostSetupTokenRequired !== false &&
+                    status?.hostSetupTokenRequired === true &&
                     !hostSetupToken.trim()
                   }
                 >
@@ -631,49 +787,54 @@ export function AdminPage() {
                       : " — track list only (queue was fully ended before resume support)."}
                   </p>
                 )}
-                <div className="row party-controls">
-                  <button
-                    type="button"
-                    onClick={() => void resumeArchivedParty()}
-                    disabled={!selectedArchivedParty?.canResume || resuming}
-                    title={
-                      selectedArchivedParty?.canResume
-                        ? "Reactivate this party with the same slug and guest sessions"
-                        : "Track list only — queue was fully ended before resume support"
-                    }
-                  >
-                    {resuming ? "Resuming…" : "Resume party"}
-                  </button>
-                  <label className="row admin-checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={useImportHistory}
-                      disabled={!endedExport?.trackCount}
-                      onChange={(e) => {
-                        setUseImportHistory(e.target.checked);
-                        if (e.target.checked) {
-                          setForm((f) => ({ ...f, seedPlaylistId: "" }));
-                        }
-                      }}
-                    />
-                    <span>Use as seed queue</span>
-                  </label>
-                  <button
-                    type="button"
-                    className="secondary"
-                    onClick={copyHistory}
-                    disabled={!endedExport?.tracks.length}
-                  >
-                    Copy list
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary"
-                    onClick={() => setShowHistoryList((v) => !v)}
-                    disabled={!endedExport?.tracks.length}
-                  >
-                    {showHistoryList ? "Hide" : "Show"} tracks
-                  </button>
+                <div className="admin-ended-actions">
+                  <div className="admin-ended-actions-row">
+                    <button
+                      type="button"
+                      onClick={() => void resumeArchivedParty()}
+                      disabled={
+                        !selectedArchivedParty?.canResume || resuming || useImportHistory
+                      }
+                      title={
+                        useImportHistory
+                          ? "Uncheck “Use as seed queue” to resume this party instead"
+                          : selectedArchivedParty?.canResume
+                            ? "Reactivate this party with the same slug and guest sessions"
+                            : "Track list only — queue was fully ended before resume support"
+                      }
+                    >
+                      {resuming ? "Resuming…" : "Resume party"}
+                    </button>
+                    <label
+                      className="admin-checkbox-label"
+                      title={
+                        selectedArchivedParty?.canResume
+                          ? "Start a new party below using this track list (does not restore guests or slug)"
+                          : undefined
+                      }
+                    >
+                      <input
+                        type="checkbox"
+                        checked={useImportHistory}
+                        disabled={!endedExport?.trackCount || resuming}
+                        onChange={(e) => {
+                          setUseImportHistory(e.target.checked);
+                          if (e.target.checked) {
+                            setForm((f) => ({ ...f, seedPlaylistId: "" }));
+                          }
+                        }}
+                      />
+                      <span>Use as seed queue</span>
+                    </label>
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => setShowHistoryList((v) => !v)}
+                      disabled={!endedExport?.tracks.length}
+                    >
+                      {showHistoryList ? "Hide" : "Show"} tracks
+                    </button>
+                  </div>
                 </div>
                 {showHistoryList && endedExport?.tracks.length ? (
                   <div className="history-list small admin-history-list">
@@ -686,21 +847,88 @@ export function AdminPage() {
                 ) : null}
               </div>
             )}
-            <div className="form-grid">
+            <label className="form-field create-party-name-field">
+              <span>Party name</span>
               <input
-                placeholder="Party name"
+                placeholder="e.g. Friday Night Mix"
                 value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-              />
-              <input
-                placeholder="Seed playlist URL or ID (optional if using history)"
-                value={form.seedPlaylistId}
-                disabled={useImportHistory}
+                autoFocus
                 onChange={(e) => {
-                  setForm({ ...form, seedPlaylistId: e.target.value });
-                  if (e.target.value.trim()) setUseImportHistory(false);
+                  createFormDirtyRef.current = true;
+                  setForm((current) => ({ ...current, name: e.target.value }));
                 }}
               />
+            </label>
+            <div className="seed-playlist-picker">
+              <span className="small">Seed playlist</span>
+              {seedPlaylistsError ? (
+                <p className="small seed-playlist-status">{seedPlaylistsError}</p>
+              ) : null}
+              {loadingSeedPlaylists ? (
+                <p className="small seed-playlist-status">Loading your Spotify playlists…</p>
+              ) : null}
+              {!loadingSeedPlaylists && seedPlaylists.length === 0 ? (
+                <p className="small seed-playlist-status">
+                  No playlists with tracks found in your Spotify account.
+                </p>
+              ) : null}
+              {!loadingSeedPlaylists && seedPlaylists.length > 0 ? (
+                <ul className="seed-playlist-list">
+                  {seedPlaylists.map((playlist) => (
+                    <li key={playlist.id}>
+                      <label
+                        className={`seed-playlist-option${
+                          form.seedPlaylistId === playlist.id ? " seed-playlist-option--selected" : ""
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="seedPlaylist"
+                          value={playlist.id}
+                          checked={form.seedPlaylistId === playlist.id}
+                          disabled={useImportHistory}
+                          onChange={() => {
+                            createFormDirtyRef.current = true;
+                            setForm((current) => ({
+                              ...current,
+                              seedPlaylistId: playlist.id,
+                            }));
+                            setUseImportHistory(false);
+                          }}
+                        />
+                        {playlist.imageUrl ? (
+                          <img
+                            className="seed-playlist-art"
+                            src={playlist.imageUrl}
+                            alt=""
+                            width={48}
+                            height={48}
+                          />
+                        ) : (
+                          <span className="seed-playlist-art seed-playlist-art--placeholder" />
+                        )}
+                        <span className="seed-playlist-copy">
+                          <span className="seed-playlist-name">{playlist.name}</span>
+                          <span className="small seed-playlist-meta">
+                            {formatPlaylistMeta(playlist)}
+                          </span>
+                          {playlist.description ? (
+                            <span className="small seed-playlist-description">
+                              {playlist.description}
+                            </span>
+                          ) : null}
+                        </span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              {selectedSeedPlaylist && !useImportHistory ? (
+                <p className="small seed-playlist-selected">
+                  Selected: {selectedSeedPlaylist.name} ({selectedSeedPlaylist.trackCount}{" "}
+                  tracks)
+                </p>
+              ) : null}
             </div>
             <details className="admin-advanced">
               <summary>Advanced guest limits</summary>
@@ -724,6 +952,9 @@ export function AdminPage() {
               />
             </details>
             <div className="party-controls">
+              {!canCreate && createPartyHint ? (
+                <p className="small seed-playlist-status">{createPartyHint}</p>
+              ) : null}
               <button onClick={() => void createParty()} disabled={!canCreate}>
                 Create party
               </button>
@@ -735,18 +966,6 @@ export function AdminPage() {
           <div className="card admin-section">
             <h2>{party.name}</h2>
             <p className="small">/{party.slug}</p>
-            <div className="row party-controls">
-              <button onClick={() => void toggleParty(true)} disabled={party.status === "on"}>
-                Turn ON
-              </button>
-              <button
-                className="secondary"
-                onClick={() => void toggleParty(false)}
-                disabled={party.status === "off"}
-              >
-                Turn OFF
-              </button>
-            </div>
             <p>
               Join link:{" "}
               <a
@@ -791,49 +1010,84 @@ export function AdminPage() {
         <div>
           <div className="card admin-section">
             <h2>Queue controls</h2>
-            <div className="actions">
-              <button
-                className="secondary"
-                onClick={() => void hostSync()}
-                disabled={syncing || party.status !== "on"}
+            {notice && <p className="toast-ok">{notice}</p>}
+            <div className="queue-controls">
+              <div className="queue-controls-row">
+                <div className="actions queue-controls-group">
+                  <button
+                    type="button"
+                    onClick={() => void toggleParty(true)}
+                    disabled={party.status === "on"}
+                  >
+                    Turn ON
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => void toggleParty(false)}
+                    disabled={party.status === "off"}
+                  >
+                    Turn OFF
+                  </button>
+                </div>
+                <div className="queue-controls-divider" aria-hidden="true" />
+                <div className="actions queue-controls-group">
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => void hostSync()}
+                    disabled={syncing || party.status !== "on"}
+                  >
+                    {syncing ? "Syncing…" : "Sync with Spotify"}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => void hostAction(`/host/parties/${party.id}/queue/shuffle`)}
+                  >
+                    Shuffle
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => void hostAction(`/host/parties/${party.id}/queue/clear`)}
+                  >
+                    Clear upcoming
+                  </button>
+                </div>
+              </div>
+              <div
+                className="queue-controls-row queue-controls-row--playback"
+                role="group"
+                aria-label="Playback"
               >
-                {syncing ? "Syncing…" : "Sync with Spotify"}
-              </button>
-              <button
-                onClick={() => void hostAction(`/host/parties/${party.id}/play`)}
-                disabled={
-                  party.status !== "on" ||
-                  !status?.deviceActive ||
-                  status?.deviceRestricted ||
-                  status?.isPlaying === true
-                }
-              >
-                Start
-              </button>
-              <button
-                className="secondary"
-                onClick={() => void hostAction(`/host/parties/${party.id}/pause`)}
-                disabled={
-                  party.status !== "on" ||
-                  !status?.deviceActive ||
-                  status?.deviceRestricted ||
-                  status?.isPlaying !== true
-                }
-              >
-                Stop
-              </button>
-              <button onClick={() => void hostAction(`/host/parties/${party.id}/skip`)}>
-                Skip
-              </button>
-              <button onClick={() => void hostAction(`/host/parties/${party.id}/queue/shuffle`)}>
-                Shuffle
-              </button>
-              <button
-                className="secondary"
-                onClick={() => void hostAction(`/host/parties/${party.id}/queue/clear`)}
-              >
-                Clear upcoming
-              </button>
+                <BlockedActionButton
+                  blockedReason={startPlaybackBlockedReason(party, status)}
+                  onBlocked={setNotice}
+                  onAction={() => void hostAction(`/host/parties/${party.id}/play`)}
+                  className="playback-control-btn playback-control-btn--primary"
+                  ariaLabel="Play"
+                >
+                  <PlayIcon />
+                </BlockedActionButton>
+                <BlockedActionButton
+                  blockedReason={stopPlaybackBlockedReason(party, status)}
+                  onBlocked={setNotice}
+                  onAction={() => void hostAction(`/host/parties/${party.id}/pause`)}
+                  className="playback-control-btn"
+                  ariaLabel="Pause"
+                >
+                  <PauseIcon />
+                </BlockedActionButton>
+                <button
+                  type="button"
+                  className="playback-control-btn"
+                  aria-label="Skip to next track"
+                  onClick={() => void hostAction(`/host/parties/${party.id}/skip`)}
+                >
+                  <SkipIcon />
+                </button>
+              </div>
             </div>
             <div className="row admin-search-row">
               <input
@@ -865,7 +1119,6 @@ export function AdminPage() {
             )}
             {showSearchResults && results && (
               <>
-                {notice && <p className="toast-ok">{notice}</p>}
                 {!selectedArtist && results.artists.length > 0 && (
                   <div className="admin-artist-results">
                     <strong>Artists</strong>

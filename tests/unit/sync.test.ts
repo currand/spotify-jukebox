@@ -11,6 +11,7 @@ import {
   configureSyncPolling,
   getSyncState,
   resetSyncStateForTests,
+  runSyncTickForTests,
   getVirtualNextToBuffer,
   inferPaddedSpotifyQueueLength,
   isSpotifyBufferOccupied,
@@ -25,6 +26,7 @@ import { getUpcomingPlayOrder, type QueueItemRow } from "../../src/server/servic
 import type { Db } from "../../src/server/db/schema";
 
 import type { SpotifyTrack } from "@/shared/types";
+import type { SpotifyClient } from "../../src/server/services/spotify";
 
 function spotifyTrack(uri: string, name = "Track"): SpotifyTrack {
   return {
@@ -721,7 +723,7 @@ describe("sync pacing helpers", () => {
   });
 
   test("uses long interval when party is null", () => {
-    expect(getSyncIntervalMs({} as Db, null)).toBe(60_000);
+    expect(getSyncIntervalMs({} as Db, null)).toBe(15_000);
   });
 
   test("uses 10s interval when fast poll is enabled", () => {
@@ -818,5 +820,33 @@ describe("sync pacing helpers", () => {
       capturedAt: Date.now(),
     };
     expect(computeAdaptiveSyncDelayMs()).toBe(1000);
+  });
+});
+
+describe("runSyncTick without active party", () => {
+  test("refreshes player snapshot for admin status", async () => {
+    resetSyncStateForTests();
+    const db = {
+      query: () => ({ get: () => null }),
+    } as unknown as Db;
+    const spotify = {
+      getAccessToken: async () => "token",
+      getPlayerSnapshot: async () => ({
+        deviceActive: true,
+        isPlaying: true,
+        deviceRestricted: false,
+        deviceId: "device-1",
+        deviceName: "MacBook",
+        currentUri: "spotify:track:1",
+        progressMs: 1000,
+        durationMs: 180_000,
+      }),
+    };
+    await runSyncTickForTests(db, spotify as SpotifyClient);
+    const state = getSyncState();
+    expect(state.deviceActive).toBe(true);
+    expect(state.isPlaying).toBe(true);
+    expect(state.deviceName).toBe("MacBook");
+    expect(state.spotifyReachable).toBe(true);
   });
 });

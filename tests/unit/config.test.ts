@@ -137,6 +137,7 @@ describe("loadConfig URL policy", () => {
       process.env.SPOTIFY_REDIRECT_URI =
         "https://jukebox.example.com/api/v1/host/spotify/callback";
       process.env.CLOUDFLARE_TUNNEL = "1";
+      delete process.env.HOST_IP;
       delete process.env.HOST_SETUP_TOKEN;
       for (const [key, value] of Object.entries(baseEnv)) {
         if (key !== "HOST_SETUP_TOKEN") {
@@ -147,6 +148,47 @@ describe("loadConfig URL policy", () => {
       const config = loadConfig("production");
       expect(config.hostSetupTokenRequired).toBe(false);
       expect(config.hostSetupToken).toBeNull();
+    } finally {
+      process.env = prev;
+    }
+  });
+
+  test("disables HOST_SETUP_TOKEN for Docker localhost bind via HOST_IP", () => {
+    const prev = { ...process.env };
+    try {
+      process.env.NODE_ENV = "production";
+      process.env.JUKEBOX_ENV = "production";
+      process.env.BASE_URL = "https://jukebox.example.com";
+      process.env.SPOTIFY_REDIRECT_URI =
+        "https://jukebox.example.com/api/v1/host/spotify/callback";
+      process.env.HOST_IP = "127.0.0.1";
+      delete process.env.HOST_SETUP_TOKEN;
+      for (const [key, value] of Object.entries(baseEnv)) {
+        if (key !== "HOST_SETUP_TOKEN") {
+          process.env[key] = value;
+        }
+      }
+
+      const config = loadConfig("production");
+      expect(config.hostSetupTokenRequired).toBe(false);
+      expect(config.hostSetupToken).toBeNull();
+    } finally {
+      process.env = prev;
+    }
+  });
+
+  test("development never requires HOST_SETUP_TOKEN in admin UI", () => {
+    const prev = { ...process.env };
+    try {
+      process.env.SPOTIFY_CLIENT_ID = "id";
+      process.env.SPOTIFY_CLIENT_SECRET = "secret";
+      process.env.SPOTIFY_REDIRECT_URI =
+        "http://127.0.0.1:3000/api/v1/host/spotify/callback";
+      process.env.ENCRYPTION_KEY = "a".repeat(32);
+      process.env.HOST_SETUP_TOKEN = "setup-token";
+      const config = loadConfig("development");
+      expect(config.hostSetupTokenRequired).toBe(false);
+      expect(config.hostSetupToken).toBe("setup-token");
     } finally {
       process.env = prev;
     }

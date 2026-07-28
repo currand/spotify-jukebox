@@ -121,6 +121,21 @@ function createMockSpotify(): SpotifyClient & {
       return [];
     },
     async getPlaylistTracks() { return []; },
+    async getUserPlaylists() {
+      return [
+        {
+          id: "playlist-1",
+          name: "Test Seed",
+          trackCount: 3,
+          imageUrl: null,
+          description: null,
+          ownerName: "Host",
+          isPublic: true,
+          collaborative: false,
+          spotifyUrl: "https://open.spotify.com/playlist/playlist-1",
+        },
+      ];
+    },
     async getCurrentlyPlaying() {
       return { uri: state._snapshot.currentUri, isPlaying: state._snapshot.isPlaying, deviceActive: state._snapshot.deviceActive };
     },
@@ -181,6 +196,18 @@ function testDb(): Database {
   db.exec("PRAGMA foreign_keys = ON;");
   db.exec(SCHEMA);
   return db;
+}
+
+function hostSessionCookie(db: Database): string {
+  const id = "test-host-session";
+  const now = new Date().toISOString();
+  const expires = new Date(Date.now() + 3600_000).toISOString();
+  db.run(`INSERT INTO host_sessions (id, created_at, expires_at) VALUES (?, ?, ?)`, [
+    id,
+    now,
+    expires,
+  ]);
+  return `host_session=${id}`;
 }
 
 function createTestApp(db: Database, spotify: SpotifyClient) {
@@ -1020,3 +1047,28 @@ describe("API Integration: Display name requirements", () => {
 function spike(arr: string[], prefix: string): boolean {
   return arr.some((s) => s.startsWith(prefix));
 }
+
+describe("host spotify playlists", () => {
+  test("GET /host/spotify/playlists returns seed candidates for authenticated host", async () => {
+    const db = testDb();
+    const spotify = createMockSpotify();
+    const app = createTestApp(db, spotify);
+    const res = await app.request("/api/v1/host/spotify/playlists", {
+      headers: { Cookie: hostSessionCookie(db) },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      playlists: { id: string; name: string; trackCount: number }[];
+    };
+    expect(body.playlists).toEqual([
+      expect.objectContaining({ id: "playlist-1", name: "Test Seed", trackCount: 3 }),
+    ]);
+  });
+
+  test("GET /host/spotify/playlists requires host session", async () => {
+    const db = testDb();
+    const app = createTestApp(db, createMockSpotify());
+    const res = await app.request("/api/v1/host/spotify/playlists");
+    expect(res.status).toBe(401);
+  });
+});
