@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import QRCode from "qrcode";
 import type { Config } from "../config";
-import { newId, randomToken } from "../crypto";
+import { newId, randomToken, secureCompare } from "../crypto";
 import type { Db } from "../db/schema";
 import {
   createHostSession,
@@ -41,6 +41,7 @@ import {
   listMetricsSnapshots,
 } from "../services/metrics-recorder";
 import { getSyncState, requestPartySync, forcePartySync, PartySyncError, resumePartyPlayback, pausePartyPlayback } from "../services/sync";
+import { sanitizeErrorForPublicStatus } from "../services/spotify-errors";
 import {
   getPartyById,
   isPartyOn,
@@ -63,6 +64,9 @@ import {
   getDefaultGuestLimits,
   getDefaultRateLimits,
   InvalidDefaultRateLimitsError,
+  isValidBoostCap,
+  isValidPartyRateLimits,
+  isValidVetoThreshold,
   setDefaultGuestLimits,
 } from "../services/host-settings";
 import { DEFAULT_PARTY_SEARCH_LIMIT, type PartyRateLimits } from "@/shared/types";
@@ -75,6 +79,45 @@ function parseRateLimits(json: string): PartyRateLimits {
 
 function parseArtistTrackFilter(value: string | undefined): ArtistTrackFilter {
   return value === "credited" ? "credited" : "all";
+}
+
+const MAX_PARTY_NAME_LENGTH = 100;
+
+function isValidPartyName(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.trim().length > 0 &&
+    value.length <= MAX_PARTY_NAME_LENGTH
+  );
+}
+
+/** Validates the subset of fields present on `body`; missing fields are allowed (not required). */
+function validatePartyConfigPatch(body: {
+  name?: string;
+  status?: string;
+  vetoThreshold?: number;
+  boostCap?: number | null;
+  rateLimits?: PartyRateLimits;
+}): { code: string; message: string } | null {
+  if (body.name !== undefined && !isValidPartyName(body.name)) {
+    return {
+      code: "INVALID_NAME",
+      message: `Name must be 1-${MAX_PARTY_NAME_LENGTH} characters`,
+    };
+  }
+  if (body.status !== undefined && body.status !== "on" && body.status !== "off") {
+    return { code: "INVALID_STATUS", message: "Status must be 'on' or 'off'" };
+  }
+  if (body.vetoThreshold !== undefined && !isValidVetoThreshold(body.vetoThreshold)) {
+    return { code: "INVALID_VETO_THRESHOLD", message: "Veto threshold must be 1-20" };
+  }
+  if (body.boostCap !== undefined && !isValidBoostCap(body.boostCap)) {
+    return { code: "INVALID_BOOST_CAP", message: "Boost cap must be 1-99 or null" };
+  }
+  if (body.rateLimits !== undefined && !isValidPartyRateLimits(body.rateLimits)) {
+    return { code: "INVALID_RATE_LIMITS", message: "Invalid rate limits" };
+  }
+  return null;
 }
 
 function slugify(name: string): string {
@@ -100,7 +143,8 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     if (!config.hostSetupToken) return true;
     const token =
       c.req.query("token")?.trim() ?? c.req.header("X-Host-Setup-Token")?.trim();
-    return token === config.hostSetupToken;
+    if (!token) return false;
+    return secureCompare(token, config.hostSetupToken);
   }
 
   app.get("/host/spotify/login", (c) => {
@@ -213,7 +257,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
       spotifyReachable: sync.spotifyReachable,
       deviceRestricted: sync.deviceRestricted,
       deviceName: sync.deviceName,
-      lastError: sync.lastError,
+      lastError: sanitizeErrorForPublicStatus(sync.lastError),
       retryAfterMs,
       lastSyncedAt: sync.lastSyncedAt,
     });
@@ -274,6 +318,17 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
       boostCap?: number | null;
       rateLimits?: PartyRateLimits;
     };
+
+    if (!isValidPartyName(body.name)) {
+      return c.json(
+        { error: `Name must be 1-${MAX_PARTY_NAME_LENGTH} characters`, code: "INVALID_NAME" },
+        400,
+      );
+    }
+    const configError = validatePartyConfigPatch(body);
+    if (configError) {
+      return c.json({ error: configError.message, code: configError.code }, 400);
+    }
 
     const seedInput = body.seedPlaylistId?.trim() ?? "";
     const importFrom = body.importFromPartyId?.trim();
@@ -517,6 +572,11 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     };
     const party = db.query(`SELECT * FROM parties WHERE id = ?`).get(id);
     if (!party) return c.json({ error: "Not found", code: "NOT_FOUND" }, 404);
+
+    const configError = validatePartyConfigPatch(body);
+    if (configError) {
+      return c.json({ error: configError.message, code: configError.code }, 400);
+    }
 
     const updates: string[] = [];
     const values: unknown[] = [];

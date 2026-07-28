@@ -36,11 +36,11 @@ export function isValidPartyRateLimits(value: unknown): value is PartyRateLimits
   );
 }
 
-function isValidVetoThreshold(value: unknown): value is number {
+export function isValidVetoThreshold(value: unknown): value is number {
   return Number.isInteger(value) && (value as number) >= 1 && (value as number) <= 20;
 }
 
-function isValidBoostCap(value: unknown): value is number | null {
+export function isValidBoostCap(value: unknown): value is number | null {
   if (value == null) return true;
   return Number.isInteger(value) && (value as number) >= 1 && (value as number) <= 99;
 }
