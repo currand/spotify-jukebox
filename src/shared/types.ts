@@ -39,6 +39,22 @@ export const DEFAULT_RATE_LIMITS: PartyRateLimits = {
   partySearch: DEFAULT_PARTY_SEARCH_LIMIT,
 };
 
+export const DEFAULT_VETO_THRESHOLD = 3;
+
+export interface DefaultGuestLimits {
+  rateLimits: PartyRateLimits;
+  vetoThreshold: number;
+  boostCap: number | null;
+}
+
+export function factoryDefaultGuestLimits(): DefaultGuestLimits {
+  return {
+    rateLimits: DEFAULT_RATE_LIMITS,
+    vetoThreshold: DEFAULT_VETO_THRESHOLD,
+    boostCap: null,
+  };
+}
+
 export interface ApiError {
   error: string;
   code: string;

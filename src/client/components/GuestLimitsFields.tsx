@@ -1,6 +1,5 @@
 import * as React from "react";
-import type { PartyRateLimits, RateLimitConfig } from "@/shared/types";
-import { DEFAULT_RATE_LIMITS } from "@/shared/types";
+import type { DefaultGuestLimits, PartyRateLimits, RateLimitConfig } from "@/shared/types";
 import { api } from "../http";
 import { formatApiError } from "./QueueUi";
 
@@ -172,18 +171,23 @@ export function GuestLimitsPanel({
   vetoThreshold,
   boostCap,
   rateLimits,
+  defaultGuestLimits,
+  onDefaultGuestLimitsChange,
   onSaved,
 }: {
   partyId: string;
   vetoThreshold: number;
   boostCap: number | null;
   rateLimits: PartyRateLimits;
+  defaultGuestLimits: DefaultGuestLimits;
+  onDefaultGuestLimitsChange: (limits: DefaultGuestLimits) => void;
   onSaved: () => void;
 }) {
   const [limits, setLimits] = React.useState<PartyRateLimits>(rateLimits);
   const [vetoes, setVetoes] = React.useState(vetoThreshold);
   const [boostCapValue, setBoostCapValue] = React.useState<number | null>(boostCap);
   const [saving, setSaving] = React.useState(false);
+  const [savingDefaults, setSavingDefaults] = React.useState(false);
   const [notice, setNotice] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -191,7 +195,7 @@ export function GuestLimitsPanel({
     setLimits(rateLimits);
     setVetoes(vetoThreshold);
     setBoostCapValue(boostCap);
-  }, [partyId, rateLimits, vetoThreshold, boostCap]);
+  }, [partyId]);
 
   async function save() {
     setSaving(true);
@@ -215,6 +219,31 @@ export function GuestLimitsPanel({
     }
   }
 
+  async function saveAsDefaults() {
+    setSavingDefaults(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const saved = await api<DefaultGuestLimits>(
+        "/host/settings/default-rate-limits",
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            rateLimits: limits,
+            vetoThreshold: vetoes,
+            boostCap: boostCapValue,
+          }),
+        },
+      );
+      onDefaultGuestLimitsChange(saved);
+      setNotice("Saved as defaults for new parties.");
+    } catch (e) {
+      setError(formatApiError(e));
+    } finally {
+      setSavingDefaults(false);
+    }
+  }
+
   return (
     <div className="admin-section admin-limits-panel">
       <h3>Guest limits</h3>
@@ -235,10 +264,18 @@ export function GuestLimitsPanel({
         <button
           type="button"
           className="secondary"
+          disabled={savingDefaults}
+          onClick={() => void saveAsDefaults()}
+        >
+          {savingDefaults ? "Saving…" : "Save as defaults"}
+        </button>
+        <button
+          type="button"
+          className="secondary"
           onClick={() => {
-            setLimits(DEFAULT_RATE_LIMITS);
-            setVetoes(3);
-            setBoostCapValue(null);
+            setLimits(defaultGuestLimits.rateLimits);
+            setVetoes(defaultGuestLimits.vetoThreshold);
+            setBoostCapValue(defaultGuestLimits.boostCap);
           }}
         >
           Reset defaults
