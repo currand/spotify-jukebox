@@ -427,13 +427,6 @@ function GuestApp({ slug }: { slug: string }) {
         <div className="banner warn">Add something!</div>
       )}
 
-      {me?.quota && (
-        <p className="small">
-          Adds left: {me.quota.add} · Upvotes: {me.quota.upvote} · Downvotes:{" "}
-          {me.quota.veto} · Boosts: {me.quota.boost}
-        </p>
-      )}
-
       {!showingSearch && hasLater && (
         <section>
           <h2>Later</h2>

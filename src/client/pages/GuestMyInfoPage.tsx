@@ -1,9 +1,20 @@
 import * as React from "react";
 import { Link, useParams } from "react-router-dom";
-import type { GuestMySongsResponse, PartyView } from "@/shared/types";
+import type {
+  GuestInfoResponse,
+  PartyRateLimits,
+  PartyView,
+} from "@/shared/types";
 import { GuestNav } from "../components/GuestNav";
 import { GuestNamePrompt } from "../components/GuestNamePrompt";
-import { BoostBadge, BoostButton, formatApiError, TrackTitle, UpvoteCount, DownvoteCount } from "../components/QueueUi";
+import {
+  BoostBadge,
+  BoostButton,
+  formatApiError,
+  TrackTitle,
+  UpvoteCount,
+  DownvoteCount,
+} from "../components/QueueUi";
 import { usePopup } from "../hooks/usePopup";
 import { boostApiMessage } from "../utils/queue-action-messages";
 import { api, joinParty } from "../http";
@@ -21,22 +32,149 @@ function statusLabel(status: string): string {
   }
 }
 
-export function GuestMySongsPage() {
+function formatRateLimitWindow(windowMs: number): string {
+  const minutes = windowMs / (60 * 1000);
+  if (minutes >= 60 && minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return hours === 1 ? "per hour" : `per ${hours} hours`;
+  }
+  if (minutes >= 1) {
+    return minutes === 1 ? "per minute" : `per ${minutes} minutes`;
+  }
+  const seconds = Math.round(windowMs / 1000);
+  return seconds === 1 ? "per second" : `per ${seconds} seconds`;
+}
+
+function QuotaTile({
+  label,
+  remaining,
+  limit,
+  windowMs,
+}: {
+  label: string;
+  remaining: number;
+  limit: number;
+  windowMs: number;
+}) {
+  const pct = limit > 0 ? Math.round((remaining / limit) * 100) : 0;
+
+  return (
+    <div className="guest-info-quota-tile">
+      <span className="guest-info-quota-label">{label}</span>
+      <span className="guest-info-quota-value">{remaining}</span>
+      <span className="guest-info-quota-meta">
+        {remaining} of {limit} left · {formatRateLimitWindow(windowMs)}
+      </span>
+      <div
+        className="guest-info-quota-bar"
+        role="progressbar"
+        aria-valuenow={remaining}
+        aria-valuemin={0}
+        aria-valuemax={limit}
+        aria-label={`${label}: ${remaining} of ${limit} remaining`}
+      >
+        <div
+          className="guest-info-quota-bar-fill"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function GuestQuotaPanel({
+  quota,
+  rateLimits,
+}: {
+  quota: GuestInfoResponse["quota"];
+  rateLimits: PartyRateLimits;
+}) {
+  return (
+    <section className="guest-info-quota-panel card">
+      <h2>Actions left</h2>
+      <p className="guest-info-section-intro">
+        Your remaining adds, upvotes, downvotes, and boosts for this party.
+      </p>
+      <div className="guest-info-quota-grid">
+        <QuotaTile
+          label="Adds"
+          remaining={quota.add}
+          limit={rateLimits.add.count}
+          windowMs={rateLimits.add.windowMs}
+        />
+        <QuotaTile
+          label="Upvotes"
+          remaining={quota.upvote}
+          limit={rateLimits.upvote.count}
+          windowMs={rateLimits.upvote.windowMs}
+        />
+        <QuotaTile
+          label="Downvotes"
+          remaining={quota.veto}
+          limit={rateLimits.veto.count}
+          windowMs={rateLimits.veto.windowMs}
+        />
+        <QuotaTile
+          label="Boosts"
+          remaining={quota.boost}
+          limit={rateLimits.boost.count}
+          windowMs={rateLimits.boost.windowMs}
+        />
+      </div>
+    </section>
+  );
+}
+
+function GuestActivityPanel({ stats }: { stats: GuestInfoResponse["stats"] }) {
+  return (
+    <section className="guest-info-activity-panel card">
+      <h2>Your activity</h2>
+      <div className="guest-info-stat-grid">
+        <div className="guest-info-stat">
+          <span className="guest-info-stat-value">{stats.upvotesGiven}</span>
+          <span className="guest-info-stat-label">Upvotes given</span>
+        </div>
+        <div className="guest-info-stat">
+          <span className="guest-info-stat-value">{stats.downvotesGiven}</span>
+          <span className="guest-info-stat-label">Downvotes given</span>
+        </div>
+        <div className="guest-info-stat">
+          <span className="guest-info-stat-value">{stats.boostsGiven}</span>
+          <span className="guest-info-stat-label">Boosts used</span>
+        </div>
+        <div className="guest-info-stat">
+          <span className="guest-info-stat-value">{stats.songsInQueue}</span>
+          <span className="guest-info-stat-label">Songs in queue</span>
+        </div>
+        <div className="guest-info-stat">
+          <span className="guest-info-stat-value">{stats.songsPlayed}</span>
+          <span className="guest-info-stat-label">Songs played</span>
+        </div>
+        <div className="guest-info-stat">
+          <span className="guest-info-stat-value">{stats.songsAdded}</span>
+          <span className="guest-info-stat-label">Songs added</span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export function GuestMyInfoPage() {
   const { slug = "" } = useParams<{ slug: string }>();
   const [joined, setJoined] = React.useState(false);
   const [me, setMe] = React.useState<{ displayName: string | null } | null>(
     null,
   );
   const [party, setParty] = React.useState<PartyView | null>(null);
-  const [songs, setSongs] = React.useState<GuestMySongsResponse | null>(null);
+  const [info, setInfo] = React.useState<GuestInfoResponse | null>(null);
   const [joinError, setJoinError] = React.useState<string | null>(null);
   const { showPopup, PopupHost } = usePopup();
 
   const load = React.useCallback(async () => {
     if (!slug) return;
     try {
-      const data = await api<GuestMySongsResponse>(`/parties/${slug}/me/songs`);
-      setSongs(data);
+      const data = await api<GuestInfoResponse>(`/parties/${slug}/me/info`);
+      setInfo(data);
       const partyInfo = await api<PartyView>(`/parties/${slug}`);
       setParty(partyInfo);
     } catch (e) {
@@ -107,17 +245,17 @@ export function GuestMySongsPage() {
   }
 
   const partyOff = party != null && party.status !== "on";
-  const canMutate = Boolean(songs && !partyOff);
+  const canMutate = Boolean(info && !partyOff);
   const removedHistory =
-    songs?.history.filter((song) => song.status === "skipped") ?? [];
+    info?.history.filter((song) => song.status === "skipped") ?? [];
   const playedHistory =
-    songs?.history.filter((song) => song.status === "played") ?? [];
+    info?.history.filter((song) => song.status === "played") ?? [];
   const vetoedHistory =
-    songs?.history.filter((song) => song.status === "vetoed") ?? [];
+    info?.history.filter((song) => song.status === "vetoed") ?? [];
 
   function renderHistorySection(
     title: string,
-    items: NonNullable<typeof songs>["history"],
+    items: NonNullable<typeof info>["history"],
   ) {
     if (items.length === 0) return null;
     return (
@@ -169,28 +307,33 @@ export function GuestMySongsPage() {
   }
 
   return (
-    <div className="app guest-my-songs-page">
+    <div className="app guest-my-info-page">
       <h1>{party?.name ?? "Jukebox"}</h1>
+      <p className="guest-info-display-name">{info?.displayName ?? me.displayName}</p>
 
-      <GuestNav
-        slug={slug}
-        activeSongCount={songs?.active.length ?? 0}
-      />
+      <GuestNav slug={slug} activeSongCount={info?.active.length ?? 0} />
 
       {partyOff && (
         <div className="banner off">Party is paused — view only.</div>
       )}
 
+      {info && (
+        <>
+          <GuestQuotaPanel quota={info.quota} rateLimits={info.rateLimits} />
+          <GuestActivityPanel stats={info.stats} />
+        </>
+      )}
+
       <div className="card">
-        <h2>My Songs</h2>
+        <h2>My songs</h2>
         <p className="small guest-my-songs-intro">
           Songs you added to the party queue.
-          {songs?.boostUsed
+          {info?.boostUsed
             ? " No boosts left in your current window."
-            : ` You have ${songs?.boostsLeft ?? 0} boost${songs?.boostsLeft === 1 ? "" : "s"} left.`}
+            : ` You have ${info?.boostsLeft ?? 0} boost${info?.boostsLeft === 1 ? "" : "s"} left.`}
         </p>
 
-        {songs?.active.length === 0 &&
+        {info?.active.length === 0 &&
         removedHistory.length === 0 &&
         playedHistory.length === 0 &&
         vetoedHistory.length === 0 ? (
@@ -200,7 +343,7 @@ export function GuestMySongsPage() {
           </p>
         ) : null}
 
-        {songs?.active.map((song) => (
+        {info?.active.map((song) => (
           <div
             key={song.id}
             className={`track card guest-my-song${song.isBoosted ? " track--boosted" : ""}`}

@@ -13,6 +13,7 @@ import {
   touchGuestLastSeen,
   countGuestActiveSongs,
   getGuestMySongs,
+  getGuestProfileStats,
 } from "../services/guests";
 import { getClientIp } from "../client-ip";
 import {
@@ -688,6 +689,42 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
     recordAction(db, guest.id, "boost");
     requestPartySync(db, party.id);
     return c.json({ ok: true });
+  });
+
+  app.get("/parties/:slug/me/info", (c) => {
+    let guest;
+    try {
+      guest = requireGuest(c);
+    } catch {
+      return c.json({ error: "No session", code: "NO_SESSION" }, 401);
+    }
+    const party = getPartyBySlug(db, c.req.param("slug"));
+    if (!party) return c.json({ error: "Party not found", code: "NOT_FOUND" }, 404);
+
+    const limits = parseRateLimits(party.rate_limits);
+    const quota = remainingQuota(db, guest.id, limits);
+    const boostsLeft = quota.boost;
+    const { active, history } = getGuestMySongs(
+      db,
+      party.id,
+      guest.id,
+      boostsLeft,
+    );
+    return c.json({
+      displayName: guest.displayName,
+      quota: {
+        add: quota.add,
+        upvote: quota.upvote,
+        veto: quota.veto,
+        boost: quota.boost,
+      },
+      rateLimits: limits,
+      stats: getGuestProfileStats(db, party.id, guest.id),
+      active,
+      history,
+      boostUsed: boostsLeft === 0,
+      boostsLeft,
+    });
   });
 
   app.get("/parties/:slug/me/songs", (c) => {

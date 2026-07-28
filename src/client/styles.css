@@ -58,6 +58,7 @@ input {
 
 @media (min-width: 768px) {
   .app,
+  .guest-my-info-page,
   .guest-my-songs-page,
   .admin-guests-page {
     max-width: 960px;
@@ -66,6 +67,7 @@ input {
 
 @media (min-width: 1200px) {
   .app,
+  .guest-my-info-page,
   .guest-my-songs-page,
   .admin-guests-page {
     max-width: 1100px;
@@ -1071,8 +1073,119 @@ button.danger:hover {
   font-weight: 700;
 }
 
-.guest-my-songs-page {
+.guest-my-songs-page,
+.guest-my-info-page {
   width: 100%;
+}
+
+.guest-info-display-name {
+  margin: -0.35rem 0 1rem;
+  color: #8a8a96;
+  font-size: 0.95rem;
+}
+
+.guest-info-section-intro {
+  margin: 0 0 1rem;
+  color: #8a8a96;
+  font-size: 0.875rem;
+}
+
+.guest-info-quota-panel h2,
+.guest-info-activity-panel h2 {
+  margin-top: 0;
+}
+
+.guest-info-quota-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+@media (min-width: 640px) {
+  .guest-info-quota-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.guest-info-quota-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.85rem;
+  border-radius: 10px;
+  background: #121218;
+  border: 1px solid #2a2a32;
+  min-width: 0;
+}
+
+.guest-info-quota-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8a9bb8;
+}
+
+.guest-info-quota-value {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1;
+  color: #fff;
+}
+
+.guest-info-quota-meta {
+  font-size: 0.75rem;
+  color: #8a8a96;
+  line-height: 1.35;
+}
+
+.guest-info-quota-bar {
+  margin-top: 0.35rem;
+  height: 4px;
+  border-radius: 999px;
+  background: #2a2a32;
+  overflow: hidden;
+}
+
+.guest-info-quota-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #1db954, #1ed760);
+  transition: width 0.2s ease;
+}
+
+.guest-info-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+@media (min-width: 640px) {
+  .guest-info-stat-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.guest-info-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.85rem;
+  border-radius: 10px;
+  background: #121218;
+  border: 1px solid #2a2a32;
+}
+
+.guest-info-stat-value {
+  font-size: 1.65rem;
+  font-weight: 700;
+  line-height: 1;
+  color: #fff;
+}
+
+.guest-info-stat-label {
+  font-size: 0.8125rem;
+  color: #b8b8c0;
 }
 
 .guest-my-songs-intro {

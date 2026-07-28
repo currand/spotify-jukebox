@@ -12,7 +12,9 @@ export function GuestNav({
   const base = `/p/${slug}`;
   const onQueue =
     location.pathname === base || location.pathname === `${base}/`;
-  const onMySongs = location.pathname === `${base}/songs`;
+  const onMyInfo =
+    location.pathname === `${base}/info` ||
+    location.pathname === `${base}/songs`;
 
   return (
     <nav className="guest-nav" aria-label="Guest sections">
@@ -23,10 +25,10 @@ export function GuestNav({
         Queue
       </Link>
       <Link
-        to={`${base}/songs`}
-        className={`guest-nav-link${onMySongs ? " guest-nav-link--active" : ""}`}
+        to={`${base}/info`}
+        className={`guest-nav-link${onMyInfo ? " guest-nav-link--active" : ""}`}
       >
-        My Songs
+        My Info
         {activeSongCount > 0 ? (
           <span className="guest-nav-badge">{activeSongCount}</span>
         ) : null}

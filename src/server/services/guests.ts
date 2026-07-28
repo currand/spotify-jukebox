@@ -1,5 +1,5 @@
 import type { Db } from "../db/schema";
-import type { GuestAdminView, GuestMySongView, QueueItemStatus } from "@/shared/types";
+import type { GuestProfileStats, GuestMySongView, QueueItemStatus } from "@/shared/types";
 import { displayNameConflictKind, type DisplayNameConflictKind } from "@/shared/dedup";
 import {
   getNextUpcomingItem,
@@ -148,6 +148,47 @@ export function getGuestMySongs(
   });
 
   return { active, history };
+}
+
+export function getGuestProfileStats(
+  db: Db,
+  partyId: string,
+  guestId: string,
+): GuestProfileStats {
+  const upvotes = db
+    .query(`SELECT COUNT(*) AS count FROM votes WHERE guest_id = ?`)
+    .get(guestId) as { count: number };
+  const vetoes = db
+    .query(`SELECT COUNT(*) AS count FROM vetoes WHERE guest_id = ?`)
+    .get(guestId) as { count: number };
+  const boosts = db
+    .query(
+      `SELECT COUNT(*) AS count FROM rate_limit_events WHERE guest_id = ? AND action = 'boost'`,
+    )
+    .get(guestId) as { count: number };
+  const songs = db
+    .query(
+      `SELECT
+         COUNT(*) AS total,
+         SUM(CASE WHEN status IN ('pending', 'queued', 'playing') THEN 1 ELSE 0 END) AS in_queue,
+         SUM(CASE WHEN status = 'played' THEN 1 ELSE 0 END) AS played
+       FROM queue_items
+       WHERE party_id = ? AND added_by_guest_id = ? AND from_seed = 0`,
+    )
+    .get(partyId, guestId) as {
+    total: number;
+    in_queue: number | null;
+    played: number | null;
+  };
+
+  return {
+    upvotesGiven: upvotes.count,
+    downvotesGiven: vetoes.count,
+    boostsGiven: boosts.count,
+    songsAdded: songs.total,
+    songsInQueue: songs.in_queue ?? 0,
+    songsPlayed: songs.played ?? 0,
+  };
 }
 
 export function touchGuestLastSeen(
