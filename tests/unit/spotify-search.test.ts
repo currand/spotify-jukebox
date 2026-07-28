@@ -33,7 +33,7 @@ describe("normalizeRateLimits", () => {
     const limits = normalizeRateLimits({
       add: DEFAULT_RATE_LIMITS.add,
       upvote: DEFAULT_RATE_LIMITS.upvote,
-      veto: DEFAULT_RATE_LIMITS.veto,
+      downvote: DEFAULT_RATE_LIMITS.downvote,
     } as typeof DEFAULT_RATE_LIMITS);
     expect(limits.search.count).toBe(6);
     expect(limits.partySearch.count).toBe(24);

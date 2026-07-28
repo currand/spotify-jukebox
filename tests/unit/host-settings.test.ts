@@ -100,11 +100,11 @@ describe("setDefaultRateLimits", () => {
 });
 
 describe("setDefaultGuestLimits", () => {
-  test("persists veto threshold and boost cap with rate limits", () => {
+  test("persists downvote threshold and boost cap with rate limits", () => {
     const db = testDb();
     const saved = setDefaultGuestLimits(db, {
       rateLimits: DEFAULT_RATE_LIMITS,
-      vetoThreshold: 5,
+      downvoteThreshold: 5,
       boostCap: 2,
     });
     expect(getDefaultGuestLimits(db, testConfig())).toEqual(saved);
@@ -115,7 +115,7 @@ describe("setDefaultGuestLimits", () => {
     setDefaultRateLimits(db, DEFAULT_RATE_LIMITS);
     expect(getDefaultGuestLimits(db, testConfig())).toEqual({
       rateLimits: DEFAULT_RATE_LIMITS,
-      vetoThreshold: 3,
+      downvoteThreshold: 3,
       boostCap: null,
     });
   });

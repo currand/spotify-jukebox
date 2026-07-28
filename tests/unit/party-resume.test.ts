@@ -13,7 +13,7 @@ import { getPartyExportTracks, insertQueueItem } from "../../src/server/services
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS parties (
   id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'off', veto_threshold INTEGER NOT NULL DEFAULT 3,
+  status TEXT NOT NULL DEFAULT 'off', downvote_threshold INTEGER NOT NULL DEFAULT 3,
   boost_cap INTEGER,
   seed_playlist_id TEXT NOT NULL, rate_limits TEXT NOT NULL,
   sync_generation INTEGER NOT NULL DEFAULT 0,
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS guests (
 CREATE TABLE IF NOT EXISTS queue_items (
   id TEXT PRIMARY KEY, party_id TEXT NOT NULL, spotify_uri TEXT NOT NULL,
   track_name TEXT NOT NULL, artist_name TEXT NOT NULL, album_art_url TEXT,
-  upvote_count INTEGER NOT NULL DEFAULT 0, veto_count INTEGER NOT NULL DEFAULT 0,
+  upvote_count INTEGER NOT NULL DEFAULT 0, downvote_count INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'pending', is_boosted INTEGER NOT NULL DEFAULT 0,
   boost_position INTEGER, boosted_by_guest_id TEXT, manual_order INTEGER, added_by_guest_id TEXT,
   added_at TEXT NOT NULL, finished_at TEXT,
@@ -58,7 +58,7 @@ function insertParty(
   const id = overrides?.id ?? crypto.randomUUID();
   const now = overrides?.updated_at ?? new Date().toISOString();
   db.run(
-    `INSERT INTO parties (id, slug, name, status, veto_threshold, boost_cap, seed_playlist_id, rate_limits, sync_generation, created_at, updated_at)
+    `INSERT INTO parties (id, slug, name, status, downvote_threshold, boost_cap, seed_playlist_id, rate_limits, sync_generation, created_at, updated_at)
      VALUES (?, ?, ?, ?, 3, NULL, 'seed', ?, 0, ?, ?)`,
     [
       id,

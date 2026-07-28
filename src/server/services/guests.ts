@@ -17,7 +17,7 @@ import {
 const TERMINAL_STATUSES: QueueItemStatus[] = [
   "played",
   "skipped",
-  "vetoed",
+  "downvoted",
   "unblocked",
 ];
 const ACTIVE_STATUSES: QueueItemStatus[] = ["pending", "queued", "playing"];
@@ -31,7 +31,7 @@ interface GuestStatsRow {
   last_seen_at: string | null;
   last_ip: string | null;
   upvote_count: number;
-  veto_count: number;
+  downvote_count: number;
 }
 
 interface GuestSongRow {
@@ -79,7 +79,7 @@ export function getGuestMySongs(
 ): { active: GuestMySongView[]; history: GuestMySongView[] } {
   const rows = db
     .query(
-      `SELECT q.id, q.track_name, q.artist_name, q.album_art_url, q.upvote_count, q.veto_count,
+      `SELECT q.id, q.track_name, q.artist_name, q.album_art_url, q.upvote_count, q.downvote_count,
               q.status, q.is_boosted, q.added_at, q.finished_at, bg.display_name as booster_display_name
        FROM queue_items q
        LEFT JOIN guests bg ON bg.id = q.boosted_by_guest_id
@@ -94,7 +94,7 @@ export function getGuestMySongs(
       | "artist_name"
       | "album_art_url"
       | "upvote_count"
-      | "veto_count"
+      | "downvote_count"
       | "status"
       | "is_boosted"
       | "added_at"
@@ -120,7 +120,7 @@ export function getGuestMySongs(
       boostedBy:
         row.is_boosted === 1 ? (row.booster_display_name ?? null) : null,
       upvoteCount: row.upvote_count,
-      vetoCount: row.veto_count,
+      downvoteCount: row.downvote_count,
       addedAt: row.added_at,
       finishedAt: row.finished_at,
       queuePosition: formatGuestQueuePosition(
@@ -168,8 +168,8 @@ export function getGuestProfileStats(
   const upvotes = db
     .query(`SELECT COUNT(*) AS count FROM votes WHERE guest_id = ?`)
     .get(guestId) as { count: number };
-  const vetoes = db
-    .query(`SELECT COUNT(*) AS count FROM vetoes WHERE guest_id = ?`)
+  const downvotes = db
+    .query(`SELECT COUNT(*) AS count FROM downvotes WHERE guest_id = ?`)
     .get(guestId) as { count: number };
   const boosts = db
     .query(
@@ -193,7 +193,7 @@ export function getGuestProfileStats(
 
   return {
     upvotesGiven: upvotes.count,
-    downvotesGiven: vetoes.count,
+    downvotesGiven: downvotes.count,
     boostsGiven: boosts.count,
     songsAdded: songs.total,
     songsInQueue: songs.in_queue ?? 0,
@@ -266,7 +266,7 @@ export function reclaimGuestSession(
   sessionToken: string;
 } {
   db.run(`DELETE FROM votes WHERE guest_id = ?`, [newGuestId]);
-  db.run(`DELETE FROM vetoes WHERE guest_id = ?`, [newGuestId]);
+  db.run(`DELETE FROM downvotes WHERE guest_id = ?`, [newGuestId]);
   db.run(`DELETE FROM rate_limit_events WHERE guest_id = ?`, [newGuestId]);
   db.run(`DELETE FROM guests WHERE id = ?`, [newGuestId]);
 
@@ -309,7 +309,7 @@ export function getPartyGuestAdminViews(
     .query(
       `SELECT g.id, g.display_name, g.boost_used, g.disabled, g.created_at, g.last_seen_at, g.last_ip,
         (SELECT COUNT(*) FROM votes v WHERE v.guest_id = g.id) AS upvote_count,
-        (SELECT COUNT(*) FROM vetoes ve WHERE ve.guest_id = g.id) AS veto_count
+        (SELECT COUNT(*) FROM downvotes ve WHERE ve.guest_id = g.id) AS downvote_count
        FROM guests g
        WHERE g.party_id = ? AND ${NAMED_GUEST_SQL}
        ORDER BY COALESCE(g.last_seen_at, g.created_at) DESC`,
@@ -342,7 +342,7 @@ export function getPartyGuestAdminViews(
       lastSeenAt: guest.last_seen_at,
       lastIp: guest.last_ip,
       upvoteCount: guest.upvote_count,
-      vetoCount: guest.veto_count,
+      downvoteCount: guest.downvote_count,
       boostCount: activeBoosts.count,
       songsAdded: songs.map((song) => ({
         trackName: song.track_name,
@@ -365,7 +365,7 @@ function deleteGuestsAndRelatedData(db: Db, partyId: string, guestIds: string[])
     guestIds,
   );
   db.run(
-    `DELETE FROM vetoes WHERE guest_id IN (${placeholders})`,
+    `DELETE FROM downvotes WHERE guest_id IN (${placeholders})`,
     guestIds,
   );
   db.run(
@@ -417,7 +417,7 @@ export function purgeStalePartyGuests(
   );
 }
 
-/** Remove all guests and their votes/vetoes/rate limits; queue songs stay. */
+/** Remove all guests and their votes/downvotes/rate limits; queue songs stay. */
 export function clearPartyGuests(db: Db, partyId: string): number {
   const countRow = db
     .query(`SELECT COUNT(*) AS count FROM guests WHERE party_id = ?`)
@@ -451,7 +451,7 @@ export function clearGuestBoost(
   return result.changes ?? 0;
 }
 
-/** Clear a guest's rate-limit counters so they can add/upvote/veto again. */
+/** Clear a guest's rate-limit counters so they can add/upvote/downvote again. */
 export function resetGuestRateLimits(
   db: Db,
   partyId: string,

@@ -28,7 +28,7 @@ import {
   insertQueueItem,
   isGuestBoostBlocked,
   isGuestUpvoteBlocked,
-  isGuestVetoBlocked,
+  isGuestDownvoteBlocked,
   markFinished,
   nextBoostPosition,
   toQueueItemView,
@@ -290,7 +290,7 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
       slug: party.slug,
       name: party.name,
       status: party.status,
-      vetoThreshold: party.veto_threshold,
+      downvoteThreshold: party.downvote_threshold,
       boostCap: party.boost_cap ?? null,
       rateLimits: parseRateLimits(party.rate_limits),
     });
@@ -327,21 +327,21 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
       for (const vote of votes) {
         upvotedItemIds.add(vote.queue_item_id);
       }
-      const vetoes = db
+      const downvotes = db
         .query(
-          `SELECT queue_item_id FROM vetoes
+          `SELECT queue_item_id FROM downvotes
            WHERE guest_id = ? AND queue_item_id IN (${placeholders})`,
         )
         .all(guest.id, ...itemIds) as { queue_item_id: string }[];
-      for (const veto of vetoes) {
-        downvotedItemIds.add(veto.queue_item_id);
+      for (const downvote of downvotes) {
+        downvotedItemIds.add(downvote.queue_item_id);
       }
     }
     const toGuestQueueItemView = (row: (typeof items)[number]) => ({
       ...toQueueItemView(row),
       guestUpvoteBlocked: isGuestUpvoteBlocked(items, row.id),
       guestBoostBlocked: isGuestBoostBlocked(items, row.id),
-      guestVetoBlocked: isGuestVetoBlocked(items, row.id),
+      guestDownvoteBlocked: isGuestDownvoteBlocked(items, row.id),
       guestHasUpvoted: upvotedItemIds.has(row.id),
       guestHasDownvoted: downvotedItemIds.has(row.id),
     });
@@ -548,7 +548,7 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
     }
   });
 
-  app.post("/parties/:slug/queue/:itemId/veto", async (c) => {
+  app.post("/parties/:slug/queue/:itemId/downvote", async (c) => {
     const slug = c.req.param("slug");
     const itemId = c.req.param("itemId");
     let guest;
@@ -573,7 +573,7 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
     }
 
     const queueItems = getQueueItems(db, party.id, ["pending", "queued", "playing"]);
-    if (isGuestVetoBlocked(queueItems, itemId)) {
+    if (isGuestDownvoteBlocked(queueItems, itemId)) {
       return c.json(
         {
           error: "This song is already queued in Spotify",
@@ -587,12 +587,12 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
       .query(`SELECT * FROM queue_items WHERE id = ? AND party_id = ?`)
       .get(itemId, party.id) as {
       status: QueueItemStatus;
-      veto_count: number;
+      downvote_count: number;
     } | null;
     if (!item) return c.json({ error: "Invalid item", code: "INVALID_ITEM" }, 400);
     if (item.status === "playing") {
       return c.json(
-        { error: "Cannot veto now playing", code: "NOW_PLAYING" },
+        { error: "Cannot downvote now playing", code: "NOW_PLAYING" },
         400,
       );
     }
@@ -601,14 +601,14 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
     }
 
     const limits = parseRateLimits(party.rate_limits);
-    const rl = checkRateLimit(db, guest.id, "veto", limits);
+    const rl = checkRateLimit(db, guest.id, "downvote", limits);
     if (!rl.allowed) {
-      recordLimitHit("guest_veto");
+      recordLimitHit("guest_downvote");
       return c.json(
         {
           error: formatGuestRateLimitMessage(
-            "veto",
-            limits.veto,
+            "downvote",
+            limits.downvote,
             rl.retryAfterMs,
           ),
           code: "RATE_LIMITED",
@@ -620,22 +620,22 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
 
     try {
       db.run(
-        `INSERT INTO vetoes (guest_id, queue_item_id, created_at) VALUES (?, ?, ?)`,
+        `INSERT INTO downvotes (guest_id, queue_item_id, created_at) VALUES (?, ?, ?)`,
         [guest.id, itemId, new Date().toISOString()],
       );
-      const newCount = item.veto_count + 1;
-      db.run(`UPDATE queue_items SET veto_count = ? WHERE id = ?`, [
+      const newCount = item.downvote_count + 1;
+      db.run(`UPDATE queue_items SET downvote_count = ? WHERE id = ?`, [
         newCount,
         itemId,
       ]);
-      recordAction(db, guest.id, "veto");
-      if (newCount >= party.veto_threshold) {
-        markFinished(db, itemId, "vetoed");
+      recordAction(db, guest.id, "downvote");
+      if (newCount >= party.downvote_threshold) {
+        markFinished(db, itemId, "downvoted");
         requestPartySync(db, party.id);
       }
-      return c.json({ ok: true, vetoCount: newCount });
+      return c.json({ ok: true, downvoteCount: newCount });
     } catch {
-      return c.json({ error: "Already vetoed", code: "ALREADY_VETOED" }, 400);
+      return c.json({ error: "Already downvoted", code: "ALREADY_DOWNVOTED" }, 400);
     }
   });
 
@@ -757,7 +757,7 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
       quota: {
         add: quota.add,
         upvote: quota.upvote,
-        veto: quota.veto,
+        downvote: quota.downvote,
         boost: quota.boost,
       },
       rateLimits: limits,

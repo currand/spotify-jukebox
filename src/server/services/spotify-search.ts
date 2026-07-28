@@ -130,7 +130,7 @@ export function normalizeRateLimits(raw: PartyRateLimits): PartyRateLimits {
   return {
     add: raw.add ?? DEFAULT_RATE_LIMITS.add,
     upvote: raw.upvote ?? DEFAULT_RATE_LIMITS.upvote,
-    veto: raw.veto ?? DEFAULT_RATE_LIMITS.veto,
+    downvote: raw.downvote ?? DEFAULT_RATE_LIMITS.downvote,
     boost: raw.boost ?? DEFAULT_RATE_LIMITS.boost,
     search: raw.search ?? DEFAULT_RATE_LIMITS.search,
     partySearch: raw.partySearch ?? DEFAULT_PARTY_SEARCH_LIMIT,

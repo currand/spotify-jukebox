@@ -1,7 +1,7 @@
 export type LimitHitKind =
   | "guest_add"
   | "guest_upvote"
-  | "guest_veto"
+  | "guest_downvote"
   | "guest_boost"
   | "guest_search"
   | "party_search";

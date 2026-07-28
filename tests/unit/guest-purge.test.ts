@@ -31,7 +31,7 @@ function testDb(): Db {
       artist_name TEXT NOT NULL,
       album_art_url TEXT,
       upvote_count INTEGER NOT NULL DEFAULT 0,
-      veto_count INTEGER NOT NULL DEFAULT 0,
+      downvote_count INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL,
       is_boosted INTEGER NOT NULL DEFAULT 0,
       boost_position INTEGER,
@@ -52,7 +52,7 @@ function testDb(): Db {
     )
   `);
   db.run(`
-    CREATE TABLE vetoes (
+    CREATE TABLE downvotes (
       guest_id TEXT NOT NULL,
       queue_item_id TEXT NOT NULL
     )

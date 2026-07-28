@@ -25,7 +25,7 @@ function statusLabel(status: string): string {
       return "Played";
     case "skipped":
       return "Removed";
-    case "vetoed":
+    case "downvoted":
       return "Downvoted";
     case "unblocked":
       return "Unblocked";
@@ -125,8 +125,8 @@ export function GuestMyInfoPage() {
     info?.history.filter((song) => song.status === "skipped") ?? [];
   const playedHistory =
     info?.history.filter((song) => song.status === "played") ?? [];
-  const vetoedHistory =
-    info?.history.filter((song) => song.status === "vetoed") ?? [];
+  const downvotedHistory =
+    info?.history.filter((song) => song.status === "downvoted") ?? [];
 
   function renderHistorySection(
     title: string,
@@ -211,7 +211,7 @@ export function GuestMyInfoPage() {
         {info?.active.length === 0 &&
         removedHistory.length === 0 &&
         playedHistory.length === 0 &&
-        vetoedHistory.length === 0 ? (
+        downvotedHistory.length === 0 ? (
           <p className="guest-my-songs-empty">
             You haven&apos;t added any songs yet.{" "}
             <Link to={`/p/${slug}`}>Search the queue</Link>
@@ -232,7 +232,7 @@ export function GuestMyInfoPage() {
               />
               <p>
                 {song.artistName} · <UpvoteCount count={song.upvoteCount} /> ·{" "}
-                <DownvoteCount count={song.vetoCount} />
+                <DownvoteCount count={song.downvoteCount} />
               </p>
               {song.queuePosition && (
                 <p className="guest-my-song-position">{song.queuePosition}</p>
@@ -269,7 +269,7 @@ export function GuestMyInfoPage() {
 
         {renderHistorySection("Removed", removedHistory)}
         {renderHistorySection("Played", playedHistory)}
-        {renderHistorySection("Downvoted", vetoedHistory)}
+        {renderHistorySection("Downvoted", downvotedHistory)}
       </div>
       <PopupHost />
     </div>

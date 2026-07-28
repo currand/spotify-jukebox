@@ -76,7 +76,7 @@ If the token leaks, generate a new one, update `.env.production`, restart, and u
 | CORS | Production API only accepts credentialed requests from `BASE_URL`. |
 | Security headers | CSP, frame denial, nosniff via Hono `secureHeaders`. |
 | Probe guard | Blocks common scanner paths; rate-limits host/admin API probing (not guest party traffic). |
-| Guest action limits | Per-guest add/upvote/veto quotas (party-configurable). |
+| Guest action limits | Per-guest add/upvote/downvote quotas (party-configurable). |
 | OAuth state TTL | 10-minute expiry on Spotify OAuth state tokens. |
 | SQL | Parameterized queries throughout. |
 

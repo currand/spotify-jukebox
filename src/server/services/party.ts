@@ -14,7 +14,7 @@ export interface PartyRow {
   slug: string;
   name: string;
   status: PartyStatus;
-  veto_threshold: number;
+  downvote_threshold: number;
   boost_cap: number | null;
   rate_limits: string;
   sync_generation: number;
@@ -37,7 +37,7 @@ const EMPTY_QUEUE_SUMMARY: ArchivedPartyQueueSummary = {
   queued: 0,
   played: 0,
   skipped: 0,
-  vetoed: 0,
+  downvoted: 0,
 };
 
 export function getActiveParty(db: Db): PartyRow | null {
@@ -184,7 +184,7 @@ export function formatPartyView(
     slug: party.slug,
     name: party.name,
     status: party.status,
-    vetoThreshold: party.veto_threshold,
+    downvoteThreshold: party.downvote_threshold,
     boostCap: party.boost_cap ?? null,
     rateLimits,
   };

@@ -5,7 +5,7 @@ export type QueueItemStatus =
   | "playing"
   | "played"
   | "skipped"
-  | "vetoed"
+  | "downvoted"
   | "unblocked";
 
 export interface RateLimitConfig {
@@ -16,7 +16,7 @@ export interface RateLimitConfig {
 export interface PartyRateLimits {
   add: RateLimitConfig;
   upvote: RateLimitConfig;
-  veto: RateLimitConfig;
+  downvote: RateLimitConfig;
   /** Per-guest boost budget (replaces lifetime boost_used flag) */
   boost: RateLimitConfig;
   /** Per-guest Spotify search budget */
@@ -33,24 +33,24 @@ export const DEFAULT_PARTY_SEARCH_LIMIT: RateLimitConfig = {
 export const DEFAULT_RATE_LIMITS: PartyRateLimits = {
   add: { count: 3, windowMs: 20 * 60 * 1000 },
   upvote: { count: 10, windowMs: 60 * 60 * 1000 },
-  veto: { count: 3, windowMs: 30 * 60 * 1000 },
+  downvote: { count: 3, windowMs: 30 * 60 * 1000 },
   boost: { count: 1, windowMs: 10 * 60 * 1000 },
   search: { count: 6, windowMs: 60 * 1000 },
   partySearch: DEFAULT_PARTY_SEARCH_LIMIT,
 };
 
-export const DEFAULT_VETO_THRESHOLD = 3;
+export const DEFAULT_DOWNVOTE_THRESHOLD = 3;
 
 export interface DefaultGuestLimits {
   rateLimits: PartyRateLimits;
-  vetoThreshold: number;
+  downvoteThreshold: number;
   boostCap: number | null;
 }
 
 export function factoryDefaultGuestLimits(): DefaultGuestLimits {
   return {
     rateLimits: DEFAULT_RATE_LIMITS,
-    vetoThreshold: DEFAULT_VETO_THRESHOLD,
+    downvoteThreshold: DEFAULT_DOWNVOTE_THRESHOLD,
     boostCap: null,
   };
 }
@@ -78,7 +78,7 @@ export interface QueueItemView {
   albumArtUrl: string | null;
   durationMs?: number | null;
   upvoteCount: number;
-  vetoCount: number;
+  downvoteCount: number;
   status: QueueItemStatus;
   isBoosted: boolean;
   boostPosition: number | null;
@@ -90,8 +90,8 @@ export interface QueueItemView {
   guestUpvoteBlocked?: boolean;
   /** Guest UI: boost would affect the locked next slot */
   guestBoostBlocked?: boolean;
-  /** Guest UI: veto blocked — already in Spotify buffer */
-  guestVetoBlocked?: boolean;
+  /** Guest UI: downvote blocked — already in Spotify buffer */
+  guestDownvoteBlocked?: boolean;
   /** Guest UI: current guest already upvoted this track */
   guestHasUpvoted?: boolean;
   /** Guest UI: current guest already downvoted this track */
@@ -105,7 +105,7 @@ export interface PartyView {
   slug: string;
   name: string;
   status: PartyStatus;
-  vetoThreshold: number;
+  downvoteThreshold: number;
   boostCap: number | null;
   rateLimits: PartyRateLimits;
 }
@@ -116,7 +116,7 @@ export interface GuestMe {
   boostUsed: boolean;
   tutorialSeen: boolean;
   activeSongCount?: number;
-  quota?: { add: number; upvote: number; veto: number; boost: number };
+  quota?: { add: number; upvote: number; downvote: number; boost: number };
 }
 
 export interface GuestMySongView {
@@ -128,7 +128,7 @@ export interface GuestMySongView {
   isBoosted: boolean;
   boostedBy: string | null;
   upvoteCount: number;
-  vetoCount: number;
+  downvoteCount: number;
   addedAt: string;
   finishedAt: string | null;
   queuePosition: string | null;
@@ -148,7 +148,7 @@ export interface GuestProfileStats {
 
 export interface GuestInfoResponse {
   displayName: string | null;
-  quota: { add: number; upvote: number; veto: number; boost: number };
+  quota: { add: number; upvote: number; downvote: number; boost: number };
   rateLimits: PartyRateLimits;
   stats: GuestProfileStats;
   active: GuestMySongView[];
@@ -180,7 +180,7 @@ export interface GuestAdminView {
   lastSeenAt: string | null;
   lastIp: string | null;
   upvoteCount: number;
-  vetoCount: number;
+  downvoteCount: number;
   boostCount: number;
   songsAdded: GuestSongAdded[];
 }
@@ -259,7 +259,7 @@ export interface ArchivedPartyQueueSummary {
   queued: number;
   played: number;
   skipped: number;
-  vetoed: number;
+  downvoted: number;
 }
 
 export interface ArchivedPartySummary {

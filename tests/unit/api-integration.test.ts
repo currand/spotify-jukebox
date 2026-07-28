@@ -13,7 +13,7 @@ import { clearSpotifySearchCacheForTests } from "../../src/server/services/spoti
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS parties (
   id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'off', veto_threshold INTEGER NOT NULL DEFAULT 3,
+  status TEXT NOT NULL DEFAULT 'off', downvote_threshold INTEGER NOT NULL DEFAULT 3,
   boost_cap INTEGER,
   seed_playlist_id TEXT NOT NULL, rate_limits TEXT NOT NULL,
   sync_generation INTEGER NOT NULL DEFAULT 0,
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS guests (
 CREATE TABLE IF NOT EXISTS queue_items (
   id TEXT PRIMARY KEY, party_id TEXT NOT NULL, spotify_uri TEXT NOT NULL,
   track_name TEXT NOT NULL, artist_name TEXT NOT NULL, album_art_url TEXT,
-  upvote_count INTEGER NOT NULL DEFAULT 0, veto_count INTEGER NOT NULL DEFAULT 0,
+  upvote_count INTEGER NOT NULL DEFAULT 0, downvote_count INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'pending', is_boosted INTEGER NOT NULL DEFAULT 0,
   boost_position INTEGER, boosted_by_guest_id TEXT, manual_order INTEGER, added_by_guest_id TEXT,
   added_at TEXT NOT NULL, finished_at TEXT,
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS votes (
   guest_id TEXT NOT NULL, queue_item_id TEXT NOT NULL, created_at TEXT NOT NULL,
   PRIMARY KEY (guest_id, queue_item_id)
 );
-CREATE TABLE IF NOT EXISTS vetoes (
+CREATE TABLE IF NOT EXISTS downvotes (
   guest_id TEXT NOT NULL, queue_item_id TEXT NOT NULL, created_at TEXT NOT NULL,
   PRIMARY KEY (guest_id, queue_item_id)
 );
@@ -195,20 +195,20 @@ function createTestApp(db: Database, spotify: SpotifyClient) {
 
 function makeParty(
   db: Database,
-  overrides?: { slug?: string; status?: string; veto_threshold?: number; boost_cap?: number | null },
+  overrides?: { slug?: string; status?: string; downvote_threshold?: number; boost_cap?: number | null },
 ) {
   const id = crypto.randomUUID();
   const slug = overrides?.slug ?? `test-party-${crypto.randomUUID()}`;
   const now = new Date().toISOString();
   db.run(
-    `INSERT INTO parties (id, slug, name, status, veto_threshold, boost_cap, seed_playlist_id, rate_limits, sync_generation, created_at, updated_at)
+    `INSERT INTO parties (id, slug, name, status, downvote_threshold, boost_cap, seed_playlist_id, rate_limits, sync_generation, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, 'test-playlist', ?, 0, ?, ?)`,
     [
       id,
       slug,
       "Test Party",
       overrides?.status ?? "on",
-      overrides?.veto_threshold ?? 3,
+      overrides?.downvote_threshold ?? 3,
       overrides?.boost_cap ?? null,
       JSON.stringify(DEFAULT_RATE_LIMITS),
       now,
@@ -256,8 +256,8 @@ async function upvoteTrack(app: Hono, slug: string, itemId: string, token: strin
   });
 }
 
-async function vetoTrack(app: Hono, slug: string, itemId: string, token: string) {
-  return app.request(`/api/v1/parties/${slug}/queue/${itemId}/veto`, {
+async function downvoteTrack(app: Hono, slug: string, itemId: string, token: string) {
+  return app.request(`/api/v1/parties/${slug}/queue/${itemId}/downvote`, {
     method: "POST",
     headers: { Cookie: `guest_session_${slug}=${token}` },
   });
@@ -361,10 +361,10 @@ describe("API Integration: Full guest flow", () => {
     // 9. Veto (need a third guest)
     const join3 = await joinParty(app, party.slug, "Vetoer");
     const token3 = join3.body.sessionToken ?? join3.body.id;
-    const vetoRes = await vetoTrack(app, party.slug, added.id, token3);
+    const vetoRes = await downvoteTrack(app, party.slug, added.id, token3);
     expect(vetoRes.status).toBe(200);
     const vetoData = await vetoRes.json();
-    expect(vetoData.vetoCount).toBe(1);
+    expect(vetoData.downvoteCount).toBe(1);
 
     // 10. Queue should still show the track (threshold is 3)
     const queueAfterVeto = await getQueue(app, party.slug, token);
@@ -424,7 +424,7 @@ describe("API Integration: Full guest flow", () => {
     expect(["ALREADY_VOTED", "NEXT_LOCKED"]).toContain(code2);
   });
 
-  test("guest cannot double-veto", async () => {
+  test("guest cannot double-downvote", async () => {
     const join1 = await joinParty(app, party.slug, "Adder");
     const token1 = join1.body.sessionToken ?? join1.body.id;
     const join2 = await joinParty(app, party.slug, "Vetoer");
@@ -435,12 +435,12 @@ describe("API Integration: Full guest flow", () => {
     }, token1);
     const added = await addRes.json();
 
-    const v1 = await vetoTrack(app, party.slug, added.id, token2);
+    const v1 = await downvoteTrack(app, party.slug, added.id, token2);
     expect(v1.status).toBe(200);
 
-    const v2 = await vetoTrack(app, party.slug, added.id, token2);
+    const v2 = await downvoteTrack(app, party.slug, added.id, token2);
     expect(v2.status).toBe(400);
-    expect((await v2.json()).code).toBe("ALREADY_VETOED");
+    expect((await v2.json()).code).toBe("ALREADY_DOWNVOTED");
   });
 
   test("duplicate add is rejected", async () => {
@@ -594,7 +594,7 @@ describe("API Integration: Rate limits", () => {
     expect(body.error).toContain("used all 10 upvotes");
   });
 
-  test("veto rate limit: returns 429 when limit exhausted", async () => {
+  test("downvote rate limit: returns 429 when limit exhausted", async () => {
     const joinRes = await joinParty(app, party.slug, "VetoerRL");
     const guestId = joinRes.body.id;
     const token = joinRes.body.sessionToken ?? guestId;
@@ -605,7 +605,7 @@ describe("API Integration: Rate limits", () => {
     const now = new Date().toISOString();
     for (let i = 0; i < 3; i++) {
       db.run(
-        `INSERT INTO rate_limit_events (guest_id, action, created_at) VALUES (?, 'veto', ?)`,
+        `INSERT INTO rate_limit_events (guest_id, action, created_at) VALUES (?, 'downvote', ?)`,
         [guestId, now],
       );
     }
@@ -621,7 +621,7 @@ describe("API Integration: Rate limits", () => {
     const target = await addRes.json();
 
     // Veto should now be rate limited
-    const res = await vetoTrack(app, party.slug, target.id, token);
+    const res = await downvoteTrack(app, party.slug, target.id, token);
     expect(res.status).toBe(429);
     const body = await res.json();
     expect(body.code).toBe("RATE_LIMITED");
@@ -629,7 +629,7 @@ describe("API Integration: Rate limits", () => {
   });
 });
 
-describe("API Integration: Veto threshold", () => {
+describe("API Integration: Downvote threshold", () => {
   let db: Database;
   let app: Hono;
   let spotify: ReturnType<typeof createMockSpotify>;
@@ -640,10 +640,10 @@ describe("API Integration: Veto threshold", () => {
     db = testDb();
     spotify = createMockSpotify();
     app = createTestApp(db, spotify);
-    party = makeParty(db, { veto_threshold: 3 });
+    party = makeParty(db, { downvote_threshold: 3 });
   });
 
-  test("track is vetoed when threshold reached", async () => {
+  test("track is downvoted when threshold reached", async () => {
     const joinAdder = await joinParty(app, party.slug, "Adder");
     const adderToken = joinAdder.body.sessionToken ?? joinAdder.body.id;
 
@@ -656,7 +656,7 @@ describe("API Integration: Veto threshold", () => {
     for (let i = 0; i < 3; i++) {
       const join = await joinParty(app, party.slug, `Vetoer${i}`);
       const token = join.body.sessionToken ?? join.body.id;
-      const vetoRes = await vetoTrack(app, party.slug, added.id, token);
+      const vetoRes = await downvoteTrack(app, party.slug, added.id, token);
       expect(vetoRes.status).toBe(200);
     }
 
@@ -667,8 +667,8 @@ describe("API Integration: Veto threshold", () => {
     expect(queue.upcoming.find((t: any) => t.id === added.id)).toBeUndefined();
   });
 
-  test("veto threshold=1: first veto immediately removes track", async () => {
-    const party2 = makeParty(db, { slug: "veto-1", veto_threshold: 1 });
+  test("downvote threshold=1: first downvote immediately removes track", async () => {
+    const party2 = makeParty(db, { slug: "veto-1", downvote_threshold: 1 });
     const joinAdder = await joinParty(app, party2.slug, "Adder");
     const adderToken = joinAdder.body.sessionToken ?? joinAdder.body.id;
 
@@ -679,7 +679,7 @@ describe("API Integration: Veto threshold", () => {
 
     const joinV = await joinParty(app, party2.slug, "SoloVetoer");
     const vToken = joinV.body.sessionToken ?? joinV.body.id;
-    const vetoRes = await vetoTrack(app, party2.slug, added.id, vToken);
+    const vetoRes = await downvoteTrack(app, party2.slug, added.id, vToken);
     expect(vetoRes.status).toBe(200);
 
     const queueRes = await getQueue(app, party2.slug, adderToken);
@@ -687,7 +687,7 @@ describe("API Integration: Veto threshold", () => {
     expect(queue.upcoming.length).toBe(0);
   });
 
-  test("cannot veto currently playing track (blocked by buffer lock first)", async () => {
+  test("cannot downvote currently playing track (blocked by buffer lock first)", async () => {
     // Insert a playing track directly
     db.run(
       `INSERT INTO queue_items (id, party_id, spotify_uri, track_name, artist_name, status, added_at)
@@ -703,11 +703,11 @@ describe("API Integration: Veto threshold", () => {
     const playingId = queue.nowPlaying?.id;
     expect(playingId).toBeDefined();
 
-    // The route checks isGuestVetoBlocked first (buffer lock), which blocks
+    // The route checks isGuestDownvoteBlocked first (buffer lock), which blocks
     // tracks not in pending/queued status — so playing tracks get NEXT_LOCKED.
     // The NOW_PLAYING check in the route is unreachable for playing tracks
     // because the buffer lock fires first.
-    const vetoRes = await vetoTrack(app, party.slug, playingId, token);
+    const vetoRes = await downvoteTrack(app, party.slug, playingId, token);
     expect(vetoRes.status).toBe(400);
     const body = await vetoRes.json();
     expect(["NOW_PLAYING", "NEXT_LOCKED"]).toContain(body.code);

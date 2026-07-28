@@ -12,7 +12,7 @@ import {
   compareNormalQueue,
   isGuestBoostBlocked,
   isGuestUpvoteBlocked,
-  isGuestVetoBlocked,
+  isGuestDownvoteBlocked,
   type QueueItemRow,
 } from "../../src/server/services/queue";
 
@@ -162,7 +162,7 @@ describe("queue sort", () => {
     artist_name: "a",
     album_art_url: null,
     upvote_count: 0,
-    veto_count: 0,
+    downvote_count: 0,
     status: "pending",
     is_boosted: 0,
     boost_position: null,
@@ -198,7 +198,7 @@ describe("guest action locks", () => {
     artist_name: "a",
     album_art_url: null,
     upvote_count: 0,
-    veto_count: 0,
+    downvote_count: 0,
     status: "pending",
     is_boosted: 0,
     boost_position: null,
@@ -213,14 +213,14 @@ describe("guest action locks", () => {
     ...overrides,
   });
 
-  test("blocks upvote/boost for pending next-up, not veto", () => {
+  test("blocks upvote/boost for pending next-up, not downvote", () => {
     const next = base({ id: "next", status: "pending" });
     const later = base({ id: "later", status: "pending", added_at: "2026-01-02T00:00:00.000Z" });
     const items = [next, later];
 
     expect(isGuestUpvoteBlocked(items, "next")).toBe(true);
     expect(isGuestBoostBlocked(items, "next")).toBe(true);
-    expect(isGuestVetoBlocked(items, "next")).toBe(false);
+    expect(isGuestDownvoteBlocked(items, "next")).toBe(false);
 
     expect(isGuestUpvoteBlocked(items, "later")).toBe(false);
     expect(isGuestBoostBlocked(items, "later")).toBe(false);
@@ -232,6 +232,6 @@ describe("guest action locks", () => {
 
     expect(isGuestUpvoteBlocked(items, "next")).toBe(true);
     expect(isGuestBoostBlocked(items, "next")).toBe(true);
-    expect(isGuestVetoBlocked(items, "next")).toBe(true);
+    expect(isGuestDownvoteBlocked(items, "next")).toBe(true);
   });
 });

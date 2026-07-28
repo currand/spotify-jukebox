@@ -155,7 +155,7 @@ function optionalEnv(name: string, fallback: string): string {
 const RATE_LIMIT_ACTION_KEYS = [
   "add",
   "upvote",
-  "veto",
+  "downvote",
   "boost",
   "search",
   "partySearch",

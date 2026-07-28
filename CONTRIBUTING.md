@@ -203,7 +203,7 @@ Guest default limits (before admin overrides):
 |---|---|---|
 | Add | 3 | 20 min |
 | Upvote | 10 | 60 min |
-| Veto | 3 | 30 min |
+| Downvote | 3 | 30 min |
 | Boost | 1 | 10 min |
 | Search (guest) | 6 | 60 sec |
 | Search (party) | 24 | 30 sec |

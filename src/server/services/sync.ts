@@ -223,7 +223,7 @@ export function dedupeSpotifyQueueTracks(
 const TERMINAL_STATUSES: QueueItemRow["status"][] = [
   "played",
   "skipped",
-  "vetoed",
+  "downvoted",
   "unblocked",
 ];
 
@@ -452,9 +452,9 @@ export function reconcileSpotifyQueueTail(
   }
 }
 
-/** Only skip tracks the party explicitly removed (vetoed / skipped). */
+/** Only skip tracks the party explicitly removed (downvoted / skipped). */
 export function shouldSkipTerminalPlayback(match: QueueItemRow): boolean {
-  return match.status === "vetoed" || match.status === "skipped";
+  return match.status === "downvoted" || match.status === "skipped";
 }
 
 /** Resolve now playing from the player snapshot — authoritative over the queue API. */
@@ -1151,15 +1151,15 @@ async function reconcilePlayingState(
 ): Promise<void> {
   const current = queueData.currentlyPlaying;
   const playing = items.find((i) => i.status === "playing");
-  const vetoedOrSkipped = (item: QueueItemRow) =>
-    item.status === "vetoed" || item.status === "skipped";
+  const downvotedOrSkipped = (item: QueueItemRow) =>
+    item.status === "downvoted" || item.status === "skipped";
 
   if (!current?.uri) {
     if (!isPlaying && playing) {
       markFinished(
         db,
         playing.id,
-        vetoedOrSkipped(playing) ? playing.status : "played",
+        downvotedOrSkipped(playing) ? playing.status : "played",
       );
     }
     return;
@@ -1173,7 +1173,7 @@ async function reconcilePlayingState(
     markFinished(
       db,
       playing.id,
-      vetoedOrSkipped(playing) ? playing.status : "played",
+      downvotedOrSkipped(playing) ? playing.status : "played",
     );
   }
 

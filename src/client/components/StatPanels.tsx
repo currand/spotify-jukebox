@@ -163,7 +163,7 @@ function limitKindLabel(kind: string): string {
       return "Adds blocked";
     case "guest_upvote":
       return "Upvotes blocked";
-    case "guest_veto":
+    case "guest_downvote":
       return "Downvotes blocked";
     case "guest_boost":
       return "Boosts blocked";
@@ -332,11 +332,11 @@ export function GuestQuotaPanel({
   quota,
   rateLimits,
 }: {
-  quota: { add: number; upvote: number; veto: number; boost: number };
+  quota: { add: number; upvote: number; downvote: number; boost: number };
   rateLimits: {
     add: { count: number; windowMs: number };
     upvote: { count: number; windowMs: number };
-    veto: { count: number; windowMs: number };
+    downvote: { count: number; windowMs: number };
     boost: { count: number; windowMs: number };
   };
 }) {
@@ -360,9 +360,9 @@ export function GuestQuotaPanel({
         />
         <QuotaTile
           label="Downvotes"
-          remaining={quota.veto}
-          limit={rateLimits.veto.count}
-          windowMs={rateLimits.veto.windowMs}
+          remaining={quota.downvote}
+          limit={rateLimits.downvote.count}
+          windowMs={rateLimits.downvote.windowMs}
         />
         <QuotaTile
           label="Boosts"
