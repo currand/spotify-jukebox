@@ -16,6 +16,10 @@ export interface Config {
   spotifyRedirectUri: string;
   encryptionKey: string;
   hostSetupToken: string | null;
+  /** When false, OAuth login skips HOST_SETUP_TOKEN (localhost-only or Cloudflare tunnel). */
+  hostSetupTokenRequired: boolean;
+  /** Server bind address (127.0.0.1 = localhost only; 0.0.0.0 = all interfaces). */
+  bindHost: string;
   isProduction: boolean;
   /** false when BASE_URL uses http:// (e.g. LAN or TLS terminated elsewhere) */
   secureCookies: boolean;
@@ -195,6 +199,50 @@ function parseDefaultRateLimitsFromEnv(): PartyRateLimits | null {
   return parsed as PartyRateLimits;
 }
 
+function parseBindHost(
+  env: AppEnv,
+  isProduction: boolean,
+  spotifyMode: SpotifyMode,
+): string {
+  const raw = process.env.BIND_HOST?.trim();
+  if (raw) {
+    if (raw !== "127.0.0.1" && raw !== "0.0.0.0") {
+      throw new Error('BIND_HOST must be "127.0.0.1" or "0.0.0.0"');
+    }
+    return raw;
+  }
+  return isProduction || spotifyMode === "mock" ? "0.0.0.0" : "127.0.0.1";
+}
+
+function parseHostSetupTokenPolicy(
+  env: AppEnv,
+  isProduction: boolean,
+  bindHost: string,
+  baseUrl: string,
+): { hostSetupToken: string | null; hostSetupTokenRequired: boolean } {
+  if (!isProduction) {
+    const token = process.env.HOST_SETUP_TOKEN?.trim() || null;
+    return { hostSetupToken: token, hostSetupTokenRequired: Boolean(token) };
+  }
+
+  const cloudflareTunnel =
+    parseBoolean("CLOUDFLARE_TUNNEL", false) ||
+    parseBoolean("JUKEBOX_CLOUDFLARE_TUNNEL", false);
+  const localhostOnly =
+    bindHost === "127.0.0.1" ||
+    new URL(baseUrl).hostname === "127.0.0.1";
+  const explicitlyDisabled = parseBoolean("DISABLE_HOST_SETUP_TOKEN", false);
+
+  if (cloudflareTunnel || localhostOnly || explicitlyDisabled) {
+    return { hostSetupToken: null, hostSetupTokenRequired: false };
+  }
+
+  return {
+    hostSetupToken: requireEnv("HOST_SETUP_TOKEN", env),
+    hostSetupTokenRequired: true,
+  };
+}
+
 export function loadConfig(env: AppEnv): Config {
   const isProduction = env === "production";
   const spotifyMode = parseSpotifyMode(env);
@@ -229,9 +277,13 @@ export function loadConfig(env: AppEnv): Config {
     );
   }
 
-  const hostSetupToken = isProduction
-    ? requireEnv("HOST_SETUP_TOKEN", env)
-    : (process.env.HOST_SETUP_TOKEN ?? null);
+  const bindHost = parseBindHost(env, isProduction, spotifyMode);
+  const { hostSetupToken, hostSetupTokenRequired } = parseHostSetupTokenPolicy(
+    env,
+    isProduction,
+    bindHost,
+    baseUrl,
+  );
 
   const spotifyApiBaseUrl = optionalEnv(
     "SPOTIFY_API_BASE_URL",
@@ -263,6 +315,8 @@ export function loadConfig(env: AppEnv): Config {
     spotifyRedirectUri,
     encryptionKey,
     hostSetupToken,
+    hostSetupTokenRequired,
+    bindHost,
     isProduction,
     secureCookies: baseUrl.startsWith("https://"),
     spotifyApiBudgetCount: parsePositiveInt("SPOTIFY_API_BUDGET_COUNT", 90),

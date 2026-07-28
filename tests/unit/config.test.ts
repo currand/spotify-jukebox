@@ -74,6 +74,79 @@ describe("loadConfig URL policy", () => {
       expect(config.spotifyMode).toBe("mock");
       expect(config.spotifyClientId).toBe("mock-client");
       expect(config.spotifyApiBaseUrl).toBe("http://127.0.0.1:8080/v1");
+      expect(config.bindHost).toBe("0.0.0.0");
+    } finally {
+      process.env = prev;
+    }
+  });
+
+  test("requires HOST_SETUP_TOKEN for public production deployment", () => {
+    const prev = { ...process.env };
+    try {
+      process.env.NODE_ENV = "production";
+      process.env.JUKEBOX_ENV = "production";
+      process.env.BASE_URL = "https://jukebox.example.com";
+      process.env.SPOTIFY_REDIRECT_URI =
+        "https://jukebox.example.com/api/v1/host/spotify/callback";
+      delete process.env.ALLOW_INSECURE_HTTP;
+      delete process.env.BIND_HOST;
+      delete process.env.CLOUDFLARE_TUNNEL;
+      delete process.env.DISABLE_HOST_SETUP_TOKEN;
+      for (const [key, value] of Object.entries(baseEnv)) {
+        process.env[key] = value;
+      }
+
+      const config = loadConfig("production");
+      expect(config.hostSetupTokenRequired).toBe(true);
+      expect(config.hostSetupToken).toBe("setup-token");
+      expect(config.bindHost).toBe("0.0.0.0");
+    } finally {
+      process.env = prev;
+    }
+  });
+
+  test("disables HOST_SETUP_TOKEN for localhost-only production", () => {
+    const prev = { ...process.env };
+    try {
+      process.env.NODE_ENV = "production";
+      process.env.JUKEBOX_ENV = "production";
+      process.env.BASE_URL = "http://127.0.0.1:3000";
+      process.env.SPOTIFY_REDIRECT_URI =
+        "http://127.0.0.1:3000/api/v1/host/spotify/callback";
+      process.env.ALLOW_INSECURE_HTTP = "1";
+      process.env.BIND_HOST = "127.0.0.1";
+      for (const [key, value] of Object.entries(baseEnv)) {
+        process.env[key] = value;
+      }
+
+      const config = loadConfig("production");
+      expect(config.hostSetupTokenRequired).toBe(false);
+      expect(config.hostSetupToken).toBeNull();
+      expect(config.bindHost).toBe("127.0.0.1");
+    } finally {
+      process.env = prev;
+    }
+  });
+
+  test("disables HOST_SETUP_TOKEN for Cloudflare tunnel deployment", () => {
+    const prev = { ...process.env };
+    try {
+      process.env.NODE_ENV = "production";
+      process.env.JUKEBOX_ENV = "production";
+      process.env.BASE_URL = "https://jukebox.example.com";
+      process.env.SPOTIFY_REDIRECT_URI =
+        "https://jukebox.example.com/api/v1/host/spotify/callback";
+      process.env.CLOUDFLARE_TUNNEL = "1";
+      delete process.env.HOST_SETUP_TOKEN;
+      for (const [key, value] of Object.entries(baseEnv)) {
+        if (key !== "HOST_SETUP_TOKEN") {
+          process.env[key] = value;
+        }
+      }
+
+      const config = loadConfig("production");
+      expect(config.hostSetupTokenRequired).toBe(false);
+      expect(config.hostSetupToken).toBeNull();
     } finally {
       process.env = prev;
     }

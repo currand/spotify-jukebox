@@ -36,6 +36,8 @@ function testConfig(overrides: Partial<Config> = {}): Config {
     spotifyRedirectUri: "http://127.0.0.1:3000/callback",
     encryptionKey: "dev-only-change-me-32-chars-minimum!!",
     hostSetupToken: null,
+    hostSetupTokenRequired: false,
+    bindHost: "127.0.0.1",
     isProduction: false,
     secureCookies: false,
     spotifyApiBudgetCount: 90,

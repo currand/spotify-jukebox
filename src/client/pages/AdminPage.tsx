@@ -96,6 +96,7 @@ export function AdminPage() {
 
   function spotifyLoginHref(): string {
     const base = "/api/v1/host/spotify/login";
+    if (status?.hostSetupTokenRequired === false) return base;
     const token = hostSetupToken.trim();
     if (!token) return base;
     return `${base}?token=${encodeURIComponent(token)}`;
@@ -550,34 +551,52 @@ export function AdminPage() {
           ) : status?.connected && !status.authenticated ? (
             <>
               <p>Spotify is linked, but your host session expired.</p>
-              <label className="small">
-                Host setup token
-                <input
-                  type="password"
-                  value={hostSetupToken}
-                  onChange={(e) => saveHostSetupToken(e.target.value)}
-                  placeholder="From HOST_SETUP_TOKEN in .env.production"
-                  autoComplete="off"
-                />
-              </label>
+              {status.hostSetupTokenRequired !== false && (
+                <label className="small">
+                  Host setup token
+                  <input
+                    type="password"
+                    value={hostSetupToken}
+                    onChange={(e) => saveHostSetupToken(e.target.value)}
+                    placeholder="From HOST_SETUP_TOKEN in .env.production"
+                    autoComplete="off"
+                  />
+                </label>
+              )}
               <a href={spotifyLoginHref()}>
-                <button disabled={!hostSetupToken.trim()}>Sign in again</button>
+                <button
+                  disabled={
+                    status.hostSetupTokenRequired !== false &&
+                    !hostSetupToken.trim()
+                  }
+                >
+                  Sign in again
+                </button>
               </a>
             </>
           ) : (
             <>
-              <label className="small">
-                Host setup token
-                <input
-                  type="password"
-                  value={hostSetupToken}
-                  onChange={(e) => saveHostSetupToken(e.target.value)}
-                  placeholder="From HOST_SETUP_TOKEN in .env.production"
-                  autoComplete="off"
-                />
-              </label>
+              {status?.hostSetupTokenRequired !== false && (
+                <label className="small">
+                  Host setup token
+                  <input
+                    type="password"
+                    value={hostSetupToken}
+                    onChange={(e) => saveHostSetupToken(e.target.value)}
+                    placeholder="From HOST_SETUP_TOKEN in .env.production"
+                    autoComplete="off"
+                  />
+                </label>
+              )}
               <a href={spotifyLoginHref()}>
-                <button disabled={!hostSetupToken.trim()}>Connect Spotify</button>
+                <button
+                  disabled={
+                    status?.hostSetupTokenRequired !== false &&
+                    !hostSetupToken.trim()
+                  }
+                >
+                  Connect Spotify
+                </button>
               </a>
             </>
           )}

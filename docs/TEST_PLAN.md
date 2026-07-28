@@ -25,12 +25,12 @@
 
 | # | Scenario | Expected | What to verify |
 |---|----------|----------|----------------|
-| 1.1.1 | Guest adds 4 tracks within a 20-min window (default limit is 3) | 4th add returns `429 RATE_LIMITED` with `retryAfterMs` | `checkRateLimit` returns `allowed: false`; error shape matches spec |
+| 1.1.1 | Guest adds 4 tracks within a 20-min window (default limit is 3) | 4th add returns `429 RATE_LIMITED` with `retryAfterMs` and action-specific `error` (e.g. mentions "added your limit of 3 songs") | `checkRateLimit` returns `allowed: false`; error shape matches spec |
 | 1.1.2 | Guest adds 3 tracks, waits 20 min, adds 1 more | 4th add succeeds | Sliding window resets; `countRecentActions` returns 0 |
 | 1.1.3 | Guest upvotes 11 songs within 60 min (limit is 10) | 11th upvote returns 429 | Upvote rate-limit enforced independently |
 | 1.1.4 | Guest vetoes 4 songs within 30 min (limit is 3) | 4th veto returns 429 | Veto rate-limit enforced independently |
 | 1.1.5 | Guest does 7 searches within 60s (search limit is 6) | 7th search returns `SpotifySearchRateLimitedError` | Search rate-limit enforced; returns `RATE_LIMITED` with `retryAfterMs` |
-| 1.1.6 | Rate-limited guest sees `retryAfterMs` and waits | After waiting, next action succeeds | UI can display countdown; backend enforces the window |
+| 1.1.6 | Rate-limited guest sees `retryAfterMs` and waits | After waiting, next action succeeds | UI shows server `error` message with retry timing; backend enforces the window |
 
 ### 1.2 Party-wide search rate limit
 
@@ -515,7 +515,7 @@ Priority list of missing unit tests:
 ### QA test sequence (manual or automated)
 
 ```
-Phase 1: Unit & Integration (CI) — run `bun test`
+Phase 1: Unit & Integration (CI) — run `bun test` (see [CONTRIBUTING.md](../CONTRIBUTING.md))
   - All existing tests pass
   - Add new tests from priority list above
 
