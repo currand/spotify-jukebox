@@ -22,7 +22,7 @@ src/
 tests/unit/         Bun test suite (unit + in-memory SQLite integration)
 services/spotify-mock/   Optional fake Spotify API for mock Docker profile
 scripts/            Endurance/load scripts (not unit tests)
-docs/               SPEC, SECURITY, TEST_PLAN, etc.
+docs/               SPEC, SECURITY, etc.
 ```
 
 **Import alias:** `@/` → `src/` (see `tsconfig.json`).
@@ -56,7 +56,7 @@ bun test                 # full unit/integration test suite — required before 
 
 1. **Virtual queue model** — Spotify’s API cannot reorder or remove queued tracks. Jukebox keeps a virtual queue and syncs one buffer slot to Spotify. Read `docs/SPEC.md` § Spotify sync / virtual queue before changing queue or sync code.
 
-2. **Spotify Web API** — Follow `.cursor/rules/spotify-web-api.mdc` for auth, endpoints, 429/backoff, and redirect URIs. Dev redirect URIs use `http://127.0.0.1`, never `localhost`.
+2. **Spotify Web API** — Dev redirect URIs use `http://127.0.0.1`, never `localhost`. See `docs/SPEC.md` for auth, endpoints, 429/backoff, and redirect URIs.
 
 3. **Secrets** — Never commit `.env.production`, `.env.development`, `.env.cloudflared`, or `data/`. Use `*.example` templates only.
 
