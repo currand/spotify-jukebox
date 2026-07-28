@@ -89,9 +89,9 @@ export function GuestLimitsFields({
     <>
       {showIntro && (
         <p className="small guest-limits-intro">
-          Per-guest action budgets reset after each time window. Boost is one use
-          per guest for the whole party — reset individual guests from the Guests
-          page.
+          Per-guest action budgets reset after each time window. Boost cap limits
+          how many tracks can be boosted in the queue at once. Reset individual
+          guests from the Guests page.
         </p>
       )}
       <label className="form-field">
@@ -141,6 +141,13 @@ export function GuestLimitsFields({
         value={rateLimits.veto}
         windowUnit="min"
         onChange={(next) => patchLimit("veto", next)}
+      />
+      <LimitRow
+        label="Boost"
+        hint="How many times a guest can boost a song in the window."
+        value={rateLimits.boost}
+        windowUnit="min"
+        onChange={(next) => patchLimit("boost", next)}
       />
       <LimitRow
         label="Search (per guest)"

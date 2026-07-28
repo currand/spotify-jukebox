@@ -29,6 +29,7 @@ _(none currently)_
 - [x] Configurable global Spotify API budget (GH #8) — env `SPOTIFY_API_BUDGET_*`, diagnostics snapshot
 - [x] Boost lane sorts by upvotes within lane (GH #9) — `getBoostLane` upvote desc, `boost_position` tie-break
 - [x] Configurable boost cap (GH #10) — `parties.boost_cap`, `BOOST_CAP` enforcement
+- [x] Per-guest boost rate limit (GH #16) — `rateLimits.boost`, default 1 per 10 min
 - [x] Daily quota observability (GH #11) — `last24h` + diagnostics warning
 - [x] Search bypasses backoff gate (GH #12) — fixed: `spotifyFetch` gate + search precheck
 - [x] API instrumentation (GH #13) — caller attribution, recent calls, 429 timeline in diagnostics

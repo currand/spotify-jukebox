@@ -718,7 +718,7 @@ describe("API Integration: Boost mechanics", () => {
     party = makeParty(db);
   });
 
-  test("guest boosts a track; boost_used set to true and second boost fails", async () => {
+  test("guest boosts a track; rate limit blocks a second boost in the window", async () => {
     const joinAdder = await joinParty(app, party.slug, "Adder");
     const adderToken = joinAdder.body.sessionToken ?? joinAdder.body.id;
     const joinBooster = await joinParty(app, party.slug, "Booster");
@@ -752,6 +752,7 @@ describe("API Integration: Boost mechanics", () => {
     });
     const me = await meRes.json();
     expect(me.boostUsed).toBe(true);
+    expect(me.quota.boost).toBe(0);
 
     const queueRes = await app.request(`/api/v1/parties/${party.slug}/queue`, {
       headers: { Cookie: `guest_session_${party.slug}=${boosterToken}` },
@@ -765,11 +766,10 @@ describe("API Integration: Boost mechanics", () => {
     expect(boostedItem?.isBoosted).toBe(true);
     expect(boostedItem?.boostedBy).toBe("Booster");
 
-    // Second boost should fail (BOOST_USED)
+    // Second boost should fail (rate limited — default 1 per 10 min)
     const boostRes2 = await boostTrack(app, party.slug, target2Id, boosterToken);
-    expect(boostRes2.status).toBe(400);
-    const code2 = (await boostRes2.json()).code;
-    expect(["BOOST_USED", "NEXT_LOCKED"]).toContain(code2);
+    expect(boostRes2.status).toBe(429);
+    expect((await boostRes2.json()).code).toBe("RATE_LIMITED");
   });
 
   test("cannot boost already-boosted track (returns NEXT_LOCKED or ALREADY_BOOSTED)", async () => {

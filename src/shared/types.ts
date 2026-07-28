@@ -16,6 +16,8 @@ export interface PartyRateLimits {
   add: RateLimitConfig;
   upvote: RateLimitConfig;
   veto: RateLimitConfig;
+  /** Per-guest boost budget (replaces lifetime boost_used flag) */
+  boost: RateLimitConfig;
   /** Per-guest Spotify search budget */
   search: RateLimitConfig;
   /** Party-wide Spotify search budget across all guests */
@@ -31,6 +33,7 @@ export const DEFAULT_RATE_LIMITS: PartyRateLimits = {
   add: { count: 3, windowMs: 20 * 60 * 1000 },
   upvote: { count: 10, windowMs: 60 * 60 * 1000 },
   veto: { count: 3, windowMs: 30 * 60 * 1000 },
+  boost: { count: 1, windowMs: 10 * 60 * 1000 },
   search: { count: 6, windowMs: 60 * 1000 },
   partySearch: DEFAULT_PARTY_SEARCH_LIMIT,
 };
@@ -96,7 +99,7 @@ export interface GuestMe {
   boostUsed: boolean;
   tutorialSeen: boolean;
   activeSongCount?: number;
-  quota?: { add: number; upvote: number; veto: number };
+  quota?: { add: number; upvote: number; veto: number; boost: number };
 }
 
 export interface GuestMySongView {
@@ -121,6 +124,7 @@ export interface GuestMySongsResponse {
   active: GuestMySongView[];
   history: GuestMySongView[];
   boostUsed: boolean;
+  boostsLeft?: number;
 }
 
 export interface GuestSongAdded {

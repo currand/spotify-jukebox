@@ -65,7 +65,7 @@ export function getGuestMySongs(
   db: Db,
   partyId: string,
   guestId: string,
-  boostUsed: boolean,
+  boostsLeft: number,
 ): { active: GuestMySongView[]; history: GuestMySongView[] } {
   const rows = db
     .query(
@@ -126,7 +126,7 @@ export function getGuestMySongs(
 
     if (ACTIVE_STATUSES.includes(row.status)) {
       view.canBoost =
-        !boostUsed &&
+        boostsLeft > 0 &&
         row.is_boosted === 0 &&
         !isGuestBoostBlocked(partyActive, row.id);
       view.canUnboost =
@@ -271,20 +271,28 @@ export function getPartyGuestAdminViews(
      WHERE party_id = ? AND added_by_guest_id = ? AND from_seed = 0
      ORDER BY added_at DESC`,
   );
+  const activeBoostsStmt = db.query(
+    `SELECT COUNT(*) AS count FROM queue_items
+     WHERE party_id = ? AND added_by_guest_id = ? AND is_boosted = 1
+       AND status IN ('pending', 'queued', 'playing')`,
+  );
 
   return guests.map((guest) => {
     const songs = songsStmt.all(partyId, guest.id) as GuestSongRow[];
+    const activeBoosts = activeBoostsStmt.get(partyId, guest.id) as {
+      count: number;
+    };
     return {
       id: guest.id,
       displayName: guest.display_name,
       disabled: guest.disabled === 1,
-      boostUsed: guest.boost_used === 1,
+      boostUsed: activeBoosts.count > 0,
       createdAt: guest.created_at,
       lastSeenAt: guest.last_seen_at,
       lastIp: guest.last_ip,
       upvoteCount: guest.upvote_count,
       vetoCount: guest.veto_count,
-      boostCount: guest.boost_used === 1 ? 1 : 0,
+      boostCount: activeBoosts.count,
       songsAdded: songs.map((song) => ({
         trackName: song.track_name,
         artistName: song.artist_name,
@@ -389,10 +397,6 @@ export function clearGuestBoost(
        AND status IN ('pending', 'queued')`,
     [partyId, guestId],
   );
-  db.run(`UPDATE guests SET boost_used = 0 WHERE id = ? AND party_id = ?`, [
-    guestId,
-    partyId,
-  ]);
   return result.changes ?? 0;
 }
 

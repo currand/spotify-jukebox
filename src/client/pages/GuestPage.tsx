@@ -430,7 +430,7 @@ function GuestApp({ slug }: { slug: string }) {
       {me?.quota && (
         <p className="small">
           Adds left: {me.quota.add} · Upvotes: {me.quota.upvote} · Downvotes:{" "}
-          {me.quota.veto}
+          {me.quota.veto} · Boosts: {me.quota.boost}
         </p>
       )}
 
@@ -443,8 +443,8 @@ function GuestApp({ slug }: { slug: string }) {
               item={item}
               guestId={me?.id}
               canMutate={canMutate}
-              boostUsed={me?.boostUsed ?? true}
-              boostsRemaining={queue?.boostsRemaining}
+              boostsLeft={me?.quota?.boost ?? 0}
+              partyBoostsRemaining={queue?.boostsRemaining}
               upvotesLeft={me?.quota?.upvote}
               downvotesLeft={me?.quota?.veto}
               showPopup={showPopup}
@@ -475,8 +475,8 @@ function QueueRowActions({
   item,
   guestId,
   canMutate,
-  boostUsed,
-  boostsRemaining,
+  boostsLeft,
+  partyBoostsRemaining,
   upvotesLeft,
   downvotesLeft,
   showPopup,
@@ -486,8 +486,8 @@ function QueueRowActions({
   item: QueueItemView;
   guestId?: string;
   canMutate: boolean;
-  boostUsed: boolean;
-  boostsRemaining?: number | null;
+  boostsLeft: number;
+  partyBoostsRemaining?: number | null;
   upvotesLeft?: number;
   downvotesLeft?: number;
   showPopup: (message: string, kind?: "success" | "error" | "info") => void;
@@ -508,8 +508,8 @@ function QueueRowActions({
     downvotesLeft === 0;
   const boostDisabled =
     !canMutate ||
-    boostUsed ||
-    boostsRemaining === 0 ||
+    boostsLeft === 0 ||
+    partyBoostsRemaining === 0 ||
     item.isBoosted ||
     item.guestBoostBlocked;
 
@@ -538,7 +538,7 @@ function QueueRowActions({
   function handleBoost() {
     if (boostDisabled) {
       showPopup(
-        boostBlockedMessage(item, canMutate, boostUsed, boostsRemaining),
+        boostBlockedMessage(item, canMutate, boostsLeft, partyBoostsRemaining),
         "info",
       );
       return;
@@ -575,8 +575,8 @@ function QueueRow({
   item,
   guestId,
   canMutate,
-  boostUsed,
-  boostsRemaining,
+  boostsLeft,
+  partyBoostsRemaining,
   upvotesLeft,
   downvotesLeft,
   showPopup,
@@ -587,8 +587,8 @@ function QueueRow({
   item: QueueItemView;
   guestId?: string;
   canMutate: boolean;
-  boostUsed: boolean;
-  boostsRemaining?: number | null;
+  boostsLeft: number;
+  partyBoostsRemaining?: number | null;
   upvotesLeft?: number;
   downvotesLeft?: number;
   showPopup: (message: string, kind?: "success" | "error" | "info") => void;
@@ -618,8 +618,8 @@ function QueueRow({
           item={item}
           guestId={guestId}
           canMutate={canMutate}
-          boostUsed={boostUsed}
-          boostsRemaining={boostsRemaining}
+          boostsLeft={boostsLeft}
+          partyBoostsRemaining={partyBoostsRemaining}
           upvotesLeft={upvotesLeft}
           downvotesLeft={downvotesLeft}
           showPopup={showPopup}

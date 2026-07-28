@@ -616,13 +616,23 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
         403,
       );
     }
-    if (guest.boostUsed) {
-      return c.json({ error: "Boost already used", code: "BOOST_USED" }, 400);
-    }
 
     const party = getPartyBySlug(db, slug);
     if (!party || party.status !== "on") {
       return c.json({ error: "Party is off", code: "PARTY_OFF" }, 403);
+    }
+
+    const limits = parseRateLimits(party.rate_limits);
+    const rl = checkRateLimit(db, guest.id, "boost", limits);
+    if (!rl.allowed) {
+      return c.json(
+        {
+          error: "Rate limited",
+          code: "RATE_LIMITED",
+          retryAfterMs: rl.retryAfterMs,
+        },
+        429,
+      );
     }
 
     const items = getQueueItems(db, party.id, ["pending", "queued", "playing"]);
@@ -656,9 +666,16 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
     }
 
     const boostCap = party.boost_cap;
-    if (boostCap != null && getBoostCapStats(db, party.id, boostCap).boostsUsed >= boostCap) {
+    const boostStats = getBoostCapStats(db, party.id, boostCap);
+    if (boostCap != null && boostStats.boostsUsed >= boostCap) {
       return c.json(
-        { error: "Boost limit reached for this party", code: "BOOST_CAP" },
+        {
+          error: `Boost limit reached (${boostStats.boostsUsed}/${boostCap}). Wait for boosted tracks to play.`,
+          code: "BOOST_CAP",
+          boostsUsed: boostStats.boostsUsed,
+          boostCap: boostStats.boostCap,
+          boostsRemaining: boostStats.boostsRemaining,
+        },
         400,
       );
     }
@@ -668,7 +685,7 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
       `UPDATE queue_items SET is_boosted = 1, boost_position = ?, boosted_by_guest_id = ?, status = 'pending' WHERE id = ?`,
       [pos, guest.id, itemId],
     );
-    db.run(`UPDATE guests SET boost_used = 1 WHERE id = ?`, [guest.id]);
+    recordAction(db, guest.id, "boost");
     requestPartySync(db, party.id);
     return c.json({ ok: true });
   });
@@ -683,16 +700,19 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
     const party = getPartyBySlug(db, c.req.param("slug"));
     if (!party) return c.json({ error: "Party not found", code: "NOT_FOUND" }, 404);
 
+    const limits = parseRateLimits(party.rate_limits);
+    const boostsLeft = remainingQuota(db, guest.id, limits).boost;
     const { active, history } = getGuestMySongs(
       db,
       party.id,
       guest.id,
-      guest.boostUsed,
+      boostsLeft,
     );
     return c.json({
       active,
       history,
-      boostUsed: guest.boostUsed,
+      boostUsed: boostsLeft === 0,
+      boostsLeft,
     });
   });
 
@@ -738,9 +758,6 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
     }
 
     markFinished(db, itemId, "skipped");
-    if (item.is_boosted === 1 && guest.boostUsed) {
-      db.run(`UPDATE guests SET boost_used = 0 WHERE id = ?`, [guest.id]);
-    }
     requestPartySync(db, party.id);
     return c.json({ ok: true });
   });
@@ -793,9 +810,6 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
       `UPDATE queue_items SET is_boosted = 0, boost_position = NULL, boosted_by_guest_id = NULL, status = 'pending' WHERE id = ?`,
       [itemId],
     );
-    if (guest.boostUsed) {
-      db.run(`UPDATE guests SET boost_used = 0 WHERE id = ?`, [guest.id]);
-    }
     requestPartySync(db, party.id);
     return c.json({ ok: true });
   });
@@ -805,15 +819,12 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
     if (!guest) return c.json({ error: "No session", code: "NO_SESSION" }, 401);
     const party = getPartyBySlug(db, c.req.param("slug"));
     if (!party) return c.json({ error: "Party not found", code: "NOT_FOUND" }, 404);
-    const quota = remainingQuota(
-      db,
-      guest.id,
-      parseRateLimits(party.rate_limits),
-    );
+    const limits = parseRateLimits(party.rate_limits);
+    const quota = remainingQuota(db, guest.id, limits);
     return c.json({
       id: guest.id,
       displayName: guest.displayName,
-      boostUsed: guest.boostUsed,
+      boostUsed: quota.boost === 0,
       tutorialSeen: guest.tutorialSeen,
       activeSongCount: countGuestActiveSongs(db, party.id, guest.id),
       quota,
