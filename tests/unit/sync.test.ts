@@ -44,7 +44,7 @@ const base = (overrides: Partial<QueueItemRow>): QueueItemRow => ({
   artist_name: "a",
   album_art_url: null,
   upvote_count: 0,
-  veto_count: 0,
+  downvote_count: 0,
   status: "pending",
   is_boosted: 0,
   boost_position: null,
@@ -229,7 +229,7 @@ describe("reconcileSpotifyBufferStatuses", () => {
         artist_name TEXT NOT NULL,
         album_art_url TEXT,
         upvote_count INTEGER NOT NULL DEFAULT 0,
-        veto_count INTEGER NOT NULL DEFAULT 0,
+        downvote_count INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL DEFAULT 'pending',
         is_boosted INTEGER NOT NULL DEFAULT 0,
         boost_position INTEGER,
@@ -529,8 +529,8 @@ describe("getVirtualNextToBuffer", () => {
 });
 
 describe("shouldSkipTerminalPlayback", () => {
-  test("only skips vetoed or skipped tracks", () => {
-    expect(shouldSkipTerminalPlayback(base({ status: "vetoed" }))).toBe(true);
+  test("only skips downvoted or skipped tracks", () => {
+    expect(shouldSkipTerminalPlayback(base({ status: "downvoted" }))).toBe(true);
     expect(shouldSkipTerminalPlayback(base({ status: "skipped" }))).toBe(true);
     expect(shouldSkipTerminalPlayback(base({ status: "pending" }))).toBe(false);
   });

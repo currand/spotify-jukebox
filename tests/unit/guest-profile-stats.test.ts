@@ -11,7 +11,7 @@ function testDb(): Db {
       slug TEXT NOT NULL,
       name TEXT NOT NULL,
       status TEXT NOT NULL,
-      veto_threshold INTEGER NOT NULL,
+      downvote_threshold INTEGER NOT NULL,
       rate_limits TEXT NOT NULL,
       sync_generation INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
@@ -49,7 +49,7 @@ function testDb(): Db {
     )
   `);
   db.run(`
-    CREATE TABLE vetoes (
+    CREATE TABLE downvotes (
       guest_id TEXT NOT NULL,
       queue_item_id TEXT NOT NULL,
       created_at TEXT NOT NULL,
@@ -68,10 +68,10 @@ function testDb(): Db {
 }
 
 describe("getGuestProfileStats", () => {
-  test("counts votes, vetoes, boosts, and song statuses", () => {
+  test("counts votes, downvotes, boosts, and song statuses", () => {
     const db = testDb();
     db.run(
-      `INSERT INTO parties (id, slug, name, status, veto_threshold, rate_limits, sync_generation, created_at, updated_at)
+      `INSERT INTO parties (id, slug, name, status, downvote_threshold, rate_limits, sync_generation, created_at, updated_at)
        VALUES ('p', 'party', 'Party', 'on', 3, '{}', 0, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
     );
     db.run(
@@ -93,7 +93,7 @@ describe("getGuestProfileStats", () => {
       `INSERT INTO votes (guest_id, queue_item_id, created_at) VALUES ('g', 'q2', '2026-01-02T00:00:00.000Z')`,
     );
     db.run(
-      `INSERT INTO vetoes (guest_id, queue_item_id, created_at) VALUES ('g', 'q3', '2026-01-03T00:00:00.000Z')`,
+      `INSERT INTO downvotes (guest_id, queue_item_id, created_at) VALUES ('g', 'q3', '2026-01-03T00:00:00.000Z')`,
     );
     db.run(
       `INSERT INTO rate_limit_events (guest_id, action, created_at) VALUES ('g', 'boost', '2026-01-01T00:00:00.000Z')`,

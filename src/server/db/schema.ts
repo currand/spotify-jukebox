@@ -3,13 +3,15 @@ import { mkdirSync } from "fs";
 import { dirname } from "path";
 import type { Config } from "../config";
 
+const DEFAULT_RATE_LIMITS_KEY = "default_rate_limits";
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS parties (
   id TEXT PRIMARY KEY,
   slug TEXT NOT NULL UNIQUE,
   name TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'off',
-  veto_threshold INTEGER NOT NULL DEFAULT 3,
+  downvote_threshold INTEGER NOT NULL DEFAULT 3,
   seed_playlist_id TEXT NOT NULL,
   rate_limits TEXT NOT NULL,
   sync_generation INTEGER NOT NULL DEFAULT 0,
@@ -35,7 +37,7 @@ CREATE TABLE IF NOT EXISTS queue_items (
   artist_name TEXT NOT NULL,
   album_art_url TEXT,
   upvote_count INTEGER NOT NULL DEFAULT 0,
-  veto_count INTEGER NOT NULL DEFAULT 0,
+  downvote_count INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'pending',
   is_boosted INTEGER NOT NULL DEFAULT 0,
   boost_position INTEGER,
@@ -55,7 +57,7 @@ CREATE TABLE IF NOT EXISTS votes (
   PRIMARY KEY (guest_id, queue_item_id)
 );
 
-CREATE TABLE IF NOT EXISTS vetoes (
+CREATE TABLE IF NOT EXISTS downvotes (
   guest_id TEXT NOT NULL REFERENCES guests(id),
   queue_item_id TEXT NOT NULL REFERENCES queue_items(id),
   created_at TEXT NOT NULL,
@@ -117,11 +119,121 @@ CREATE TABLE IF NOT EXISTS host_settings (
 
 export type Db = Database;
 
+function tableExists(db: Db, name: string): boolean {
+  const row = db
+    .query(`SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ?`)
+    .get(name) as { ok: number } | null;
+  return row != null;
+}
+
+function runOptional(db: Db, sql: string): void {
+  try {
+    db.run(sql);
+  } catch {
+    /* already migrated or not applicable */
+  }
+}
+
+function migrateVetoTableName(db: Db): void {
+  if (tableExists(db, "vetoes") && !tableExists(db, "downvotes")) {
+    db.run(`ALTER TABLE downvotes RENAME TO downvotes`);
+  }
+}
+
+function migratePartyRateLimitsJson(db: Db): void {
+  const rows = db
+    .query(`SELECT id, rate_limits FROM parties`)
+    .all() as { id: string; rate_limits: string }[];
+  for (const row of rows) {
+    try {
+      const parsed = JSON.parse(row.rate_limits) as Record<string, unknown>;
+      if (!parsed.veto || parsed.downvote) continue;
+      parsed.downvote = parsed.veto;
+      delete parsed.veto;
+      db.run(`UPDATE parties SET rate_limits = ? WHERE id = ?`, [
+        JSON.stringify(parsed),
+        row.id,
+      ]);
+    } catch {
+      /* skip invalid JSON */
+    }
+  }
+}
+
+function migrateHostSettingsGuestLimitsJson(db: Db): void {
+  const row = db
+    .query(`SELECT value FROM host_settings WHERE key = ?`)
+    .get(DEFAULT_RATE_LIMITS_KEY) as { value: string } | null;
+  if (!row) return;
+  try {
+    const parsed = JSON.parse(row.value) as Record<string, unknown>;
+    let changed = false;
+
+    if (
+      typeof parsed.downvoteThreshold === "number" &&
+      parsed.downvoteThreshold == null
+    ) {
+      parsed.downvoteThreshold = parsed.downvoteThreshold;
+      delete parsed.downvoteThreshold;
+      changed = true;
+    }
+
+    const rateLimits = parsed.rateLimits;
+    if (rateLimits && typeof rateLimits === "object") {
+      const limits = rateLimits as Record<string, unknown>;
+      if (limits.downvote && !limits.downvote) {
+        limits.downvote = limits.downvote;
+        delete limits.downvote;
+        changed = true;
+      }
+    }
+
+    if (
+      parsed.veto &&
+      !parsed.downvote &&
+      parsed.add &&
+      !parsed.rateLimits
+    ) {
+      parsed.downvote = parsed.veto;
+      delete parsed.veto;
+      changed = true;
+    }
+
+    if (changed) {
+      db.run(`UPDATE host_settings SET value = ? WHERE key = ?`, [
+        JSON.stringify(parsed),
+        DEFAULT_RATE_LIMITS_KEY,
+      ]);
+    }
+  } catch {
+    /* skip invalid JSON */
+  }
+}
+
+function migrateVetoToDownvote(db: Db): void {
+  migrateVetoTableName(db);
+  runOptional(
+    db,
+    `ALTER TABLE parties RENAME COLUMN downvote_threshold TO downvote_threshold`,
+  );
+  runOptional(
+    db,
+    `ALTER TABLE queue_items RENAME COLUMN downvote_count TO downvote_count`,
+  );
+  db.run(`UPDATE queue_items SET status = 'downvoted' WHERE status = 'vetoed'`);
+  db.run(
+    `UPDATE rate_limit_events SET action = 'downvote' WHERE action = 'downvote'`,
+  );
+  migratePartyRateLimitsJson(db);
+  migrateHostSettingsGuestLimitsJson(db);
+}
+
 export function initDb(config: Config): Db {
   mkdirSync(dirname(config.databasePath), { recursive: true });
   const db = new Database(config.databasePath);
   db.exec("PRAGMA journal_mode = WAL;");
   db.exec("PRAGMA foreign_keys = ON;");
+  migrateVetoTableName(db);
   db.exec(SCHEMA);
   for (const sql of [
     `ALTER TABLE queue_items ADD COLUMN from_seed INTEGER NOT NULL DEFAULT 0`,
@@ -142,5 +254,6 @@ export function initDb(config: Config): Db {
       /* column already exists */
     }
   }
+  migrateVetoToDownvote(db);
   return db;
 }

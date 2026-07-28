@@ -46,7 +46,7 @@ export function AdminPage() {
   const [form, setForm] = React.useState({
     name: "",
     seedPlaylistId: "",
-    vetoThreshold: 3,
+    downvoteThreshold: 3,
     boostCap: null as number | null,
   });
   const [createRateLimits, setCreateRateLimits] =
@@ -136,7 +136,7 @@ export function AdminPage() {
     setCreateRateLimits(defaults.rateLimits);
     setForm((current) => ({
       ...current,
-      vetoThreshold: defaults.vetoThreshold,
+      downvoteThreshold: defaults.downvoteThreshold,
       boostCap: defaults.boostCap,
     }));
     return defaults;
@@ -154,7 +154,7 @@ export function AdminPage() {
           setCreateRateLimits(defaults.rateLimits);
           setForm((current) => ({
             ...current,
-            vetoThreshold: defaults.vetoThreshold,
+            downvoteThreshold: defaults.downvoteThreshold,
             boostCap: defaults.boostCap,
           }));
         }
@@ -217,14 +217,14 @@ export function AdminPage() {
       setError(null);
       const body: {
         name: string;
-        vetoThreshold: number;
+        downvoteThreshold: number;
         boostCap?: number | null;
         rateLimits: PartyRateLimits;
         seedPlaylistId?: string;
         importFromPartyId?: string;
       } = {
         name: form.name.trim(),
-        vetoThreshold: form.vetoThreshold,
+        downvoteThreshold: form.downvoteThreshold,
         boostCap: form.boostCap,
         rateLimits: createRateLimits,
       };
@@ -705,12 +705,12 @@ export function AdminPage() {
             <details className="admin-advanced">
               <summary>Advanced guest limits</summary>
               <GuestLimitsFields
-                vetoThreshold={form.vetoThreshold}
+                downvoteThreshold={form.downvoteThreshold}
                 boostCap={form.boostCap}
                 rateLimits={createRateLimits}
-                onVetoThresholdChange={(value) => {
+                onDownvoteThresholdChange={(value) => {
                   createFormDirtyRef.current = true;
-                  setForm((current) => ({ ...current, vetoThreshold: value }));
+                  setForm((current) => ({ ...current, downvoteThreshold: value }));
                 }}
                 onBoostCapChange={(value) => {
                   createFormDirtyRef.current = true;
@@ -771,7 +771,7 @@ export function AdminPage() {
             </p>
             <GuestLimitsPanel
               partyId={party.id}
-              vetoThreshold={party.vetoThreshold}
+              downvoteThreshold={party.downvoteThreshold}
               boostCap={party.boostCap}
               rateLimits={party.rateLimits}
               defaultGuestLimits={defaultGuestLimits}

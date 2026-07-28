@@ -166,7 +166,7 @@ export function UpNextLockedSection({
           />
           <p>
             {item.artistName} · {item.addedBy} · <UpvoteCount count={item.upvoteCount} /> ·{" "}
-            <DownvoteCount count={item.vetoCount} />
+            <DownvoteCount count={item.downvoteCount} />
           </p>
         </div>
       </div>
@@ -253,7 +253,7 @@ export function ReadOnlyQueueRow({ item }: { item: QueueItemView }) {
           {!item.spotifyLocked && (
             <>
               {" "}
-              · <UpvoteCount count={item.upvoteCount} /> · <DownvoteCount count={item.vetoCount} />
+              · <UpvoteCount count={item.upvoteCount} /> · <DownvoteCount count={item.downvoteCount} />
             </>
           )}
         </p>
@@ -371,7 +371,7 @@ function historyStatusLabel(status: QueueItemView["status"]): string {
       return "Played";
     case "skipped":
       return "Removed";
-    case "vetoed":
+    case "downvoted":
       return "Downvoted";
     case "unblocked":
       return "Unblocked";
@@ -389,7 +389,7 @@ export function AdminHistoryRow({
   partyId: string;
   onAction: (path: string, method?: string, body?: unknown) => Promise<void>;
 }) {
-  const canUnblock = item.status === "played" || item.status === "vetoed";
+  const canUnblock = item.status === "played" || item.status === "downvoted";
 
   return (
     <div className="admin-history-row">

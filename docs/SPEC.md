@@ -2,7 +2,7 @@
 
 ## Objective
 
-Jukebox is a self-hosted web application that lets party guests control the host's Spotify playback queue via phone — without being a player itself. The host runs Jukebox on a home Docker server; guests join via QR code or link, search for tracks, upvote songs, veto unwanted tracks, and use a one-time boost to jump a song toward the front.
+Jukebox is a self-hosted web application that lets party guests control the host's Spotify playback queue via phone — without being a player itself. The host runs Jukebox on a home Docker server; guests join via QR code or link, search for tracks, upvote songs, downvote unwanted tracks, and use a one-time boost to jump a song toward the front.
 
 **Primary user:** Host (Spotify Premium, home server, one active Connect device).
 
@@ -11,7 +11,7 @@ Jukebox is a self-hosted web application that lets party guests control the host
 **Success looks like:**
 - Host creates a party in under 2 minutes (OAuth once, pick seed playlist, share QR).
 - Up to 50 guests concurrently browse, vote, and add tracks with sub-5s perceived latency via polling.
-- Virtual queue behavior (upvotes, boost lane, vetoes) matches spec even though Spotify's native queue cannot be reordered or edited.
+- Virtual queue behavior (upvotes, boost lane, downvotes) matches spec even though Spotify's native queue cannot be reordered or edited.
 - Entire stack runs in Docker Compose on a modest home server (~256 MB RAM for the app container).
 
 ### User stories
@@ -21,15 +21,15 @@ Jukebox is a self-hosted web application that lets party guests control the host
 | Host | I log in with Spotify once so Jukebox can control playback on my active device. |
 | Host | I start a party, pick a seed playlist, and share a QR code. |
 | Host | I turn the party on or off with a single switch. |
-| Host | I configure veto threshold and guest rate limits before or during a party. |
+| Host | I configure downvote threshold and guest rate limits before or during a party. |
 | Host | I see a warning when no Spotify device is active, while guests can still add/vote. |
 | Host | I manage the virtual queue: add, shuffle, reorder, force-next, clear upcoming, skip, ban guests, reset votes, and “start from here.” |
 | Host | After a server restart or network blip, music keeps playing and the virtual queue/history are intact. |
-| Guest | I scan a QR code and enter a display name before I can add, vote, veto, or boost. |
+| Guest | I scan a QR code and enter a display name before I can add, vote, downvote, or boost. |
 | Guest | I see the current queue, who added each song, and live upvote counts. |
 | Guest | I search for tracks or browse an artist's songs and add one to the queue. |
 | Guest | I upvote songs I want to hear sooner (not my own). |
-| Guest | I veto a song; if enough guests agree, it is removed/skipped. |
+| Guest | I downvote a song; if enough guests agree, it is removed/skipped. |
 | Guest | I boost one song per party (mine or anyone else's) into a priority lane sorted by upvotes. |
 
 ---
@@ -160,7 +160,7 @@ function compareQueueItems(a: QueueItem, b: QueueItem): number {
 ### Always
 - Validate all guest input server-side.
 - Enforce rate limits and party-on/off state on every mutating endpoint.
-- Require a non-empty display name before any guest mutation (add / upvote / veto / boost).
+- Require a non-empty display name before any guest mutation (add / upvote / downvote / boost).
 - Store Spotify refresh token encrypted at rest.
 - Run `bun test` before commits — see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
@@ -205,7 +205,7 @@ Jukebox maintains a **virtual queue** as the source of truth. A background sync 
 | Read queue / playback state | Remove item from queue |
 | Skip next / previous | Guarantee ordering under concurrent Player API calls |
 
-**Implication:** Tracks already pushed to Spotify but later demoted or vetoed are **skipped** when they reach the front. Upvote resorting applies only to tracks not yet sent to Spotify.
+**Implication:** Tracks already pushed to Spotify but later demoted or downvoted are **skipped** when they reach the front. Upvote resorting applies only to tracks not yet sent to Spotify.
 
 **Search limit (Feb 2026):** Max 10 results per search request. UI paginates or prompts refinement.
 
@@ -215,9 +215,9 @@ Jukebox maintains a **virtual queue** as the source of truth. A background sync 
 
 **Boost lane:** Separate priority lane. Within the lane, tracks sort by upvote count (desc), then `boost_position` (asc) as tie-breaker. When the current track ends, the next track is taken from the boost lane if non-empty; otherwise from the normal queue head.
 
-**Track lifecycle:** `pending` → `queued` (sent to Spotify) → `playing` → `played` | `skipped` | `vetoed`
+**Track lifecycle:** `pending` → `queued` (sent to Spotify) → `playing` → `played` | `skipped` | `downvoted`
 
-**Visible queue:** Guests see `pending`, `queued`, and `playing`. Terminal states (`played`, `skipped`, `vetoed`) leave the active list; `played` and `vetoed` feed recent dedup history (see Deduplication). `skipped` does not.
+**Visible queue:** Guests see `pending`, `queued`, and `playing`. Terminal states (`played`, `skipped`, `downvoted`) leave the active list; `played` and `downvoted` feed recent dedup history (see Deduplication). `skipped` does not.
 
 ### Interaction rules
 
@@ -225,7 +225,7 @@ Jukebox maintains a **virtual queue** as the source of truth. A background sync 
 |---|---|
 | Upvote | One upvote per guest per song. Cannot upvote a song you added. Host-seeded songs may be upvoted by any guest. |
 | Boost | One boost per guest per party. May boost any pending (not yet playing) song — including your own or someone else's. Costs the single boost either way. Cannot boost a song already in the boost lane. |
-| Veto | One veto per guest per song. Allowed on own songs, but the UI must warn before confirming (“You’re about to veto a song you added”). Not allowed on the currently playing track. When veto count reaches the party threshold, the song is immediately set to `vetoed`, removed from the guest queue UI, and never played; if it was already `queued` in Spotify’s buffer, it is skipped when it would reach the front (or skipped from the buffer on next sync). |
+| Downvote | One downvote per guest per song. Allowed on own songs, but the UI must warn before confirming (“You’re about to downvote a song you added”). Not allowed on the currently playing track. When downvote count reaches the party threshold, the song is immediately set to `downvoted`, removed from the guest queue UI, and never played; if it was already `queued` in Spotify’s buffer, it is skipped when it would reach the front (or skipped from the buffer on next sync). |
 | Display name | Required (non-empty) before any mutating action. Join may create a session without a name; first mutation must set one (or join UI requires it before enabling actions). |
 
 ### Spotify sync worker
@@ -236,9 +236,9 @@ When a party is **on**, a background worker keeps the virtual queue aligned with
 2. **Adaptive polling (default):** schedule the next poll ~7s before the current track is expected to end; wake immediately on queue mutations, skip, and host play/pause. Set `SYNC_FAST_POLL=1` to restore fixed 10s polling.
 3. If no active device / no playback: **do not fail guest mutations**. Set host-visible warning `spotify_device_inactive`. Skip Spotify write calls until a device is active again.
 4. Detect track transitions; mark previous item `played` or `skipped`.
-5. Select next virtual track (boost lane first, then normal head; never select vetoed).
+5. Select next virtual track (boost lane first, then normal head; never select downvoted).
 6. Maintain **one** Spotify queue buffer slot via `POST /me/player/queue` when empty (Spotify's Web API only supports appending, not batch/lookahead queueing).
-7. If the currently playing Spotify track is vetoed or no longer in the virtual queue, call `POST /me/player/next`.
+7. If the currently playing Spotify track is downvoted or no longer in the virtual queue, call `POST /me/player/next`.
 8. Do not add duplicate URIs already in the Spotify queue buffer.
 9. If the virtual queue has no upcoming tracks: stop adding to Spotify; guest UI shows “Add something!” Now-playing may finish naturally; Spotify’s own autoplay/recommendations are out of scope — Jukebox does not try to keep music going.
 
@@ -251,7 +251,7 @@ When a party is **on**, a background worker keeps the virtual queue aligned with
 Before adding a track, compare **folded title and artist** against:
 
 - All **active** queue items (`pending`, `queued`, `playing`)
-- The **20 most recent** terminal items with status `played` or `vetoed`, ordered by `finished_at DESC`
+- The **20 most recent** terminal items with status `played` or `downvoted`, ordered by `finished_at DESC`
 
 `skipped` items are excluded — guests may re-add songs they removed.
 
@@ -275,7 +275,7 @@ Sliding-window counters per guest per action type, plus a party-wide search budg
 |---|---|---|---|
 | Add track | 3 | 20 minutes | Per guest |
 | Upvote | 10 | 60 minutes | Per guest |
-| Veto | 3 | 30 minutes | Per guest |
+| Downvote | 3 | 30 minutes | Per guest |
 | Boost | 1 | 10 minutes | Per guest (sliding window) |
 | Search | 6 | 60 seconds | Per guest |
 | Party search | 24 | 30 seconds | Whole party (shared budget across all guests) |
@@ -309,13 +309,13 @@ Return `429` with `{ error: "<action-specific message>", code: "RATE_LIMITED", r
 - Create party (name, seed playlist, slug) — ends any previous active party
 - Resume archived party (same slug; preserves guests, queue, votes) or import any archived party’s track list as seed for a new party
 - Party on/off switch
-- Configure: veto threshold, rate-limit windows
+- Configure: downvote threshold, rate-limit windows
 - Display QR code + share link
 - Warning banner when Spotify has no active device
 - **Queue management (host overrides):**
   - Add tracks to the virtual queue (no guest rate limits; attributed to "Host")
   - **Shuffle:** Randomize all upcoming tracks in the **normal lane** (`pending` + `queued`, not playing). Leave **boost lane** order and **now-playing** untouched. Mark shuffled items back to `pending` as needed and **rebuild** the Spotify buffer (do not skip current track).
-  - Remove any non-playing queue item immediately (no veto threshold)
+  - Remove any non-playing queue item immediately (no downvote threshold)
   - Force a song to play next (move to front of boost lane / host priority)
   - Manual reorder (move up/down within the normal upcoming list)
   - Clear remaining queue (keep now-playing; mark all other upcoming as host-cleared/`skipped`)
@@ -324,7 +324,7 @@ Return `429` with `{ error: "<action-specific message>", code: "RATE_LIMITED", r
   - Reset upvote counts on a song (to 0; clears vote rows for that item)
   - **Start from here:** Host selects an upcoming song; every upcoming track that would play **before** it (in play order: boost lane FIFO, then normal by votes/`addedAt`) is removed (`skipped`); the selected song and everything after it remain. Effectively “start the queue from here.” Rebuild Spotify buffer; never skip now-playing unless the host separately skips.
 - **History:**
-  - View song history for the active party (`played`, `skipped`, `vetoed`) for audit and recovery visibility
+  - View song history for the active party (`played`, `skipped`, `downvoted`) for audit and recovery visibility
   - Queue recovery is primarily via durable SQLite + **Start from here**, not bulk history replay
 
 Host actions bypass guest rate limits and ownership restrictions.
@@ -346,8 +346,8 @@ Host actions bypass guest rate limits and ownership restrictions.
 ### Guest identity
 
 - Anonymous session via HTTP-only cookie (`guest_session`).
-- Display name required before mutations (add / upvote / veto / boost).
-- Names shown on adds and (where applicable) boosts/vetoes in the UI.
+- Display name required before mutations (add / upvote / downvote / boost).
+- Names shown on adds and (where applicable) boosts/downvotes in the UI.
 - No Spotify login for guests.
 
 ### Cloudflare
@@ -406,9 +406,9 @@ Spotify rejects `http://localhost`. Config validation enforces these rules at st
 | slug | TEXT UNIQUE | URL-safe, used in join link |
 | name | TEXT | Display name |
 | status | TEXT | `on` \| `off` \| `archived` |
-| veto_threshold | INTEGER | Default 3 |
+| downvote_threshold | INTEGER | Default 3 |
 | seed_playlist_id | TEXT | Spotify playlist ID |
-| rate_limits | JSON | `{ add, upvote, veto, boost, search, partySearch }`, each `{ count, windowMs }` |
+| rate_limits | JSON | `{ add, upvote, downvote, boost, search, partySearch }`, each `{ count, windowMs }` |
 | boost_cap | INTEGER NULL | Optional cap on concurrently boosted tracks |
 | created_at | DATETIME | |
 | updated_at | DATETIME | |
@@ -442,8 +442,8 @@ Invariant: at most one party with `status IN ('on', 'off')`; others are `archive
 | album_art_url | TEXT NULL | |
 | duration_ms | INTEGER NULL | Track length when known (duration guard) |
 | upvote_count | INTEGER | Denormalized counter |
-| veto_count | INTEGER | Denormalized counter |
-| status | TEXT | `pending` \| `queued` \| `playing` \| `played` \| `skipped` \| `vetoed` \| `unblocked` |
+| downvote_count | INTEGER | Denormalized counter |
+| status | TEXT | `pending` \| `queued` \| `playing` \| `played` \| `skipped` \| `downvoted` \| `unblocked` |
 | is_boosted | BOOLEAN | In boost lane |
 | boost_position | INTEGER NULL | FIFO order within boost lane |
 | boosted_by_guest_id | TEXT NULL FK | Guest who boosted (may differ from `added_by_guest_id`) |
@@ -462,7 +462,7 @@ Invariant: at most one party with `status IN ('on', 'off')`; others are `archive
 | queue_item_id | TEXT FK | |
 | created_at | DATETIME | PRIMARY KEY (guest_id, queue_item_id) |
 
-### `vetoes`
+### `downvotes`
 
 | Column | Type | Notes |
 |---|---|---|
@@ -476,7 +476,7 @@ Invariant: at most one party with `status IN ('on', 'off')`; others are `archive
 |---|---|---|
 | id | INTEGER PK | Auto-increment |
 | guest_id | TEXT FK | |
-| action | TEXT | `add` \| `upvote` \| `veto` \| `boost` \| `search` |
+| action | TEXT | `add` \| `upvote` \| `downvote` \| `boost` \| `search` |
 | created_at | DATETIME | Indexed for sliding window queries |
 
 ### `host_credentials`
@@ -512,7 +512,7 @@ Invariant: at most one party with `status IN ('on', 'off')`; others are `archive
 | value | JSON | |
 | updated_at | DATETIME | |
 
-Party-independent defaults (rate limits, veto threshold, boost cap) applied to newly created parties; falls back to `JUKEBOX_DEFAULT_RATE_LIMITS` env, then code defaults.
+Party-independent defaults (rate limits, downvote threshold, boost cap) applied to newly created parties; falls back to `JUKEBOX_DEFAULT_RATE_LIMITS` env, then code defaults.
 
 ### `metrics_sessions` / `metrics_snapshots`
 
@@ -549,7 +549,7 @@ Base path: `/api/v1`
 | DELETE | `/host/parties/:id/queue/:itemId` | Host remove song (not currently playing) |
 | POST | `/host/parties/:id/skip` | Skip currently playing track |
 | PATCH | `/host/parties/:id/guests/:guestId` | `{ disabled: boolean }` ban/unban |
-| GET | `/host/parties/:id/history` | Terminal history (`played` / `skipped` / `vetoed`) |
+| GET | `/host/parties/:id/history` | Terminal history (`played` / `skipped` / `downvoted`) |
 | GET | `/host/parties/:id/search?q=` | Track search + artist matches |
 | GET | `/host/parties/:id/artists/:id/tracks?name=&filter=all\|credited` | Artist track search (same as guest) |
 | POST | `/host/parties/:id/sync` | Force an immediate sync tick |
@@ -577,11 +577,11 @@ Base path: `/api/v1`
 | GET | `/parties/:slug/artists/:id/tracks?name=&filter=all\|credited` | Artist track search (`artist:{name}`; `credited` filters to that artist) |
 | POST | `/parties/:slug/queue` | Add track `{ uri }` |
 | POST | `/parties/:slug/queue/:itemId/upvote` | Upvote |
-| POST | `/parties/:slug/queue/:itemId/veto` | Veto |
+| POST | `/parties/:slug/queue/:itemId/downvote` | Downvote |
 | POST | `/parties/:slug/queue/:itemId/boost` | One-time boost |
 | POST | `/parties/:slug/queue/:itemId/unboost` | Undo a boost (refunds `boost_used`) |
 | GET | `/parties/:slug/me` | Current guest session info |
-| GET | `/parties/:slug/me/info` | Guest profile stats (votes, vetoes, boosts) |
+| GET | `/parties/:slug/me/info` | Guest profile stats (votes, downvotes, boosts) |
 | GET | `/parties/:slug/me/songs` | Guest's own active + history songs ("My Songs") |
 | DELETE | `/parties/:slug/me/songs/:itemId` | Remove a guest's own pending song |
 
@@ -599,12 +599,12 @@ Guests poll `GET /parties/:slug/queue` every **3 seconds** when party is on. `ET
 
 ### Guest (`/p/:slug`)
 
-- Prompt for display name before enabling add/upvote/veto/boost
+- Prompt for display name before enabling add/upvote/downvote/boost
 - Now playing banner
 - Empty upcoming queue: show “Add something!”
-- Queue list: art, title, artist, upvotes, added-by name, veto count
+- Queue list: art, title, artist, upvotes, added-by name, downvote count
 - Search bar with results; tap artist → songs or credited “top tracks” view (both use Spotify track search, not `/artists/{id}/top-tracks`)
-- Actions per song: upvote (hidden/disabled on own songs), veto (disabled on now-playing; confirm warning if vetoing own song), boost (disabled if used or already boosted)
+- Actions per song: upvote (hidden/disabled on own songs), downvote (disabled on now-playing; confirm warning if downvoting own song), boost (disabled if used or already boosted)
 - Show remaining rate-limit quota subtly (e.g. "2 adds left")
 
 ### Host (`/admin`)
@@ -613,12 +613,12 @@ Guests poll `GET /parties/:slug/queue` every **3 seconds** when party is on. `ET
 - Create party (archives previous) + seed playlist picker (search or paste URL)
 - On/off toggle (prominent)
 - Warning when no active Spotify device / Spotify unreachable
-- Veto threshold + rate-limit config
+- downvote threshold + rate-limit config
 - QR code + copy link
 - Queue management: add, shuffle, remove, force next, reorder, clear upcoming, skip now-playing, start-from-here
 - Guests list: ban/unban
 - Reset votes on a song
-- History panel: browse past tracks (`played` / `skipped` / `vetoed`)
+- History panel: browse past tracks (`played` / `skipped` / `downvoted`)
 
 ---
 
@@ -697,8 +697,8 @@ Both apps:
 - [ ] Guest cannot upvote their own song; can upvote others once each.
 - [ ] Upvoting reorders pending tracks in the virtual queue.
 - [ ] Boost places any eligible pending track in FIFO boost lane (including own); one boost per guest.
-- [ ] Veto of own song shows a confirmation warning; currently playing cannot be vetoed.
-- [ ] Veto at threshold immediately hides the song from the queue; if already buffered in Spotify, it is skipped and never plays.
+- [ ] Downvote of own song shows a confirmation warning; currently playing cannot be downvoted.
+- [ ] Downvote at threshold immediately hides the song from the queue; if already buffered in Spotify, it is skipped and never plays.
 - [ ] Duplicate title (fuzzy) against active + last 20 terminal tracks is rejected.
 - [ ] Rate limits enforced with correct sliding windows; returns `429` with retry hint.
 - [ ] Party off switch blocks all guest mutations within one poll cycle.
@@ -719,7 +719,7 @@ Both apps:
 2. **Host OAuth** — Spotify auth, token storage, refresh, host session
 3. **Party CRUD** — Create (archive previous), seed import on create, on/off toggle, persistence
 4. **Guest sessions** — Join flow, display name gate
-5. **Virtual queue** — Add, upvote, veto, boost, dedup, rate limits
+5. **Virtual queue** — Add, upvote, downvote, boost, dedup, rate limits
 6. **Host overrides** — Add/remove/shuffle/force-next/reorder/clear/skip/ban/reset-votes/start-from-here + history view
 7. **Search** — Track + artist search via Spotify `/search` (dev-mode apps cannot use `/artists/{id}/top-tracks`)
 8. **Sync worker** — One-slot buffer, skip logic, inactive-device warning, restart soft-reconcile (refill buffer, never skip current)

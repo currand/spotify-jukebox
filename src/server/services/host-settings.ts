@@ -2,7 +2,7 @@ import type { Config } from "../config";
 import type { Db } from "../db/schema";
 import {
   DEFAULT_RATE_LIMITS,
-  DEFAULT_VETO_THRESHOLD,
+  DEFAULT_DOWNVOTE_THRESHOLD,
   factoryDefaultGuestLimits,
   type DefaultGuestLimits,
   type PartyRateLimits,
@@ -29,14 +29,14 @@ export function isValidPartyRateLimits(value: unknown): value is PartyRateLimits
   return (
     isValidRateLimitConfig(limits.add) &&
     isValidRateLimitConfig(limits.upvote) &&
-    isValidRateLimitConfig(limits.veto) &&
+    isValidRateLimitConfig(limits.downvote) &&
     isValidRateLimitConfig(limits.boost) &&
     isValidRateLimitConfig(limits.search) &&
     isValidRateLimitConfig(limits.partySearch)
   );
 }
 
-export function isValidVetoThreshold(value: unknown): value is number {
+export function isValidDownvoteThreshold(value: unknown): value is number {
   return Number.isInteger(value) && (value as number) >= 1 && (value as number) <= 20;
 }
 
@@ -51,19 +51,19 @@ function parseStoredGuestLimits(raw: unknown): DefaultGuestLimits | null {
   if (isValidPartyRateLimits(raw)) {
     return {
       rateLimits: normalizeRateLimits(raw),
-      vetoThreshold: DEFAULT_VETO_THRESHOLD,
+      downvoteThreshold: DEFAULT_DOWNVOTE_THRESHOLD,
       boostCap: null,
     };
   }
 
   const stored = raw as Partial<DefaultGuestLimits>;
   if (!isValidPartyRateLimits(stored.rateLimits)) return null;
-  if (!isValidVetoThreshold(stored.vetoThreshold)) return null;
+  if (!isValidDownvoteThreshold(stored.downvoteThreshold)) return null;
   if (!isValidBoostCap(stored.boostCap ?? null)) return null;
 
   return {
     rateLimits: normalizeRateLimits(stored.rateLimits),
-    vetoThreshold: stored.vetoThreshold!,
+    downvoteThreshold: stored.downvoteThreshold!,
     boostCap: stored.boostCap ?? null,
   };
 }
@@ -104,12 +104,12 @@ export function setDefaultGuestLimits(
 ): DefaultGuestLimits {
   const normalized: DefaultGuestLimits = {
     rateLimits: normalizeRateLimits(limits.rateLimits),
-    vetoThreshold: limits.vetoThreshold,
+    downvoteThreshold: limits.downvoteThreshold,
     boostCap: limits.boostCap ?? null,
   };
   if (
     !isValidPartyRateLimits(normalized.rateLimits) ||
-    !isValidVetoThreshold(normalized.vetoThreshold) ||
+    !isValidDownvoteThreshold(normalized.downvoteThreshold) ||
     !isValidBoostCap(normalized.boostCap)
   ) {
     throw new InvalidDefaultRateLimitsError();

@@ -66,7 +66,7 @@ import {
   InvalidDefaultRateLimitsError,
   isValidBoostCap,
   isValidPartyRateLimits,
-  isValidVetoThreshold,
+  isValidDownvoteThreshold,
   setDefaultGuestLimits,
 } from "../services/host-settings";
 import { formatSearchRateLimitMessage } from "@/shared/rate-limit-messages";
@@ -122,7 +122,7 @@ function isValidPartyName(value: unknown): value is string {
 function validatePartyConfigPatch(body: {
   name?: string;
   status?: string;
-  vetoThreshold?: number;
+  downvoteThreshold?: number;
   boostCap?: number | null;
   rateLimits?: PartyRateLimits;
 }): { code: string; message: string } | null {
@@ -135,8 +135,8 @@ function validatePartyConfigPatch(body: {
   if (body.status !== undefined && body.status !== "on" && body.status !== "off") {
     return { code: "INVALID_STATUS", message: "Status must be 'on' or 'off'" };
   }
-  if (body.vetoThreshold !== undefined && !isValidVetoThreshold(body.vetoThreshold)) {
-    return { code: "INVALID_VETO_THRESHOLD", message: "Veto threshold must be 1-20" };
+  if (body.downvoteThreshold !== undefined && !isValidDownvoteThreshold(body.downvoteThreshold)) {
+    return { code: "INVALID_DOWNVOTE_THRESHOLD", message: "Downvote threshold must be 1-20" };
   }
   if (body.boostCap !== undefined && !isValidBoostCap(body.boostCap)) {
     return { code: "INVALID_BOOST_CAP", message: "Boost cap must be 1-99 or null" };
@@ -309,19 +309,19 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
   authed.patch("/settings/default-rate-limits", async (c) => {
     const body = (await c.req.json()) as {
       rateLimits?: PartyRateLimits;
-      vetoThreshold?: number;
+      downvoteThreshold?: number;
       boostCap?: number | null;
     };
-    if (!body.rateLimits || body.vetoThreshold == null) {
+    if (!body.rateLimits || body.downvoteThreshold == null) {
       return c.json(
-        { error: "rateLimits and vetoThreshold required", code: "INVALID_BODY" },
+        { error: "rateLimits and downvoteThreshold required", code: "INVALID_BODY" },
         400,
       );
     }
     try {
       const saved = setDefaultGuestLimits(db, {
         rateLimits: body.rateLimits,
-        vetoThreshold: body.vetoThreshold,
+        downvoteThreshold: body.downvoteThreshold,
         boostCap: body.boostCap ?? null,
       });
       return c.json(saved);
@@ -342,7 +342,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
       seedPlaylistId?: string;
       importFromPartyId?: string;
       slug?: string;
-      vetoThreshold?: number;
+      downvoteThreshold?: number;
       boostCap?: number | null;
       rateLimits?: PartyRateLimits;
     };
@@ -390,13 +390,13 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     const guestDefaults = getDefaultGuestLimits(db, config);
 
     db.run(
-      `INSERT INTO parties (id, slug, name, status, veto_threshold, boost_cap, seed_playlist_id, rate_limits, sync_generation, created_at, updated_at)
+      `INSERT INTO parties (id, slug, name, status, downvote_threshold, boost_cap, seed_playlist_id, rate_limits, sync_generation, created_at, updated_at)
        VALUES (?, ?, ?, 'off', ?, ?, ?, ?, 0, ?, ?)`,
       [
         partyId,
         slug,
         body.name,
-        body.vetoThreshold ?? guestDefaults.vetoThreshold,
+        body.downvoteThreshold ?? guestDefaults.downvoteThreshold,
         body.boostCap !== undefined ? body.boostCap : guestDefaults.boostCap,
         playlistId,
         JSON.stringify(body.rateLimits ?? guestDefaults.rateLimits),
@@ -593,7 +593,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     const id = c.req.param("id");
     const body = (await c.req.json()) as {
       status?: "on" | "off";
-      vetoThreshold?: number;
+      downvoteThreshold?: number;
       boostCap?: number | null;
       rateLimits?: PartyRateLimits;
       name?: string;
@@ -612,9 +612,9 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
       updates.push("status = ?");
       values.push(body.status);
     }
-    if (body.vetoThreshold != null) {
-      updates.push("veto_threshold = ?");
-      values.push(body.vetoThreshold);
+    if (body.downvoteThreshold != null) {
+      updates.push("downvote_threshold = ?");
+      values.push(body.downvoteThreshold);
     }
     if (body.boostCap !== undefined) {
       updates.push("boost_cap = ?");
@@ -998,7 +998,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     const items = getQueueItems(db, c.req.param("id"), [
       "played",
       "skipped",
-      "vetoed",
+      "downvoted",
       "unblocked",
     ]);
     return c.json({
@@ -1104,7 +1104,7 @@ function formatParty(row: Record<string, unknown>) {
     slug: row.slug,
     name: row.name,
     status: row.status,
-    vetoThreshold: row.veto_threshold,
+    downvoteThreshold: row.downvote_threshold,
     boostCap: row.boost_cap ?? null,
     seedPlaylistId: row.seed_playlist_id,
     rateLimits: parseRateLimits(row.rate_limits as string),

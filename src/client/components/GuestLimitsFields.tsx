@@ -64,18 +64,18 @@ function LimitRow({
 }
 
 export function GuestLimitsFields({
-  vetoThreshold,
+  downvoteThreshold,
   boostCap,
   rateLimits,
-  onVetoThresholdChange,
+  onDownvoteThresholdChange,
   onBoostCapChange,
   onRateLimitsChange,
   showIntro = true,
 }: {
-  vetoThreshold: number;
+  downvoteThreshold: number;
   boostCap: number | null;
   rateLimits: PartyRateLimits;
-  onVetoThresholdChange: (value: number) => void;
+  onDownvoteThresholdChange: (value: number) => void;
   onBoostCapChange: (value: number | null) => void;
   onRateLimitsChange: (next: PartyRateLimits) => void;
   showIntro?: boolean;
@@ -99,8 +99,8 @@ export function GuestLimitsFields({
           type="number"
           min={1}
           max={20}
-          value={vetoThreshold}
-          onChange={(e) => onVetoThresholdChange(Number(e.target.value))}
+          value={downvoteThreshold}
+          onChange={(e) => onDownvoteThresholdChange(Number(e.target.value))}
         />
       </label>
       <label className="form-field">
@@ -137,9 +137,9 @@ export function GuestLimitsFields({
       <LimitRow
         label="Downvotes"
         hint="How many downvotes a guest can cast in the window."
-        value={rateLimits.veto}
+        value={rateLimits.downvote}
         windowUnit="min"
-        onChange={(next) => patchLimit("veto", next)}
+        onChange={(next) => patchLimit("downvote", next)}
       />
       <LimitRow
         label="Boost"
@@ -168,7 +168,7 @@ export function GuestLimitsFields({
 
 export function GuestLimitsPanel({
   partyId,
-  vetoThreshold,
+  downvoteThreshold,
   boostCap,
   rateLimits,
   defaultGuestLimits,
@@ -176,7 +176,7 @@ export function GuestLimitsPanel({
   onSaved,
 }: {
   partyId: string;
-  vetoThreshold: number;
+  downvoteThreshold: number;
   boostCap: number | null;
   rateLimits: PartyRateLimits;
   defaultGuestLimits: DefaultGuestLimits;
@@ -184,7 +184,7 @@ export function GuestLimitsPanel({
   onSaved: () => void;
 }) {
   const [limits, setLimits] = React.useState<PartyRateLimits>(rateLimits);
-  const [vetoes, setVetoes] = React.useState(vetoThreshold);
+  const [downvoteThresholdValue, setDownvoteThresholdValue] = React.useState(downvoteThreshold);
   const [boostCapValue, setBoostCapValue] = React.useState<number | null>(boostCap);
   const [saving, setSaving] = React.useState(false);
   const [savingDefaults, setSavingDefaults] = React.useState(false);
@@ -193,7 +193,7 @@ export function GuestLimitsPanel({
 
   React.useEffect(() => {
     setLimits(rateLimits);
-    setVetoes(vetoThreshold);
+    setDownvoteThresholdValue(downvoteThreshold);
     setBoostCapValue(boostCap);
   }, [partyId]);
 
@@ -206,7 +206,7 @@ export function GuestLimitsPanel({
         method: "PATCH",
         body: JSON.stringify({
           rateLimits: limits,
-          vetoThreshold: vetoes,
+          downvoteThreshold: downvoteThresholdValue,
           boostCap: boostCapValue,
         }),
       });
@@ -230,7 +230,7 @@ export function GuestLimitsPanel({
           method: "PATCH",
           body: JSON.stringify({
             rateLimits: limits,
-            vetoThreshold: vetoes,
+            downvoteThreshold: downvoteThresholdValue,
             boostCap: boostCapValue,
           }),
         },
@@ -248,10 +248,10 @@ export function GuestLimitsPanel({
     <div className="admin-section admin-limits-panel">
       <h3>Guest limits</h3>
       <GuestLimitsFields
-        vetoThreshold={vetoes}
+        downvoteThreshold={downvoteThresholdValue}
         boostCap={boostCapValue}
         rateLimits={limits}
-        onVetoThresholdChange={setVetoes}
+        onDownvoteThresholdChange={setDownvoteThresholdValue}
         onBoostCapChange={setBoostCapValue}
         onRateLimitsChange={setLimits}
       />
@@ -274,7 +274,7 @@ export function GuestLimitsPanel({
           className="secondary"
           onClick={() => {
             setLimits(defaultGuestLimits.rateLimits);
-            setVetoes(defaultGuestLimits.vetoThreshold);
+            setDownvoteThresholdValue(defaultGuestLimits.downvoteThreshold);
             setBoostCapValue(defaultGuestLimits.boostCap);
           }}
         >

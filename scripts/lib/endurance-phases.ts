@@ -3,7 +3,7 @@ export interface Phase {
   durationMs: number;
   /** Chance per tick that a guest performs an action (0-1) */
   activityRate: number;
-  /** Weighted action distribution [search, add, upvote, veto, boost, idle] */
+  /** Weighted action distribution search, add, upvote, downvote, boost, idle] */
   actionWeights: number[];
 }
 

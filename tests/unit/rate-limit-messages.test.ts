@@ -40,12 +40,12 @@ describe("formatGuestRateLimitMessage", () => {
     ).toBe("You've added your limit of 3 songs. Try again in 12 minutes.");
   });
 
-  test("upvote and veto include counts", () => {
+  test("upvote and downvote include counts", () => {
     expect(
       formatGuestRateLimitMessage("upvote", { count: 10, windowMs: 3_600_000 }, 45 * 60_000),
     ).toBe("You've used all 10 upvotes. Try again in 45 minutes.");
     expect(
-      formatGuestRateLimitMessage("veto", { count: 1, windowMs: 30 * 60_000 }),
+      formatGuestRateLimitMessage("downvote", { count: 1, windowMs: 30 * 60_000 }),
     ).toBe("You've used all 1 downvote.");
   });
 

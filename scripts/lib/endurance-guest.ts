@@ -21,7 +21,7 @@ export interface GuestState {
   boostUsed: boolean;
   addedSongs: string[];
   upvotedSongs: string[];
-  vetoedSongs: string[];
+  downvotedSongs: string[];
   duplicateAddAttempts: Set<string>;
   actions: number;
   errors: number;
@@ -71,7 +71,7 @@ export function createGuestState(name: string): GuestState {
     boostUsed: false,
     addedSongs: [],
     upvotedSongs: [],
-    vetoedSongs: [],
+    downvotedSongs: [],
     duplicateAddAttempts: new Set(),
     actions: 0,
     errors: 0,
@@ -167,7 +167,7 @@ export async function runGuestLoop(
     }
 
     const action = weightedRandom(
-      ["search", "add", "upvote", "veto", "boost", "idle"],
+      ["search", "add", "upvote", "downvote", "boost", "idle"],
       phase.actionWeights,
     );
 
@@ -187,8 +187,8 @@ export async function runGuestLoop(
         case "upvote":
           await doUpvote(ctx, guest, cookie);
           break;
-        case "veto":
-          await doVeto(ctx, guest, cookie);
+        case "downvote":
+          await doDownvote(ctx, guest, cookie);
           break;
         case "boost":
           await doBoost(ctx, guest, cookie);
@@ -383,30 +383,30 @@ async function doUpvote(
   ctx.onAction();
 }
 
-async function doVeto(
+async function doDownvote(
   ctx: GuestLoopContext,
   guest: GuestState,
   cookie: string,
 ): Promise<void> {
   const candidates = ctx.queueRef.items.filter(
-    (i) => i.status === "pending" && !guest.vetoedSongs.includes(i.id),
+    (i) => i.status === "pending" && !guest.downvotedSongs.includes(i.id),
   );
   if (candidates.length === 0) return;
 
   const target = pickRandom(candidates);
   const res = await ctx.api(
     "POST",
-    `/api/v1/parties/${ctx.slug}/queue/${target.id}/veto`,
+    `/api/v1/parties/${ctx.slug}/queue/${target.id}/downvote`,
     undefined,
     cookie,
   );
 
   if (res.status === 200) {
-    guest.vetoedSongs.push(target.id);
+    guest.downvotedSongs.push(target.id);
     ctx.log({
       time: new Date().toISOString(),
       guest: guest.name,
-      action: "veto",
+      action: "downvote",
       detail: `"${target.trackName}"`,
       status: 200,
     });
@@ -417,7 +417,7 @@ async function doVeto(
     ctx.log({
       time: new Date().toISOString(),
       guest: guest.name,
-      action: "veto_fail",
+      action: "downvote_fail",
       detail: `"${target.trackName}" → ${res.json?.code}`,
       status: res.status,
     });

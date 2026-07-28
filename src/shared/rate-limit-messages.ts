@@ -1,6 +1,6 @@
 import type { RateLimitConfig } from "./types";
 
-export type GuestRateLimitAction = "add" | "upvote" | "veto" | "boost" | "search";
+export type GuestRateLimitAction = "add" | "upvote" | "downvote" | "boost" | "search";
 
 export type SearchRateLimitKind =
   | "guest_search"
@@ -49,7 +49,7 @@ export function formatGuestRateLimitMessage(
     }
     case "upvote":
       return `You've used all ${config.count} upvote${config.count === 1 ? "" : "s"}.${retry}`;
-    case "veto":
+    case "downvote":
       return `You've used all ${config.count} downvote${config.count === 1 ? "" : "s"}.${retry}`;
     case "boost":
       return config.count === 1

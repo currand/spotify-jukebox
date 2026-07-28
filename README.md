@@ -4,7 +4,7 @@
 **Self-hosted party queue for Spotify Premium.**
 - Locally hosted with Docker
 - Designed with Cloudflare/Tailscale in mind
-- Guests join from their phones — no Spotify account required — to search for, add, upvote, veto, and boost songs
+- Guests join from their phones — no Spotify account required — to search for, add, upvote, downvote, and boost songs
 - You stay in control of playback on your Spotify Connect device via an Admin panel
 - Search caching and rate limiting keep Jukebox within Spotify's API limits and comply with their guidelines
 
@@ -50,21 +50,21 @@ flowchart TB
     SC -->|cache miss| WA
 ```
 
-Jukebox maintains a **virtual queue** with voting and veto logic. Spotify's API cannot reorder or remove queued tracks, so Jukebox syncs intelligently — adding the next track, skipping when needed, and keeping guest-facing order separate from what Spotify's player shows.
+Jukebox maintains a **virtual queue** with voting and downvote logic. Spotify's API cannot reorder or remove queued tracks, so Jukebox syncs intelligently — adding the next track, skipping when needed, and keeping guest-facing order separate from what Spotify's player shows.
 
 ### For guests
 
 - Join via QR code or link — pick a display name and go
 - Search Spotify and add tracks to the party queue
 - Upvote songs they want sooner
-- Veto songs; when enough guests agree, the track is removed
+- Downvote songs; when enough guests agree, the track is removed
 - **Boost** a song to jump it toward the front of the queue
 
 ### For you (the host)
 
 - Admin page at `/admin` — connect Spotify once, create a party, show a QR code
 - Import a seed playlist when the party starts
-- Turn the party on/off, set veto threshold and guest limits
+- Turn the party on/off, set downvote threshold and guest limits
 - Full queue control: shuffle, reorder, skip, force-next, ban guests
 - Start / stop / skip playback on your active Spotify device from the admin UI
 - Full-screen display that shows the QR and queue
@@ -146,7 +146,7 @@ Spotify rate limits can last up to **24 hours**. Search traffic is the primary d
 |---|---|---|
 | Add a song | 3 | 20 minutes |
 | Upvote | 10 | 60 minutes |
-| Veto | 3 | 30 minutes |
+| Downvote | 3 | 30 minutes |
 | Boost | 1 | 10 minutes |
 | Search (per guest) | 6 | 60 seconds |
 | Search (whole party) | 24 | 30 seconds |
@@ -270,7 +270,7 @@ docker compose --profile default --profile tunnel \
 
 ## Running a party
 
-1. **Before guests arrive** — Open `/admin`, connect Spotify, create a party (name + seed playlist), configure veto threshold and guest limits if you want stricter rules than defaults.
+1. **Before guests arrive** — Open `/admin`, connect Spotify, create a party (name + seed playlist), configure downvote threshold and guest limits if you want stricter rules than defaults.
 2. **Start playback** — Open Spotify on your speaker, TV, or phone (Spotify Connect). Jukebox controls whichever device is currently active.
 3. **Share the party** — Show the QR code or copy the guest link. Guests set a display name, then search and interact.
 4. **During the party** — Toggle the party **on** to allow guest actions; **off** to freeze the queue. Use admin controls to skip, shuffle, or recover from a bad streak of adds.

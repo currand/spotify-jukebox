@@ -19,7 +19,7 @@ function testDb(): Db {
       artist_name TEXT NOT NULL,
       album_art_url TEXT,
       upvote_count INTEGER NOT NULL DEFAULT 0,
-      veto_count INTEGER NOT NULL DEFAULT 0,
+      downvote_count INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'pending',
       is_boosted INTEGER NOT NULL DEFAULT 0,
       boost_position INTEGER,
@@ -72,9 +72,9 @@ describe("getDedupTracks", () => {
     ]);
   });
 
-  test("still blocks re-adding vetoed songs", () => {
+  test("still blocks re-adding downvoted songs", () => {
     const db = testDb();
-    insertItem(db, { id: "1", track_name: "Vetoed Song", artist_name: "Band", status: "vetoed", finished_at: "2026-01-02T00:00:00.000Z" });
+    insertItem(db, { id: "1", track_name: "Vetoed Song", artist_name: "Band", status: "downvoted", finished_at: "2026-01-02T00:00:00.000Z" });
 
     expect(getDedupTracks(db, "party")).toEqual([
       { spotifyUri: "uri", trackName: "Vetoed Song", artistName: "Band", durationMs: null },
@@ -114,12 +114,12 @@ describe("unblockQueueItem", () => {
     expect(getDedupTracks(db, "party")).toEqual([]);
   });
 
-  test("marks vetoed tracks as unblocked", () => {
+  test("marks downvoted tracks as unblocked", () => {
     const db = testDb();
     insertItem(db, {
       id: "1",
       track_name: "Vetoed Song",
-      status: "vetoed",
+      status: "downvoted",
       finished_at: "2026-01-02T00:00:00.000Z",
     });
 

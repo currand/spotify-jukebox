@@ -11,7 +11,7 @@ export function upvoteBlockedMessage(
   if (!canMutate) return "Party is paused — actions are off";
   if (item.guestUpvoteBlocked) {
     const upNextPending =
-      item.status === "pending" && !item.guestVetoBlocked;
+      item.status === "pending" && !item.guestDownvoteBlocked;
     return upNextPending
       ? "Up next — upvotes are locked"
       : "Already queued in Spotify — upvotes are locked";
@@ -28,7 +28,7 @@ export function downvoteBlockedMessage(
   downvotesLeft?: number,
 ): string {
   if (!canMutate) return "Party is paused — actions are off";
-  if (item.guestVetoBlocked) {
+  if (item.guestDownvoteBlocked) {
     return "Already queued in Spotify — downvotes are locked";
   }
   if (item.guestHasDownvoted) return "You already downvoted this song";
@@ -46,7 +46,7 @@ export function boostBlockedMessage(
   if (partyBoostsRemaining === 0) return "Boost limit reached for this party";
   if (item.guestBoostBlocked) {
     const upNextPending =
-      item.status === "pending" && !item.guestVetoBlocked;
+      item.status === "pending" && !item.guestDownvoteBlocked;
     return upNextPending
       ? "Up next — boost is locked"
       : "Already queued in Spotify — boost is locked";
@@ -84,7 +84,7 @@ export function downvoteApiMessage(error: unknown): string | null {
   switch (error.code) {
     case "NEXT_LOCKED":
       return "Already queued in Spotify — downvotes are locked";
-    case "ALREADY_VETOED":
+    case "ALREADY_DOWNVOTED":
       return "You already downvoted this song";
     case "NOW_PLAYING":
       return "Can't downvote what's playing now";

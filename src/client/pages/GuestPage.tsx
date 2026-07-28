@@ -217,7 +217,7 @@ function GuestApp({ slug }: { slug: string }) {
           return;
         }
       }
-      if (path.endsWith("/veto")) {
+      if (path.endsWith("/downvote")) {
         const message = downvoteApiMessage(e);
         if (message) {
           showPopup(message, "info");
@@ -439,7 +439,7 @@ function GuestApp({ slug }: { slug: string }) {
               boostsLeft={me?.quota?.boost ?? 0}
               partyBoostsRemaining={queue?.boostsRemaining}
               upvotesLeft={me?.quota?.upvote}
-              downvotesLeft={me?.quota?.veto}
+              downvotesLeft={me?.quota?.downvote}
               showPopup={showPopup}
               onAction={act}
               slug={slug}
@@ -496,7 +496,7 @@ function QueueRowActions({
     upvotesLeft === 0;
   const downvoteDisabled =
     !canMutate ||
-    item.guestVetoBlocked ||
+    item.guestDownvoteBlocked ||
     item.guestHasDownvoted === true ||
     downvotesLeft === 0;
   const boostDisabled =
@@ -514,7 +514,7 @@ function QueueRowActions({
     if (isOwn && !confirm("You're about to downvote a song you added. Continue?")) {
       return;
     }
-    await onAction(`/parties/${slug}/queue/${item.id}/veto`);
+    await onAction(`/parties/${slug}/queue/${item.id}/downvote`);
   }
 
   function handleUpvote() {
@@ -603,7 +603,7 @@ function QueueRow({
         />
         <p>
           {item.artistName} · {item.addedBy} · <UpvoteCount count={item.upvoteCount} /> ·{" "}
-          <DownvoteCount count={item.vetoCount} />
+          <DownvoteCount count={item.downvoteCount} />
         </p>
       </div>
       <div className="actions">

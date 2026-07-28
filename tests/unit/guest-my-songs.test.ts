@@ -10,7 +10,7 @@ const base = (overrides: Partial<QueueItemRow>): QueueItemRow => ({
   artist_name: "a",
   album_art_url: null,
   upvote_count: 0,
-  veto_count: 0,
+  downvote_count: 0,
   status: "pending",
   is_boosted: 0,
   boost_position: null,

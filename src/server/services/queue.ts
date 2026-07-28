@@ -12,7 +12,7 @@ export interface QueueItemRow {
   artist_name: string;
   album_art_url: string | null;
   upvote_count: number;
-  veto_count: number;
+  downvote_count: number;
   status: QueueItemStatus;
   is_boosted: number;
   boost_position: number | null;
@@ -174,7 +174,7 @@ export function getSpotifyBufferItem(
   return getUpcomingPlayOrder(items)[0] ?? null;
 }
 
-/** Guest cannot reorder or veto tracks already in Spotify's queue. */
+/** Guest cannot reorder or downvote tracks already in Spotify's queue. */
 export function isGuestSpotifyBufferLocked(
   items: QueueItemRow[],
   itemId: string,
@@ -220,7 +220,7 @@ export function isGuestBoostBlocked(
   return isGuestBufferSlotLocked(items, itemId);
 }
 
-export function isGuestVetoBlocked(
+export function isGuestDownvoteBlocked(
   items: QueueItemRow[],
   itemId: string,
 ): boolean {
@@ -253,7 +253,7 @@ export function adoptSpotifyTrack(
   db.run(
     `INSERT INTO queue_items (
       id, party_id, spotify_uri, track_name, artist_name, album_art_url,
-      upvote_count, veto_count, status, is_boosted, boost_position,
+      upvote_count, downvote_count, status, is_boosted, boost_position,
       manual_order, added_by_guest_id, from_seed, from_spotify, added_at
     ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, 0, NULL, NULL, NULL, 0, 1, ?)`,
     [
@@ -281,7 +281,7 @@ export function markFinished(
   if (
     current &&
     (current.status === "skipped" ||
-      current.status === "vetoed" ||
+      current.status === "downvoted" ||
       current.status === "unblocked") &&
     status === "played"
   ) {
@@ -333,7 +333,7 @@ export function getDedupTracks(db: Db, partyId: string): DedupTrack[] {
   const recent = db
     .query(
       `SELECT spotify_uri, track_name, artist_name, duration_ms FROM queue_items
-       WHERE party_id = ? AND status IN ('played', 'vetoed')
+       WHERE party_id = ? AND status IN ('played', 'downvoted')
        ORDER BY finished_at DESC LIMIT 20`,
     )
     .all(partyId) as {
@@ -372,7 +372,7 @@ export function unblockQueueItem(
   if (!item) {
     throw new UnblockQueueItemError("Not found", "NOT_FOUND");
   }
-  if (item.status !== "played" && item.status !== "vetoed") {
+  if (item.status !== "played" && item.status !== "downvoted") {
     throw new UnblockQueueItemError(
       "Only played or downvoted tracks can be unblocked",
       "INVALID_STATUS",
@@ -401,7 +401,7 @@ export function toQueueItemView(row: QueueItemRow) {
     albumArtUrl: row.album_art_url,
     durationMs: row.duration_ms,
     upvoteCount: row.upvote_count,
-    vetoCount: row.veto_count,
+    downvoteCount: row.downvote_count,
     status: row.status,
     isBoosted: row.is_boosted === 1,
     boostPosition: row.boost_position,
@@ -420,7 +420,7 @@ export function getPartyExportTracks(db: Db, partyId: string): ExportTrack[] {
     .query(
       `SELECT spotify_uri, track_name, artist_name, album_art_url, finished_at, added_at
        FROM queue_items
-       WHERE party_id = ? AND status IN ('played', 'skipped', 'vetoed')
+       WHERE party_id = ? AND status IN ('played', 'skipped', 'downvoted')
        ORDER BY COALESCE(finished_at, added_at) ASC, added_at ASC`,
     )
     .all(partyId) as {
@@ -517,7 +517,7 @@ export function insertQueueItem(db: Db, input: InsertQueueItemInput): string {
       db.run(
         `INSERT INTO queue_items (
           id, party_id, spotify_uri, track_name, artist_name, album_art_url,
-          upvote_count, veto_count, status, is_boosted, boost_position,
+          upvote_count, downvote_count, status, is_boosted, boost_position,
           manual_order, added_by_guest_id, from_seed, from_spotify, added_at,
           duration_ms
         ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 'pending', 0, NULL, NULL, ?, ?, ?, ?, ?)`,
@@ -555,7 +555,7 @@ export function deletePartyCascade(db: Db, partyId: string): void {
     [partyId],
   );
   db.run(
-    `DELETE FROM vetoes WHERE queue_item_id IN (SELECT id FROM queue_items WHERE party_id = ?)`,
+    `DELETE FROM downvotes WHERE queue_item_id IN (SELECT id FROM queue_items WHERE party_id = ?)`,
     [partyId],
   );
   db.run(`DELETE FROM queue_items WHERE party_id = ?`, [partyId]);
@@ -571,7 +571,7 @@ export function computeQueueEtag(items: QueueItemRow[], partyUpdatedAt: string):
   const payload = items
     .map(
       (i) =>
-        `${i.id}:${i.status}:${i.upvote_count}:${i.veto_count}:${i.is_boosted}:${i.boost_position}:${i.manual_order}`,
+        `${i.id}:${i.status}:${i.upvote_count}:${i.downvote_count}:${i.is_boosted}:${i.boost_position}:${i.manual_order}`,
     )
     .join("|");
   return `"${Bun.hash(`${partyUpdatedAt}|${payload}`).toString(16)}"`;

@@ -15,7 +15,7 @@ const item = (overrides: Partial<QueueItemView>): QueueItemView => ({
   albumArtUrl: null,
   durationMs: null,
   upvoteCount: 0,
-  vetoCount: 0,
+  downvoteCount: 0,
   status: "pending",
   isBoosted: false,
   boostPosition: null,
