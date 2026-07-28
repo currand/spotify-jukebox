@@ -3,6 +3,7 @@ import {
   foldArtist,
   foldTitle,
   isDuplicateDisplayName,
+  displayNameConflictKind,
   isDuplicateTitle,
   isDuplicateTrack,
   normalizeTitle,
@@ -137,6 +138,18 @@ describe("dedup", () => {
   test("detects duplicate display names case-insensitively", () => {
     expect(isDuplicateDisplayName("Bob", ["bob"])).toBe(true);
     expect(isDuplicateDisplayName("Alice", ["Bob"])).toBe(false);
+  });
+
+  test("allows different names that only differ slightly", () => {
+    expect(isDuplicateDisplayName("David Curren", ["David Curran"])).toBe(true);
+    expect(isDuplicateDisplayName("Tester 3", ["Tester 2"])).toBe(true);
+    expect(isDuplicateDisplayName("Testr 2", ["Tester 2"])).toBe(true);
+  });
+
+  test("classifies exact vs fuzzy display name conflicts", () => {
+    expect(displayNameConflictKind("Bob", "bob")).toBe("exact");
+    expect(displayNameConflictKind("David Curren", "David Curran")).toBe("fuzzy");
+    expect(displayNameConflictKind("Alice", "Bob")).toBe(null);
   });
 });
 

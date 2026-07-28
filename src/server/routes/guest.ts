@@ -8,7 +8,7 @@ import {
   setGuestCookie,
 } from "../middleware/session";
 import {
-  findSimilarNamedGuest,
+  findConflictingNamedGuest,
   reclaimGuestSession,
   touchGuestLastSeen,
   countGuestActiveSongs,
@@ -212,6 +212,7 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
     const body = (await c.req.json().catch(() => ({}))) as {
       displayName?: string;
       confirmReclaim?: boolean;
+      confirmDistinctName?: boolean;
       tutorialSeen?: boolean;
     };
 
@@ -234,29 +235,33 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
       );
     }
 
-    const similar = findSimilarNamedGuest(db, party.id, name, guest.id);
-    if (similar) {
-      if (!body.confirmReclaim) {
+    const conflict = findConflictingNamedGuest(db, party.id, name, guest.id);
+    if (conflict && body.confirmDistinctName) {
+      if (conflict.matchKind === "exact") {
         return c.json(
           {
-            error: `Someone named "${similar.display_name}" is already here`,
+            error: `Someone named "${conflict.display_name}" is already here`,
             code: "NAME_TAKEN",
-            displayName: similar.display_name,
+            displayName: conflict.display_name,
+            matchKind: conflict.matchKind,
           },
           409,
         );
       }
-      const clientIp = getClientIp(c);
-      if (!similar.last_ip || similar.last_ip !== clientIp) {
+    } else if (conflict) {
+      if (!body.confirmReclaim) {
         return c.json(
           {
-            error: "Could not verify that name — pick a different one",
-            code: "NAME_RECLAIM_DENIED",
+            error: `Someone named "${conflict.display_name}" is already here`,
+            code: "NAME_TAKEN",
+            displayName: conflict.display_name,
+            matchKind: conflict.matchKind,
           },
-          403,
+          409,
         );
       }
-      const reclaimed = reclaimGuestSession(db, guest.id, similar.id);
+      const reclaimed = reclaimGuestSession(db, guest.id, conflict.id);
+      touchGuestLastSeen(db, reclaimed.id, getClientIp(c));
       setGuestCookie(c, slug, reclaimed.sessionToken, config.secureCookies);
       return c.json({
         id: reclaimed.id,

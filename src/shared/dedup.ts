@@ -142,16 +142,26 @@ export function normalizeDisplayName(name: string): string {
   return name.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
+export type DisplayNameConflictKind = "exact" | "fuzzy";
+
+/** How a candidate display name relates to an existing one, if at all. */
+export function displayNameConflictKind(
+  candidate: string,
+  existing: string,
+): DisplayNameConflictKind | null {
+  const normalized = normalizeDisplayName(candidate);
+  const other = normalizeDisplayName(existing);
+  if (!normalized || !other) return null;
+  if (normalized === other) return "exact";
+  if (similarity(normalized, other) >= 0.85) return "fuzzy";
+  return null;
+}
+
 export function isDuplicateDisplayName(
   candidate: string,
   existing: string[],
 ): boolean {
-  const normalized = normalizeDisplayName(candidate);
-  if (!normalized) return false;
-  return existing.some((name) => {
-    const other = normalizeDisplayName(name);
-    if (!other) return false;
-    if (normalized === other) return true;
-    return similarity(normalized, other) >= 0.85;
-  });
+  return existing.some(
+    (name) => displayNameConflictKind(candidate, name) != null,
+  );
 }
