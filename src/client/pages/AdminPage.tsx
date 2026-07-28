@@ -20,6 +20,7 @@ import {
   GuestLimitsPanel,
 } from "../components/GuestLimitsFields";
 import {
+  AdminHistoryRow,
   AdminQueueRow,
   formatApiError,
   NowPlayingBanner,
@@ -925,11 +926,18 @@ export function AdminPage() {
 
           <div className="card admin-section">
             <h2>History</h2>
-            {history.slice(0, 20).map((item) => (
-              <div key={item.id} className="small">
-                {item.trackName} — {item.status}
-              </div>
-            ))}
+            {history.length === 0 ? (
+              <p className="small muted">No history yet.</p>
+            ) : (
+              history.slice(0, 20).map((item) => (
+                <AdminHistoryRow
+                  key={item.id}
+                  item={item}
+                  partyId={party.id}
+                  onAction={hostAction}
+                />
+              ))
+            )}
           </div>
         </div>
       )}

@@ -363,6 +363,61 @@ export function AdminQueueRow({
   );
 }
 
+function historyStatusLabel(status: QueueItemView["status"]): string {
+  switch (status) {
+    case "played":
+      return "Played";
+    case "skipped":
+      return "Removed";
+    case "vetoed":
+      return "Downvoted";
+    case "unblocked":
+      return "Unblocked";
+    default:
+      return status;
+  }
+}
+
+export function AdminHistoryRow({
+  item,
+  partyId,
+  onAction,
+}: {
+  item: QueueItemView;
+  partyId: string;
+  onAction: (path: string, method?: string, body?: unknown) => Promise<void>;
+}) {
+  const canUnblock = item.status === "played" || item.status === "vetoed";
+
+  return (
+    <div className="admin-history-row">
+      <div className="admin-history-meta small">
+        <strong>{item.trackName}</strong>
+        <span>
+          {" "}
+          · {item.artistName} · {historyStatusLabel(item.status)}
+        </span>
+      </div>
+      {canUnblock && (
+        <div className="admin-history-actions">
+          <button
+            type="button"
+            className="secondary small"
+            title="Allow this track to be added to the queue again"
+            onClick={() =>
+              void onAction(
+                `/host/parties/${partyId}/history/${item.id}/unblock`,
+              )
+            }
+          >
+            Unblock
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function SearchFilterChips({
   filters,
 }: {

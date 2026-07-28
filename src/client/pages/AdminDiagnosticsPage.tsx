@@ -7,6 +7,7 @@ import type {
   PartyView,
 } from "@/shared/types";
 import { AdminNav } from "../components/AdminNav";
+import { DiagnosticsSummaryPanels } from "../components/StatPanels";
 import { formatApiError } from "../components/QueueUi";
 import { api, apiOptional } from "../http";
 
@@ -364,7 +365,7 @@ export function AdminDiagnosticsPage() {
 
   return (
     <div className="app admin-diagnostics-page">
-      <h1>Diagnostics</h1>
+      <h1>Stats</h1>
       <AdminNav guestCount={party?.guestCount ?? 0} partyActive={!!party} />
       {error && <p className="error">{error}</p>}
 
@@ -468,7 +469,10 @@ export function AdminDiagnosticsPage() {
       {!activeDiagnostics ? (
         <p>Loading diagnostics…</p>
       ) : (
-        <DiagnosticsPanels diagnostics={activeDiagnostics} />
+        <>
+          <DiagnosticsSummaryPanels diagnostics={activeDiagnostics} />
+          <DiagnosticsPanels diagnostics={activeDiagnostics} />
+        </>
       )}
 
       <p className="small" style={{ marginTop: "1rem" }}>

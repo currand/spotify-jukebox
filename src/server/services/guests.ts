@@ -9,7 +9,12 @@ import {
   type QueueItemRow,
 } from "./queue";
 
-const TERMINAL_STATUSES: QueueItemStatus[] = ["played", "skipped", "vetoed"];
+const TERMINAL_STATUSES: QueueItemStatus[] = [
+  "played",
+  "skipped",
+  "vetoed",
+  "unblocked",
+];
 const ACTIVE_STATUSES: QueueItemStatus[] = ["pending", "queued", "playing"];
 
 interface GuestStatsRow {

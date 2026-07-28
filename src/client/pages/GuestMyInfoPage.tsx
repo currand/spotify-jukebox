@@ -1,12 +1,12 @@
 import * as React from "react";
 import { Link, useParams } from "react-router-dom";
-import type {
-  GuestInfoResponse,
-  PartyRateLimits,
-  PartyView,
-} from "@/shared/types";
+import type { GuestInfoResponse, PartyView } from "@/shared/types";
 import { GuestNav } from "../components/GuestNav";
 import { GuestNamePrompt } from "../components/GuestNamePrompt";
+import {
+  GuestActivityPanel,
+  GuestQuotaPanel,
+} from "../components/StatPanels";
 import {
   BoostBadge,
   BoostButton,
@@ -27,136 +27,11 @@ function statusLabel(status: string): string {
       return "Removed";
     case "vetoed":
       return "Downvoted";
+    case "unblocked":
+      return "Unblocked";
     default:
       return status;
   }
-}
-
-function formatRateLimitWindow(windowMs: number): string {
-  const minutes = windowMs / (60 * 1000);
-  if (minutes >= 60 && minutes % 60 === 0) {
-    const hours = minutes / 60;
-    return hours === 1 ? "per hour" : `per ${hours} hours`;
-  }
-  if (minutes >= 1) {
-    return minutes === 1 ? "per minute" : `per ${minutes} minutes`;
-  }
-  const seconds = Math.round(windowMs / 1000);
-  return seconds === 1 ? "per second" : `per ${seconds} seconds`;
-}
-
-function QuotaTile({
-  label,
-  remaining,
-  limit,
-  windowMs,
-}: {
-  label: string;
-  remaining: number;
-  limit: number;
-  windowMs: number;
-}) {
-  const pct = limit > 0 ? Math.round((remaining / limit) * 100) : 0;
-
-  return (
-    <div className="guest-info-quota-tile">
-      <span className="guest-info-quota-label">{label}</span>
-      <span className="guest-info-quota-value">{remaining}</span>
-      <span className="guest-info-quota-meta">
-        {remaining} of {limit} left · {formatRateLimitWindow(windowMs)}
-      </span>
-      <div
-        className="guest-info-quota-bar"
-        role="progressbar"
-        aria-valuenow={remaining}
-        aria-valuemin={0}
-        aria-valuemax={limit}
-        aria-label={`${label}: ${remaining} of ${limit} remaining`}
-      >
-        <div
-          className="guest-info-quota-bar-fill"
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-    </div>
-  );
-}
-
-function GuestQuotaPanel({
-  quota,
-  rateLimits,
-}: {
-  quota: GuestInfoResponse["quota"];
-  rateLimits: PartyRateLimits;
-}) {
-  return (
-    <section className="guest-info-quota-panel card">
-      <h2>Actions left</h2>
-      <p className="guest-info-section-intro">
-        Your remaining adds, upvotes, downvotes, and boosts for this party.
-      </p>
-      <div className="guest-info-quota-grid">
-        <QuotaTile
-          label="Adds"
-          remaining={quota.add}
-          limit={rateLimits.add.count}
-          windowMs={rateLimits.add.windowMs}
-        />
-        <QuotaTile
-          label="Upvotes"
-          remaining={quota.upvote}
-          limit={rateLimits.upvote.count}
-          windowMs={rateLimits.upvote.windowMs}
-        />
-        <QuotaTile
-          label="Downvotes"
-          remaining={quota.veto}
-          limit={rateLimits.veto.count}
-          windowMs={rateLimits.veto.windowMs}
-        />
-        <QuotaTile
-          label="Boosts"
-          remaining={quota.boost}
-          limit={rateLimits.boost.count}
-          windowMs={rateLimits.boost.windowMs}
-        />
-      </div>
-    </section>
-  );
-}
-
-function GuestActivityPanel({ stats }: { stats: GuestInfoResponse["stats"] }) {
-  return (
-    <section className="guest-info-activity-panel card">
-      <h2>Your activity</h2>
-      <div className="guest-info-stat-grid">
-        <div className="guest-info-stat">
-          <span className="guest-info-stat-value">{stats.upvotesGiven}</span>
-          <span className="guest-info-stat-label">Upvotes given</span>
-        </div>
-        <div className="guest-info-stat">
-          <span className="guest-info-stat-value">{stats.downvotesGiven}</span>
-          <span className="guest-info-stat-label">Downvotes given</span>
-        </div>
-        <div className="guest-info-stat">
-          <span className="guest-info-stat-value">{stats.boostsGiven}</span>
-          <span className="guest-info-stat-label">Boosts used</span>
-        </div>
-        <div className="guest-info-stat">
-          <span className="guest-info-stat-value">{stats.songsInQueue}</span>
-          <span className="guest-info-stat-label">Songs in queue</span>
-        </div>
-        <div className="guest-info-stat">
-          <span className="guest-info-stat-value">{stats.songsPlayed}</span>
-          <span className="guest-info-stat-label">Songs played</span>
-        </div>
-        <div className="guest-info-stat">
-          <span className="guest-info-stat-value">{stats.songsAdded}</span>
-          <span className="guest-info-stat-label">Songs added</span>
-        </div>
-      </div>
-    </section>
-  );
 }
 
 export function GuestMyInfoPage() {

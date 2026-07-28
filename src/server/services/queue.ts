@@ -291,7 +291,9 @@ export function markFinished(
     .get(itemId) as { status: QueueItemStatus } | null;
   if (
     current &&
-    (current.status === "skipped" || current.status === "vetoed") &&
+    (current.status === "skipped" ||
+      current.status === "vetoed" ||
+      current.status === "unblocked") &&
     status === "played"
   ) {
     return;
@@ -357,6 +359,40 @@ export function getDedupTracks(db: Db, partyId: string): DedupTrack[] {
     artistName: r.artist_name,
     durationMs: r.duration_ms,
   }));
+}
+
+export class UnblockQueueItemError extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+  ) {
+    super(message);
+    this.name = "UnblockQueueItemError";
+  }
+}
+
+/** Allow a played or downvoted track to be added again by removing it from dedup history. */
+export function unblockQueueItem(
+  db: Db,
+  partyId: string,
+  itemId: string,
+): void {
+  const item = db
+    .query(`SELECT id, status FROM queue_items WHERE id = ? AND party_id = ?`)
+    .get(itemId, partyId) as { id: string; status: QueueItemStatus } | null;
+  if (!item) {
+    throw new UnblockQueueItemError("Not found", "NOT_FOUND");
+  }
+  if (item.status !== "played" && item.status !== "vetoed") {
+    throw new UnblockQueueItemError(
+      "Only played or downvoted tracks can be unblocked",
+      "INVALID_STATUS",
+    );
+  }
+  db.run(
+    `UPDATE queue_items SET status = 'unblocked', finished_at = ? WHERE id = ?`,
+    [new Date().toISOString(), itemId],
+  );
 }
 
 export function markPriorItemsPlayed(

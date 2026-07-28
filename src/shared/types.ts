@@ -5,7 +5,8 @@ export type QueueItemStatus =
   | "playing"
   | "played"
   | "skipped"
-  | "vetoed";
+  | "vetoed"
+  | "unblocked";
 
 export interface RateLimitConfig {
   count: number;
@@ -370,6 +371,12 @@ export interface HostDiagnostics {
     limit: number;
     resetsInMs: number;
   } | null;
+  guestLimits: {
+    total: number;
+    last5m: number;
+    byKindLast5m: Record<string, number>;
+    byKindTotal: Record<string, number>;
+  };
   /** Active process metrics session (persisted across restarts). */
   sessionId: string;
 }

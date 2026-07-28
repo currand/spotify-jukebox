@@ -1,6 +1,11 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { getDedupTracks, markFinished } from "../../src/server/services/queue";
+import {
+  getDedupTracks,
+  markFinished,
+  unblockQueueItem,
+  UnblockQueueItemError,
+} from "../../src/server/services/queue";
 import type { Db } from "../../src/server/db/schema";
 
 function testDb(): Db {
@@ -74,6 +79,65 @@ describe("getDedupTracks", () => {
     expect(getDedupTracks(db, "party")).toEqual([
       { spotifyUri: "uri", trackName: "Vetoed Song", artistName: "Band", durationMs: null },
     ]);
+  });
+
+  test("excludes unblocked songs so they can be re-added", () => {
+    const db = testDb();
+    insertItem(db, {
+      id: "1",
+      track_name: "Resurrected Song",
+      artist_name: "Band",
+      status: "unblocked",
+      finished_at: "2026-01-02T00:00:00.000Z",
+    });
+
+    expect(getDedupTracks(db, "party")).toEqual([]);
+  });
+});
+
+describe("unblockQueueItem", () => {
+  test("marks played tracks as unblocked", () => {
+    const db = testDb();
+    insertItem(db, {
+      id: "1",
+      track_name: "Played Song",
+      status: "played",
+      finished_at: "2026-01-02T00:00:00.000Z",
+    });
+
+    unblockQueueItem(db, "party", "1");
+
+    const row = db
+      .query(`SELECT status FROM queue_items WHERE id = ?`)
+      .get("1") as { status: string };
+    expect(row.status).toBe("unblocked");
+    expect(getDedupTracks(db, "party")).toEqual([]);
+  });
+
+  test("marks vetoed tracks as unblocked", () => {
+    const db = testDb();
+    insertItem(db, {
+      id: "1",
+      track_name: "Vetoed Song",
+      status: "vetoed",
+      finished_at: "2026-01-02T00:00:00.000Z",
+    });
+
+    unblockQueueItem(db, "party", "1");
+
+    const row = db
+      .query(`SELECT status FROM queue_items WHERE id = ?`)
+      .get("1") as { status: string };
+    expect(row.status).toBe("unblocked");
+  });
+
+  test("rejects unblock for non-terminal statuses", () => {
+    const db = testDb();
+    insertItem(db, { id: "1", track_name: "Active Song", status: "pending" });
+
+    expect(() => unblockQueueItem(db, "party", "1")).toThrow(
+      UnblockQueueItemError,
+    );
   });
 });
 

@@ -25,6 +25,8 @@ import {
   nextBoostPosition,
   resetQueuedToPending,
   toQueueItemView,
+  unblockQueueItem,
+  UnblockQueueItemError,
 } from "../services/queue";
 import {
   extractPlaylistId,
@@ -866,12 +868,30 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
       "played",
       "skipped",
       "vetoed",
+      "unblocked",
     ]);
     return c.json({
       history: items
         .sort((a, b) => (b.finished_at ?? "").localeCompare(a.finished_at ?? ""))
         .map(toQueueItemView),
     });
+  });
+
+  authed.post("/parties/:id/history/:itemId/unblock", (c) => {
+    const partyId = c.req.param("id");
+    const itemId = c.req.param("itemId");
+    try {
+      unblockQueueItem(db, partyId, itemId);
+    } catch (e) {
+      if (e instanceof UnblockQueueItemError) {
+        const status = e.code === "NOT_FOUND" ? 404 : 400;
+        return c.json({ error: e.message, code: e.code }, status);
+      }
+      throw e;
+    }
+    bumpSyncGeneration(db, partyId);
+    afterQueueChange(db, partyId);
+    return c.json({ ok: true });
   });
 
   authed.get("/parties/:id/search", async (c) => {

@@ -38,6 +38,7 @@ import {
   recordAction,
   remainingQuota,
 } from "../services/rate-limit";
+import { recordLimitHit } from "../services/limit-metrics";
 import {
   trackFromSpotify,
   type SpotifyClient,
@@ -490,6 +491,7 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
     const limits = parseRateLimits(party.rate_limits);
     const rl = checkRateLimit(db, guest.id, "upvote", limits);
     if (!rl.allowed) {
+      recordLimitHit("guest_upvote");
       return c.json(
         {
           error: "Rate limited",
@@ -571,6 +573,7 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
     const limits = parseRateLimits(party.rate_limits);
     const rl = checkRateLimit(db, guest.id, "veto", limits);
     if (!rl.allowed) {
+      recordLimitHit("guest_veto");
       return c.json(
         {
           error: "Rate limited",
@@ -626,6 +629,7 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
     const limits = parseRateLimits(party.rate_limits);
     const rl = checkRateLimit(db, guest.id, "boost", limits);
     if (!rl.allowed) {
+      recordLimitHit("guest_boost");
       return c.json(
         {
           error: "Rate limited",
@@ -909,6 +913,7 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
       const limits = parseRateLimits(party.rate_limits);
       const rl = checkRateLimit(db, guest.id, "add", limits);
       if (!rl.allowed) {
+        recordLimitHit("guest_add");
         return c.json(
           {
             error: "Rate limited",
