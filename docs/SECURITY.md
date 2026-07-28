@@ -23,8 +23,9 @@ git log --all --oneline -- '.env.production' '.env.development' '.env.cloudflare
 | `.env.cloudflared` | Cloudflare tunnel token |
 | `.env.local` | Optional overrides |
 | `data/` | SQLite DB with encrypted Spotify refresh tokens |
+| `.cursor/*.log` | Local agent debug traces — can contain real party/queue data from your own testing |
 
-If any secret file was ever committed, **rotate all credentials** before making the repo public.
+If any secret file was ever committed, **rotate all credentials** before making the repo public. If any file with real personal data (hostnames, playlists, etc.) was committed, remove it from the working tree and history (`git filter-repo` or BFG) before making the repo public — deleting the file in a new commit is not enough, since it stays in git history.
 
 ## Secret handling
 

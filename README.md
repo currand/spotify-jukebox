@@ -164,6 +164,13 @@ docker compose --profile default logs -f jukebox
 docker compose --profile tunnel logs -f cloudflared
 ```
 
+### 6. Stop
+
+```bash
+bun run docker:down           # stop default/tunnel/mock containers
+bun run docker:down:tunnel    # stop tunnel profile only (matches docker:up:tunnel)
+```
+
 ---
 
 ## How env loading works
@@ -191,13 +198,23 @@ Templates: `.env.development.example`, `.env.production.example`, `.env.cloudfla
 | `SPOTIFY_REDIRECT_URI` | required* | required | Must match `BASE_URL` hostname |
 | `BASE_URL` | optional | required | Dev default `http://127.0.0.1:5173` |
 | `ALLOW_INSECURE_HTTP` | — | optional | Set `1` for http:// production URLs (LAN) |
-| `ENCRYPTION_KEY` | required | required | Prod: ≥ 32 chars |
+| `ENCRYPTION_KEY` | required* | required | *Placeholder fine in dev/mock; prod: ≥ 32 chars |
 | `HOST_SETUP_TOKEN` | optional | required | Prod: enter in Admin before Connect Spotify |
 | `TUNNEL_TOKEN` | — | `.env.cloudflared` only | Tunnel profile only |
 | `JUKEBOX_IMAGE` | — | `.env` only | Compose interpolation; default `jukebox:local` |
 | `JUKEBOX_PORT` | — | `.env` or shell | Host port (default `3000`) |
+| `JUKEBOX_PLATFORM` | — | `.env` only | `docker:build:registry` target platform (default `linux/amd64`) |
+| `PORT` | optional | optional | App listen port (default `3000`; ignored in Docker — fixed to 3000) |
+| `DATABASE_PATH` | optional | optional | SQLite path (default `./data/jukebox-dev.db` dev, `/data/jukebox.db` prod) |
+| `DEBUG` | optional | optional | Comma-separated namespaces (`spotify`, `sync`) or `1`/`*` for all |
 | `SYNC_FAST_POLL` | optional | optional | `1` = fixed 10s Spotify sync; default adaptive (~1 poll/track) |
 | `SYNC_END_WINDOW_MS` | optional | optional | Poll this many ms before track end (default `7000`) |
+| `SYNC_FALLBACK_INTERVAL_MS` | optional | optional | Fallback poll interval when adaptive timing is unavailable (default `30000`) |
+| `SYNC_IDLE_INTERVAL_MS` | optional | optional | Poll interval while idle/no device (default `60000`) |
+| `SPOTIFY_API_BUDGET_COUNT` | optional | optional | Global outbound Spotify call budget (default `90`) |
+| `SPOTIFY_API_BUDGET_WINDOW_MS` | optional | optional | Budget window in ms (default `30000`) |
+| `SPOTIFY_DAILY_WARN_CALLS` | optional | optional | Diagnostics warning threshold for 24h call count (default `8000`) |
+| `JUKEBOX_DEFAULT_RATE_LIMITS` | optional | optional | JSON override for default guest limits (DB host settings take precedence) |
 
 Admin **Start** / **Stop** control Spotify play/pause on the active device; **Skip** advances the queue immediately and refills the buffer.
 
@@ -207,6 +224,7 @@ Admin **Start** / **Stop** control Spotify play/pause on the active device; **Sk
 
 ```bash
 bun test
+bun run typecheck   # tsc --noEmit (also: bun run lint, same check)
 ```
 
 ### Load / endurance testing

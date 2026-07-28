@@ -1,6 +1,6 @@
 # Jukebox Endurance Test — Issues Found
 **Date:** 2026-07-26
-**Test environment:** Production (jukebox.REDACTED.example.com) or local mock stack (`bun run docker:up:mock`)
+**Test environment:** Production (self-hosted deployment) or local mock stack (`bun run docker:up:mock`)
 **Party:** test-1-v5vu ("Test 1")
 **Duration:** ~20 minutes of actual test runtime across multiple runs
 
