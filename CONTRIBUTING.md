@@ -214,6 +214,7 @@ Guest default limits (before admin overrides):
 
 | Doc | Purpose |
 |---|---|
+| [AGENTS.md](AGENTS.md) | Project layout, tooling, and agent prerequisites |
 | [docs/SPEC.md](docs/SPEC.md) | Full specification |
 | [docs/SECURITY.md](docs/SECURITY.md) | Secrets and production hardening |
 | [docs/TEST_PLAN.md](docs/TEST_PLAN.md) | Manual QA scenarios |
