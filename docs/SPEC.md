@@ -41,7 +41,7 @@ Jukebox is a self-hosted web application that lets party guests control the host
 | Language | TypeScript | Host preference; shared types across API and UI |
 | Runtime | Bun | Low memory, fast startup, built-in TS |
 | HTTP framework | Hono | Lightweight, good Bun support |
-| Database | SQLite (`bun:sqlite` or `better-sqlite3`) | Zero extra container, sufficient for 50 guests |
+| Database | SQLite (`bun:sqlite`) | Zero extra container, sufficient for 50 guests |
 | Frontend | React + Vite | Mobile-first SPA, static assets served by API |
 | Spotify | Web API + OAuth 2.0 Authorization Code (host only) | Queue control requires Premium |
 | Tunnel | cloudflared | HTTPS without port forwarding |
@@ -93,7 +93,11 @@ jukebox/
 ├── services/
 │   └── spotify-mock/           # Dev-only Spotify API mock for scale testing
 ├── docs/
-│   └── SPEC.md                 # This document
+│   ├── SPEC.md                 # This document
+│   ├── SECURITY.md             # Pre-GitHub checklist + production hardening
+│   ├── TEST_PLAN.md            # UAT/QAT scenario tables
+│   ├── TODO.md                 # Bug/enhancement log
+│   └── ENDURANCE_TEST_ISSUES.md # Load-test findings
 ├── src/
 │   ├── server/
 │   │   ├── index.ts            # Hono app entry
@@ -118,8 +122,7 @@ jukebox/
 │   └── shared/
 │       └── types.ts            # Shared API types
 ├── tests/
-│   ├── unit/
-│   └── integration/
+│   └── unit/                   # Unit + in-memory-SQLite integration tests
 └── package.json
 ```
 
@@ -127,7 +130,7 @@ jukebox/
 
 ## Code Style
 
-- **Formatting:** Prettier defaults; 2-space indent.
+- **Formatting:** No formatter configured — match existing style; 2-space indent.
 - **Naming:** `camelCase` for variables/functions, `PascalCase` for types/components, `kebab-case` for route paths.
 - **Imports:** Absolute from `@/` mapped to `src/`.
 - **Errors:** Return typed API errors `{ error: string, code: string }` with appropriate HTTP status; never leak Spotify tokens.
@@ -239,7 +242,7 @@ When a party is **on**, a background worker keeps the virtual queue aligned with
 3. If no active device / no playback: **do not fail guest mutations**. Set host-visible warning `spotify_device_inactive`. Skip Spotify write calls until a device is active again.
 4. Detect track transitions; mark previous item `played` or `skipped`.
 5. Select next virtual track (boost lane first, then normal head; never select vetoed).
-6. Maintain **one** Spotify queue buffer slot via `POST /me/player/queue` when empty.
+6. Maintain **one** Spotify queue buffer slot via `POST /me/player/queue` when empty (Spotify's Web API only supports appending, not batch/lookahead queueing).
 7. If the currently playing Spotify track is vetoed or no longer in the virtual queue, call `POST /me/player/next`.
 8. Do not add duplicate URIs already in the Spotify queue buffer.
 9. If the virtual queue has no upcoming tracks: stop adding to Spotify; guest UI shows “Add something!” Now-playing may finish naturally; Spotify’s own autoplay/recommendations are out of scope — Jukebox does not try to keep music going.
@@ -269,16 +272,20 @@ Search UI uses the same logic: URI match or fold match on active items → “In
 
 Reject add with `{ error: "This song is already in the queue", code: "DUPLICATE" }`.
 
-### Rate limits (defaults, all configurable per party)
+### Rate limits (defaults, all configurable per party; see `src/shared/types.ts` `DEFAULT_RATE_LIMITS`)
 
-Sliding-window counters per guest per action type:
+Sliding-window counters per guest per action type, plus a party-wide search budget:
 
-| Action | Default limit | Window |
-|---|---|---|
-| Add track | 3 | 20 minutes |
-| Upvote | 10 | 60 minutes |
-| Veto | 3 | 30 minutes |
-| Boost | 1 | Per party (lifetime of guest session in that party) |
+| Action | Default limit | Window | Scope |
+|---|---|---|---|
+| Add track | 3 | 20 minutes | Per guest |
+| Upvote | 10 | 60 minutes | Per guest |
+| Veto | 3 | 30 minutes | Per guest |
+| Boost | 1 | 10 minutes | Per guest (sliding window) |
+| Search | 6 | 60 seconds | Per guest |
+| Party search | 24 | 30 seconds | Whole party (shared budget across all guests) |
+
+Boost also enforces a one-time-use flag (`guests.boost_used`) per party — a guest can have at most one active boost regardless of the sliding window; unboosting refunds it. An optional per-party `boost_cap` limits how many tracks may be boosted at once.
 
 Return `429` with `{ error: "...", code: "RATE_LIMITED", retryAfterMs: number }`.
 
@@ -295,10 +302,10 @@ Return `429` with `{ error: "...", code: "RATE_LIMITED", retryAfterMs: number }`
 
 ### Host authentication
 
-- Host admin (`/admin`) is gated by **Spotify OAuth only** (Authorization Code flow for the host Premium account).
-- Successful OAuth establishes a host session cookie.
-- No additional PIN/password in v1.
-- Spotify Developer Dashboard should keep the app in **Development mode** with only the host’s account allowlisted.
+- Host admin (`/admin`) session is established via **Spotify OAuth** (Authorization Code flow for the host Premium account); successful OAuth sets a host session cookie.
+- **Production** additionally requires `HOST_SETUP_TOKEN` (`openssl rand -hex 16`) as a query param or `X-Host-Setup-Token` header on `/host/spotify/login`, so a leaked tunnel URL alone cannot be used to connect a stranger's Spotify account and take over admin. Optional in development.
+- No separate host password/PIN beyond the setup token — see `docs/SECURITY.md`.
+- Spotify Developer Dashboard should keep the app in **Development mode** with only the host's account allowlisted.
 
 ### Host controls
 
@@ -336,7 +343,7 @@ Host actions bypass guest rate limits and ownership restrictions.
 - On startup (or after Spotify/network reconnect) when a party is `on`:
   1. Load party + queue from SQLite (unchanged).
   2. Poll Spotify currently-playing; if something is already playing, **adopt it** as now-playing if it matches a virtual item, otherwise leave Spotify alone and mark virtual `playing` only when we next control a transition.
-  3. Soft-reconcile: **rebuild** the Spotify upcoming buffer (3–5) to match the virtual upcoming list **without** skipping the current track.
+  3. Soft-reconcile: **refill** the single Spotify upcoming buffer slot to match the virtual upcoming list **without** skipping the current track.
   4. If Spotify is unreachable briefly, keep serving guests from SQLite; resume sync when API is back; show host warning.
 - Guest mutations never require Spotify to be reachable; only the sync worker does.
 
@@ -404,7 +411,8 @@ Spotify rejects `http://localhost`. Config validation enforces these rules at st
 | status | TEXT | `on` \| `off` \| `archived` |
 | veto_threshold | INTEGER | Default 3 |
 | seed_playlist_id | TEXT | Spotify playlist ID |
-| rate_limits | JSON | `{ add: { count, windowMs }, upvote: {...}, veto: {...} }` |
+| rate_limits | JSON | `{ add, upvote, veto, boost, search, partySearch }`, each `{ count, windowMs }` |
+| boost_cap | INTEGER NULL | Optional cap on concurrently boosted tracks |
 | created_at | DATETIME | |
 | updated_at | DATETIME | |
 
@@ -420,6 +428,9 @@ Invariant: at most one party with `status IN ('on', 'off')`; others are `archive
 | display_name | TEXT NULL | Required before mutations |
 | boost_used | BOOLEAN | Default false |
 | disabled | BOOLEAN | Host ban; blocks mutations when true |
+| tutorial_seen | BOOLEAN | Default false; dismissable first-use walkthrough |
+| last_seen_at | DATETIME NULL | Updated on activity; used for stale-guest purge |
+| last_ip | TEXT NULL | Used for display-name reclaim IP check |
 | created_at | DATETIME | |
 
 ### `queue_items`
@@ -435,9 +446,13 @@ Invariant: at most one party with `status IN ('on', 'off')`; others are `archive
 | duration_ms | INTEGER NULL | Track length when known (duration guard) |
 | upvote_count | INTEGER | Denormalized counter |
 | veto_count | INTEGER | Denormalized counter |
-| status | TEXT | `pending` \| `queued` \| `playing` \| `played` \| `skipped` \| `vetoed` |
+| status | TEXT | `pending` \| `queued` \| `playing` \| `played` \| `skipped` \| `vetoed` \| `unblocked` |
 | is_boosted | BOOLEAN | In boost lane |
 | boost_position | INTEGER NULL | FIFO order within boost lane |
+| boosted_by_guest_id | TEXT NULL FK | Guest who boosted (may differ from `added_by_guest_id`) |
+| manual_order | INTEGER NULL | Host shuffle/reorder override |
+| from_seed | BOOLEAN | Imported from the party's seed playlist |
+| from_spotify | BOOLEAN | Adopted from Spotify's own queue (added outside Jukebox) |
 | added_by_guest_id | TEXT NULL FK | NULL = host seed |
 | added_at | DATETIME | |
 | finished_at | DATETIME NULL | When moved to terminal status (for “recent 20” dedup) |
@@ -464,7 +479,7 @@ Invariant: at most one party with `status IN ('on', 'off')`; others are `archive
 |---|---|---|
 | id | INTEGER PK | Auto-increment |
 | guest_id | TEXT FK | |
-| action | TEXT | `add` \| `upvote` \| `veto` |
+| action | TEXT | `add` \| `upvote` \| `veto` \| `boost` \| `search` |
 | created_at | DATETIME | Indexed for sliding window queries |
 
 ### `host_credentials`
@@ -484,6 +499,27 @@ Invariant: at most one party with `status IN ('on', 'off')`; others are `archive
 | id | TEXT PK | Session token |
 | created_at | DATETIME | |
 | expires_at | DATETIME | |
+
+### `oauth_states`
+
+| Column | Type | Notes |
+|---|---|---|
+| state | TEXT PK | One-time OAuth CSRF token |
+| created_at | DATETIME | Enforces 10-minute TTL |
+
+### `host_settings`
+
+| Column | Type | Notes |
+|---|---|---|
+| key | TEXT PK | e.g. `default_guest_limits` |
+| value | JSON | |
+| updated_at | DATETIME | |
+
+Party-independent defaults (rate limits, veto threshold, boost cap) applied to newly created parties; falls back to `JUKEBOX_DEFAULT_RATE_LIMITS` env, then code defaults.
+
+### `metrics_sessions` / `metrics_snapshots`
+
+Time-series diagnostics history (one session per app start; snapshots on interval, rate-limit events, and startup) backing the Admin diagnostics/history views. Not part of core party logic.
 
 ---
 
@@ -519,6 +555,14 @@ Base path: `/api/v1`
 | GET | `/host/parties/:id/history` | Terminal history (`played` / `skipped` / `vetoed`) |
 | GET | `/host/parties/:id/search?q=` | Track search + artist matches |
 | GET | `/host/parties/:id/artists/:id/tracks?name=&filter=all\|credited` | Artist track search (same as guest) |
+| POST | `/host/parties/:id/sync` | Force an immediate sync tick |
+| POST | `/host/parties/:id/play` / `/pause` | Start/stop Spotify playback on the active device |
+| GET | `/host/parties/:id/guests` | List guests with admin view (last seen, quota usage) |
+| DELETE | `/host/parties/:id/guests` | Clear all guests from the party |
+| POST | `/host/parties/:id/guests/purge-stale` | Remove guests inactive beyond a threshold |
+| POST | `/host/parties/:id/guests/:guestId/reset-limits` | Reset a guest's rate-limit usage |
+| POST | `/host/parties/:id/history/:itemId/unblock` | Un-terminalize a history item back into the queue |
+| GET / PATCH | `/host/settings/default-rate-limits` | Party-independent default guest limits (`JUKEBOX_DEFAULT_RATE_LIMITS` override) |
 | GET | `/host/diagnostics` | Live API/search/cache metrics (current process session) |
 | GET | `/host/metrics/sessions` | List persisted metrics sessions (one per app start) |
 | GET | `/host/metrics/sessions/:id/snapshots` | Snapshot timeline for a session (`?reason=rate_limit`) |
@@ -531,14 +575,20 @@ Base path: `/api/v1`
 | POST | `/parties/:slug/join` | Create guest session; optional `{ displayName }` |
 | PATCH | `/parties/:slug/me` | Set/update `{ displayName }` (required before mutations) |
 | GET | `/parties/:slug` | Party info + status |
-| GET | `/parties/:slug/queue` | Active virtual queue + attribution |
-| GET | `/parties/:slug/now-playing` | Current track |
+| GET | `/parties/:slug/queue` | Active virtual queue + attribution + `nowPlaying` |
 | GET | `/parties/:slug/search?q=` | Track search (max 10) + artist matches for browse |
 | GET | `/parties/:slug/artists/:id/tracks?name=&filter=all\|credited` | Artist track search (`artist:{name}`; `credited` filters to that artist) |
 | POST | `/parties/:slug/queue` | Add track `{ uri }` |
 | POST | `/parties/:slug/queue/:itemId/upvote` | Upvote |
 | POST | `/parties/:slug/queue/:itemId/veto` | Veto |
 | POST | `/parties/:slug/queue/:itemId/boost` | One-time boost |
+| POST | `/parties/:slug/queue/:itemId/unboost` | Undo a boost (refunds `boost_used`) |
+| GET | `/parties/:slug/me` | Current guest session info |
+| GET | `/parties/:slug/me/info` | Guest profile stats (votes, vetoes, boosts) |
+| GET | `/parties/:slug/me/songs` | Guest's own active + history songs ("My Songs") |
+| DELETE | `/parties/:slug/me/songs/:itemId` | Remove a guest's own pending song |
+
+There is no separate `now-playing` endpoint — the current track is included as `nowPlaying` in the `/queue` response.
 
 Mutating guest endpoints return `403` with `code: "DISPLAY_NAME_REQUIRED"` if the guest has no display name.
 
@@ -675,7 +725,7 @@ Both apps:
 5. **Virtual queue** — Add, upvote, veto, boost, dedup, rate limits
 6. **Host overrides** — Add/remove/shuffle/force-next/reorder/clear/skip/ban/reset-votes/start-from-here + history view
 7. **Search** — Track + artist search via Spotify `/search` (dev-mode apps cannot use `/artists/{id}/top-tracks`)
-8. **Sync worker** — Buffer 3–5, skip logic, inactive-device warning, restart soft-reconcile (rebuild buffer, never skip current)
+8. **Sync worker** — One-slot buffer, skip logic, inactive-device warning, restart soft-reconcile (refill buffer, never skip current)
 9. **Guest UI** — Mobile queue view, search, actions, polling
 10. **Host UI** — Admin, QR, config, device warning, full queue/history tools
 11. **cloudflared** — Tunnel wiring + docs

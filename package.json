@@ -2,6 +2,7 @@
   "name": "jukebox",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "setup:dev": "cp -n .env.development.example .env.development 2>/dev/null || true",
