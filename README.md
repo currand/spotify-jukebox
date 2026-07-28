@@ -1,31 +1,79 @@
 # Jukebox
 
-**Self-hosted party queue for Spotify Premium.** You run it on your own hardware with Docker. Guests join from their phones — no Spotify account required — to search, add songs, upvote, veto, and boost tracks. You stay in control of playback on your Spotify Connect device.
+## Overview (This section written by a human)
+**Self-hosted party queue for Spotify Premium.**
+- Locally hosted with Docker
+- Designed with Cloudflare/Tailscale in mind
+- Guests join from their phones — no Spotify account required — to search for, add, upvote, veto, and boost songs
+- You stay in control of playback on your Spotify Connect device via an Admin panel
+- Search caching and rate limiting keep Jukebox within Spotify's API limits and comply with their guidelines
 
-Built for home parties (roughly 10–50 guests), not commercial venues.
+## Goal
+Spotify's Jam feature is not designed for large groups — it can rearrange or drop tracks and does not expose queue voting.
+
+Jukebox provides a simple interface for queue management while respecting API limits. Once a party starts, only one song occupies the Spotify queue at any time. All other queue functions are managed locally.
+
+## AI Developed
+**This project is entirely written by AI. I'm not trying to hide it.** I have done my best to prompt as much structure, security, and minimalism as I can into the design but I have no history with any of the languages or tools used in this design. Your mileage may vary, buyer beware, not valid in all 50 states, subject to terms and conditions, etc.
+
+Much of the hardening and feature building was done via github issues so I could maintain traceability. You are welcome to contribute in any way you see fit. I've provided [SPEC.md](docs/SPEC.md), [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md) to help but I'm also happy to take good old fashioned human skills and contributions.
 
 ---
 
-## What you get
+## Architecture
 
-**For guests**
+```mermaid
+flowchart TB
+    subgraph Guests
+        G[Mobile browser]
+    end
+
+    subgraph Jukebox["Jukebox (Docker)"]
+        API[Hono API :3000]
+        Q[Virtual Queue]
+        SW[Sync Worker]
+        SC[Search Cache]
+    end
+
+    subgraph Spotify["Spotify"]
+        WA[Web API]
+        CP[Connect Device]
+    end
+
+    G -->|join, search, vote| API
+    API --> Q
+    Q --> SW
+    SW -->|queue, skip, play| WA
+    WA --> CP
+    API --> SC
+    SC -->|cache hit| G
+    SC -->|cache miss| WA
+```
+
+Jukebox maintains a **virtual queue** with voting and veto logic. Spotify's API cannot reorder or remove queued tracks, so Jukebox syncs intelligently — adding the next track, skipping when needed, and keeping guest-facing order separate from what Spotify's player shows.
+
+### For guests
+
 - Join via QR code or link — pick a display name and go
 - Search Spotify and add tracks to the party queue
-- Upvote songs they want sooner (not their own adds)
+- Upvote songs they want sooner
 - Veto songs; when enough guests agree, the track is removed
-- One **boost** per guest per party to jump a song toward the front
+- **Boost** a song to jump it toward the front of the queue
 
-**For you (the host)**
+### For you (the host)
+
 - Admin page at `/admin` — connect Spotify once, create a party, show a QR code
 - Import a seed playlist when the party starts
 - Turn the party on/off, set veto threshold and guest limits
-- Full queue control: shuffle, reorder, skip, force-next, ban guests, resume archived parties
+- Full queue control: shuffle, reorder, skip, force-next, ban guests
 - Start / stop / skip playback on your active Spotify device from the admin UI
+- Full-screen display that shows the QR and queue
+- Resume a previous party or use it as a seed for a new one
 
-**Under the hood**
-- Jukebox maintains a **virtual queue** with voting and veto logic. Spotify’s API cannot reorder or remove queued tracks, so Jukebox syncs intelligently — adding the next track, skipping when needed, and keeping guest-facing order separate from what Spotify’s player shows.
-- Guest actions work even when Spotify is temporarily unreachable; sync catches up when the connection returns.
-- One party active at a time. SQLite stores the queue on a Docker volume so restarts do not wipe your party.
+### Under the hood
+
+- One party active at a time
+- SQLite stores the queue on a Docker volume so restarts do not wipe your party
 
 ---
 
@@ -38,13 +86,11 @@ Built for home parties (roughly 10–50 guests), not commercial venues.
 | **Spotify Developer app** | Free; one app for your production deployment (see below) |
 | **A URL guests can reach** | Public HTTPS (reverse proxy or [Cloudflare Tunnel](#cloudflare-tunnel)), or a LAN address for a Wi‑Fi-only party |
 
-You do **not** need Node.js, Bun, or a development environment to run Jukebox. See [CONTRIBUTING.md](CONTRIBUTING.md) only if you want to hack on the code or run tests.
-
 ---
 
 ## Spotify Developer account and app
 
-Jukebox uses Spotify’s Web API to search, queue, and control playback on **your** Premium account. You register a small “app” in Spotify’s developer portal so Jukebox can authenticate.
+Jukebox uses Spotify's Web API to search, queue, and control playback on **your** Premium account. You register a small "app" in Spotify's developer portal so Jukebox can authenticate.
 
 ### 1. Create a developer account
 
@@ -66,8 +112,9 @@ Spotify sends the host back to Jukebox after login. The redirect URI must match 
 
 | How you expose Jukebox | Redirect URI to add in the Spotify app |
 |---|---|
-| Public HTTPS (proxy or tunnel) | `https://your-hostname/api/v1/host/spotify/callback` |
+| Public HTTPS (proxy or tunnel) | `https://your-hostname.example.com/api/v1/host/spotify/callback` |
 | LAN only (`http://192.168.x.x:3000`) | `http://192.168.x.x:3000/api/v1/host/spotify/callback` |
+| Tailscale (`http://127.0.0.1:3000`) | `http://127.0.0.1:3000/api/v1/host/spotify/callback` |
 
 In the Spotify app: **Settings → Redirect URIs → Add** the URI, then **Save**.
 
@@ -81,13 +128,15 @@ For personal home use, leave the app in **Development mode** and add your Spotif
 
 ### 5. Policy reminder
 
-Spotify’s terms allow personal use. Jukebox is for **private, non-commercial home parties** — not bars, gyms, or public broadcast. Do not use it to synchronize playback for a paying audience.
+Spotify's terms allow personal use. Jukebox is for **private, non-commercial home parties** — not bars, gyms, or public broadcast. Do not use it to synchronize playback for a paying audience.
 
 ---
 
 ## Spotify API limits and how Jukebox stays under them
 
 Spotify rate-limits Web API calls. Exact limits are not fully documented, but heavy use (many guests searching at once, aggressive polling) can trigger **429 Too Many Requests**. Jukebox is designed for a typical house party, not a stadium.
+
+Spotify rate limits can last up to **24 hours**. Search traffic is the primary driver of 429 errors, so keep per-guest search limits conservative.
 
 ### What Jukebox limits automatically
 
@@ -102,13 +151,14 @@ Spotify rate-limits Web API calls. Exact limits are not fully documented, but he
 | Search (per guest) | 6 | 60 seconds |
 | Search (whole party) | 24 | 30 seconds |
 
-Guests see clear messages when they hit a limit (e.g. “You've added your limit of 3 songs”) instead of a generic error.
+Guests see clear messages when they hit a limit (e.g., "You've added your limit of 3 songs — wait 20 minutes and try again").
 
 **Outbound API budget** — Jukebox caps total Spotify API calls at **90 per 30 seconds** by default (`SPOTIFY_API_BUDGET_*` in `.env.production`). Sync, search, and queue operations share this budget so one busy party does not hammer Spotify in bursts.
 
 **Smarter API use**
+
 - **Search caching** — repeat queries hit cache instead of Spotify
-- **Adaptive sync** — polls playback shortly before a track ends instead of every few seconds constantly
+- **Adaptive sync** — polls playback shortly before a track ends instead of polling constantly
 - **429 backoff** — when Spotify says slow down, Jukebox honors `Retry-After` and pauses outbound calls
 - **Daily call tracking** — admin diagnostics warn if you approach ~8,000 calls in 24 hours (`SPOTIFY_DAILY_WARN_CALLS`)
 

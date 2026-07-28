@@ -137,7 +137,7 @@ Flags: `--slug`, `--guests` (max 50), `--join-window-min`, `--admin-token`, `--b
 
 Report: `./data/endurance-{timestamp}.json` with diagnostics and **`firstBlock`** (outbound Spotify call index at first 429).
 
-See [docs/ENDURANCE_TEST_ISSUES.md](docs/ENDURANCE_TEST_ISSUES.md) for troubleshooting.
+See the endurance-testing skill for troubleshooting and diagnostics.
 
 ---
 
@@ -217,4 +217,3 @@ Guest default limits (before admin overrides):
 | [AGENTS.md](AGENTS.md) | Project layout, tooling, and agent prerequisites |
 | [docs/SPEC.md](docs/SPEC.md) | Full specification |
 | [docs/SECURITY.md](docs/SECURITY.md) | Secrets and production hardening |
-| [docs/TEST_PLAN.md](docs/TEST_PLAN.md) | Manual QA scenarios |
