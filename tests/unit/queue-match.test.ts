@@ -19,6 +19,7 @@ const item = (overrides: Partial<QueueItemView>): QueueItemView => ({
   status: "pending",
   isBoosted: false,
   boostPosition: null,
+  boostedBy: null,
   addedBy: "Guest",
   addedByGuestId: null,
   addedAt: "2026-01-01T00:00:00.000Z",

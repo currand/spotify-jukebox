@@ -1,5 +1,10 @@
 import type { Db } from "../db/schema";
-import type { GuestProfileStats, GuestMySongView, QueueItemStatus } from "@/shared/types";
+import type {
+  GuestAdminView,
+  GuestProfileStats,
+  GuestMySongView,
+  QueueItemStatus,
+} from "@/shared/types";
 import { displayNameConflictKind, type DisplayNameConflictKind } from "@/shared/dedup";
 import {
   getNextUpcomingItem,

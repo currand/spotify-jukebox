@@ -16,7 +16,6 @@ import {
   isSpotifyBufferOccupied,
   isUriBufferedInSpotify,
   normalizeSpotifyQueueSnapshot,
-  partyHasPendingBufferWork,
   partyNeedsSpotifyQueueSync,
   reconcileSpotifyBufferStatuses,
   reconcileSpotifyQueueTail,
@@ -556,6 +555,9 @@ describe("buildEffectiveQueueSnapshot", () => {
         deviceRestricted: false,
         deviceName: "Phone",
         currentUri: "spotify:track:live",
+        deviceId: "device-1",
+        progressMs: null,
+        durationMs: null,
       },
       items,
     );
@@ -582,6 +584,9 @@ describe("buildEffectiveQueueSnapshot", () => {
         deviceRestricted: false,
         deviceName: "Phone",
         currentUri: evenFlowUri,
+        deviceId: "device-1",
+        progressMs: null,
+        durationMs: null,
       },
       items,
     );
@@ -615,6 +620,9 @@ describe("buildEffectiveQueueSnapshot", () => {
         deviceRestricted: false,
         deviceName: "Phone",
         currentUri: "spotify:track:6QewNVIDKdSl8Y3ycuHIei",
+        deviceId: "device-1",
+        progressMs: null,
+        durationMs: null,
       },
       items,
     );
@@ -640,6 +648,9 @@ describe("buildEffectiveQueueSnapshot", () => {
         deviceRestricted: false,
         deviceName: "Phone",
         currentUri: skippedUri,
+        deviceId: "device-1",
+        progressMs: null,
+        durationMs: null,
       },
       items,
     );
@@ -670,6 +681,9 @@ describe("buildEffectiveQueueSnapshot", () => {
         deviceRestricted: false,
         deviceName: "Phone",
         currentUri: myWayUri,
+        deviceId: "device-1",
+        progressMs: null,
+        durationMs: null,
       },
       items,
     );
