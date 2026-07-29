@@ -1,8 +1,5 @@
-import type { Config } from "../config";
 import type { Db } from "../db/schema";
 import {
-  DEFAULT_RATE_LIMITS,
-  DEFAULT_DOWNVOTE_THRESHOLD,
   factoryDefaultGuestLimits,
   type DefaultGuestLimits,
   type PartyRateLimits,
@@ -49,11 +46,8 @@ function parseStoredGuestLimits(raw: unknown): DefaultGuestLimits | null {
   if (!raw || typeof raw !== "object") return null;
 
   if (isValidPartyRateLimits(raw)) {
-    return {
-      rateLimits: normalizeRateLimits(raw),
-      downvoteThreshold: DEFAULT_DOWNVOTE_THRESHOLD,
-      boostCap: null,
-    };
+    const base = factoryDefaultGuestLimits();
+    return { ...base, rateLimits: normalizeRateLimits(raw) };
   }
 
   const stored = raw as Partial<DefaultGuestLimits>;
@@ -80,22 +74,12 @@ function readStoredGuestLimits(db: Db): DefaultGuestLimits | null {
   }
 }
 
-export function getDefaultGuestLimits(db: Db, config: Config): DefaultGuestLimits {
-  const stored = readStoredGuestLimits(db);
-  if (stored) return stored;
-
-  const codeDefaults = factoryDefaultGuestLimits();
-  if (config.defaultRateLimits) {
-    return {
-      ...codeDefaults,
-      rateLimits: normalizeRateLimits(config.defaultRateLimits),
-    };
-  }
-  return codeDefaults;
+export function getDefaultGuestLimits(db: Db): DefaultGuestLimits {
+  return readStoredGuestLimits(db) ?? factoryDefaultGuestLimits();
 }
 
-export function getDefaultRateLimits(db: Db, config: Config): PartyRateLimits {
-  return getDefaultGuestLimits(db, config).rateLimits;
+export function getDefaultRateLimits(db: Db): PartyRateLimits {
+  return getDefaultGuestLimits(db).rateLimits;
 }
 
 export function setDefaultGuestLimits(

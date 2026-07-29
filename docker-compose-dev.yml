@@ -1,0 +1,104 @@
+# Development and test stacks — not for end-user deployment.
+# See CONTRIBUTING.md.
+#
+#   docker compose -f docker-compose-dev.yml --profile dev up --build -d
+#   docker compose -f docker-compose-dev.yml --profile mock up --build -d
+#
+# Registry / pre-built image (optional):
+#   Set JUKEBOX_IMAGE in project .env, then:
+#   docker compose -f docker-compose-dev.yml --profile registry up -d
+
+x-jukebox-ports: &jukebox-ports
+  - "127.0.0.1:${JUKEBOX_PORT:-3000}:3000"
+
+x-jukebox-runtime: &jukebox-runtime
+  BIND_HOST: "0.0.0.0"
+  PORT: "3000"
+  HOST_IP: "127.0.0.1"
+  DATABASE_PATH: /data/jukebox.db
+
+services:
+  jukebox-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${JUKEBOX_IMAGE:-jukebox:local}
+    restart: unless-stopped
+    ports: *jukebox-ports
+    volumes:
+      - jukebox-dev-data:/data
+    env_file:
+      - path: .env.development
+        required: false
+    environment:
+      <<: *jukebox-runtime
+      NODE_ENV: development
+      JUKEBOX_ENV: development
+      BASE_URL: http://127.0.0.1:${JUKEBOX_PORT:-3000}
+      SPOTIFY_REDIRECT_URI: http://127.0.0.1:${JUKEBOX_PORT:-3000}/api/v1/host/spotify/callback
+      ALLOW_INSECURE_HTTP: "1"
+      JUKEBOX_SERVE_CLIENT: "1"
+      DEBUG: spotify
+    profiles:
+      - dev
+
+  jukebox-mock:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${JUKEBOX_IMAGE:-jukebox:local}
+    restart: unless-stopped
+    ports: *jukebox-ports
+    volumes:
+      - jukebox-mock-data:/data
+    env_file:
+      - path: .env.development
+        required: false
+    environment:
+      <<: *jukebox-runtime
+      NODE_ENV: development
+      JUKEBOX_ENV: development
+      BASE_URL: http://127.0.0.1:${JUKEBOX_PORT:-3000}
+      ALLOW_INSECURE_HTTP: "1"
+      SPOTIFY_MODE: mock
+      SPOTIFY_API_BASE_URL: http://spotify-mock:8080/v1
+      SPOTIFY_ACCOUNTS_BASE_URL: http://spotify-mock:8080
+      SPOTIFY_CLIENT_ID: mock-client
+      SPOTIFY_CLIENT_SECRET: mock-secret
+      SPOTIFY_REDIRECT_URI: http://127.0.0.1:${JUKEBOX_PORT:-3000}/api/v1/host/spotify/callback
+      ENCRYPTION_KEY: dev-only-change-me
+    depends_on:
+      - spotify-mock
+    profiles:
+      - mock
+
+  jukebox-registry:
+    image: ${JUKEBOX_IMAGE:-jukebox:local}
+    restart: unless-stopped
+    ports: *jukebox-ports
+    volumes:
+      - jukebox-data:/data
+    env_file:
+      - path: .env.production
+        required: false
+    environment:
+      <<: *jukebox-runtime
+      NODE_ENV: production
+      JUKEBOX_ENV: production
+    profiles:
+      - registry
+
+  spotify-mock:
+    build:
+      context: ./services/spotify-mock
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    profiles:
+      - mock
+
+volumes:
+  jukebox-dev-data:
+  jukebox-mock-data:
+  jukebox-data:

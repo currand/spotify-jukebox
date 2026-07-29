@@ -13,7 +13,7 @@ import type {
   SpotifyConnectDevice,
   TrackInfo,
 } from "@/shared/types";
-import { factoryDefaultGuestLimits } from "@/shared/types";
+import { factoryDefaultGuestLimits, DEFAULT_BOOST_CAP, DEFAULT_DOWNVOTE_THRESHOLD } from "@/shared/types";
 import { getSearchTrackQueueState } from "@/shared/queue-match";
 import { api, apiOptional } from "../http";
 import { AdminNav } from "../components/AdminNav";
@@ -152,8 +152,8 @@ export function AdminPage() {
   const [form, setForm] = React.useState({
     name: "",
     seedPlaylistId: "",
-    downvoteThreshold: 3,
-    boostCap: null as number | null,
+    downvoteThreshold: DEFAULT_DOWNVOTE_THRESHOLD,
+    boostCap: DEFAULT_BOOST_CAP as number | null,
   });
   const [createRateLimits, setCreateRateLimits] =
     React.useState<PartyRateLimits>(factoryDefaultGuestLimits().rateLimits);
@@ -795,7 +795,7 @@ export function AdminPage() {
                     type="password"
                     value={hostSetupToken}
                     onChange={(e) => saveHostSetupToken(e.target.value)}
-                    placeholder="From HOST_SETUP_TOKEN in .env.production"
+                    placeholder="Same as HOST_SETUP_TOKEN in .env (remove env line to disable)"
                     autoComplete="off"
                   />
                 </label>
@@ -820,7 +820,7 @@ export function AdminPage() {
                     type="password"
                     value={hostSetupToken}
                     onChange={(e) => saveHostSetupToken(e.target.value)}
-                    placeholder="From HOST_SETUP_TOKEN in .env.production"
+                    placeholder="Same as HOST_SETUP_TOKEN in .env (remove env line to disable)"
                     autoComplete="off"
                   />
                 </label>

@@ -30,7 +30,6 @@ const baseConfig: Config = {
   syncEndWindowMs: 7000,
   syncFallbackIntervalMs: 30_000,
   syncIdleIntervalMs: 60_000,
-  defaultRateLimits: null,
 };
 
 describe("initDb migrations", () => {

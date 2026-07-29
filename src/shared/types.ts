@@ -34,12 +34,13 @@ export const DEFAULT_RATE_LIMITS: PartyRateLimits = {
   add: { count: 3, windowMs: 20 * 60 * 1000 },
   upvote: { count: 10, windowMs: 60 * 60 * 1000 },
   downvote: { count: 3, windowMs: 30 * 60 * 1000 },
-  boost: { count: 1, windowMs: 10 * 60 * 1000 },
-  search: { count: 6, windowMs: 60 * 1000 },
+  boost: { count: 2, windowMs: 10 * 60 * 1000 },
+  search: { count: 5, windowMs: 60 * 1000 },
   partySearch: DEFAULT_PARTY_SEARCH_LIMIT,
 };
 
-export const DEFAULT_DOWNVOTE_THRESHOLD = 3;
+export const DEFAULT_DOWNVOTE_THRESHOLD = 5;
+export const DEFAULT_BOOST_CAP = 8;
 
 export interface DefaultGuestLimits {
   rateLimits: PartyRateLimits;
@@ -51,7 +52,7 @@ export function factoryDefaultGuestLimits(): DefaultGuestLimits {
   return {
     rateLimits: DEFAULT_RATE_LIMITS,
     downvoteThreshold: DEFAULT_DOWNVOTE_THRESHOLD,
-    boostCap: null,
+    boostCap: DEFAULT_BOOST_CAP,
   };
 }
 

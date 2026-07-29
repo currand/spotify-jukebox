@@ -30,7 +30,7 @@ cp -n .env.development.example .env.development
 # Fill in SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET
 ```
 
-`HOST_SETUP_TOKEN` is optional in development.
+Leave `HOST_SETUP_TOKEN` unset in `.env.development` unless you want to test the admin gate locally.
 
 ### 3. Install and run
 
@@ -61,18 +61,18 @@ Serves UI and API together on the port in `.env.production` (default 3000).
 
 ## Docker dev (live Spotify)
 
-Local container using **`.env.development`** (not `.env.production`). OAuth redirects stay on `127.0.0.1`.
+Local container using **`.env.development`**. OAuth redirects stay on `127.0.0.1`.
 
 ```bash
 cp -n .env.development.example .env.development
 # Fill SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET (dev app, redirect http://127.0.0.1:3000/...)
 bun run docker:up:dev
-# or: docker compose --profile dev up --build -d
+# or: docker compose -f docker-compose-dev.yml --profile dev up --build -d
 ```
 
 Open http://127.0.0.1:3000/admin (or `http://127.0.0.1:$JUKEBOX_PORT/admin` if set in project `.env`).
 
-**Do not** use `--profile default` for local dev — that service loads `.env.production` regardless of `--env-file .env.development`.
+**Do not** use `--profile local` for local dev — that service loads `.env.production`.
 
 ---
 
@@ -84,7 +84,7 @@ Full container stack with a fake Spotify sidecar — no OAuth, no rate limits:
 
 ```bash
 cp -n .env.development.example .env.development
-docker compose --profile mock up --build -d
+docker compose -f docker-compose-dev.yml --profile mock up --build -d
 ```
 
 | | URL |
@@ -101,7 +101,7 @@ The mock exposes multiple Connect devices (one compatible speaker + one restrict
 The mock starts idle (device present, nothing playing). Tracks play when Jukebox queues them and advance after ~3 minutes by default (`MOCK_TRACK_DURATION_MS` on the `spotify-mock` service).
 
 ```bash
-docker compose --profile mock down
+docker compose -f docker-compose-dev.yml --profile mock down
 ```
 
 ### Mock sidecar + local API
@@ -109,7 +109,7 @@ docker compose --profile mock down
 Run only the mock Spotify container while developing against it:
 
 ```bash
-docker compose --profile mock up spotify-mock -d --build
+docker compose -f docker-compose-dev.yml --profile mock up spotify-mock -d --build
 ```
 
 In `.env.development`:
@@ -168,19 +168,20 @@ These wrap `docker compose` for convenience during development:
 
 | Script | Underlying command |
 |---|---|
-| `bun run docker:up` | `docker compose --profile default up --build -d` (`.env.production`) |
-| `bun run docker:up:dev` | `docker compose --profile dev up --build -d` (`.env.development`, live Spotify) |
-| `bun run docker:up:tunnel` | `docker compose --profile default --profile tunnel -f docker-compose.yml -f docker-compose.tunnel.yml up --build -d` |
-| `bun run docker:up:mock` | `docker compose --profile mock up --build -d` |
-| `bun run docker:up:registry` | `docker compose --profile default --env-file .env up -d` |
+| `bun run docker:up` | `docker compose --profile local up --build -d` (`.env.production`) |
+| `bun run docker:up:cloudflare` | `docker compose --profile cloudflare up --build -d` |
+| `bun run docker:up:tailscale` | `docker compose --profile tailscale up --build -d` |
+| `bun run docker:up:dev` | `docker compose -f docker-compose-dev.yml --profile dev up --build -d` |
+| `bun run docker:up:mock` | `docker compose -f docker-compose-dev.yml --profile mock up --build -d` |
+| `bun run docker:up:registry` | `docker compose -f docker-compose-dev.yml --profile registry --env-file .env up -d` |
 | `bun run docker:publish` | Multi-arch build and push (see README) |
-| `bun run docker:down` | `docker compose --profile default down` |
+| `bun run docker:down` | Stops local/cloudflare/tailscale and dev/mock/registry stacks |
 
 Setup shortcuts:
 
 ```bash
 bun run setup:dev    # cp .env.development.example → .env.development
-bun run setup:prod   # cp production/cloudflared/example env templates
+bun run setup:prod   # cp production/cloudflared/tailscale/example env templates
 ```
 
 Or copy env templates manually — see [README.md](README.md#environment-files).
@@ -199,7 +200,7 @@ docker login your-registry.example.com
 docker buildx build --platform linux/amd64,linux/arm64 \
   -t your-registry/jukebox:latest --push .
 
-docker compose --profile default --env-file .env up -d
+docker compose -f docker-compose-dev.yml --profile registry --env-file .env up -d
 ```
 
 Set `JUKEBOX_PLATFORM` in `.env` when building for a single architecture.
@@ -215,7 +216,6 @@ Optional variables in `.env.production` (see `.env.production.example`):
 | `SPOTIFY_API_BUDGET_COUNT` | 90 | Max outbound Spotify API calls per window |
 | `SPOTIFY_API_BUDGET_WINDOW_MS` | 30000 | Budget window length |
 | `SPOTIFY_DAILY_WARN_CALLS` | 8000 | Diagnostics warning threshold (24h) |
-| `JUKEBOX_DEFAULT_RATE_LIMITS` | code defaults | JSON override for new-party guest limits |
 | `SYNC_*` | adaptive | Sync polling tuning |
 | `DEBUG` | off | `spotify`, `sync`, or `1` for verbose logs |
 
@@ -226,9 +226,11 @@ Guest default limits (before admin overrides):
 | Add | 3 | 20 min |
 | Upvote | 10 | 60 min |
 | Downvote | 3 | 30 min |
-| Boost | 1 | 10 min |
-| Search (guest) | 6 | 60 sec |
+| Boost | 2 | 10 min |
+| Search (guest) | 5 | 60 sec |
 | Search (party) | 24 | 30 sec |
+| Downvotes to skip | 5 | — |
+| Active boost cap | 8 | per party |
 
 ---
 

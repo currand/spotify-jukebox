@@ -104,7 +104,7 @@ function searchRateLimitResponse(
       db.query(`SELECT rate_limits FROM parties WHERE id = ?`).get(partyId) as
         | { rate_limits: string }
         | null
-    )?.rate_limits ?? JSON.stringify(getDefaultRateLimits(db, config)),
+    )?.rate_limits ?? JSON.stringify(getDefaultRateLimits(db)),
   );
   const searchConfig =
     e.kind === "guest_search"
@@ -321,7 +321,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
   authed.use("*", hostAuthMiddleware(db));
 
   authed.get("/settings/default-rate-limits", (c) => {
-    const defaults = getDefaultGuestLimits(db, config);
+    const defaults = getDefaultGuestLimits(db);
     return c.json(defaults);
   });
 
@@ -468,7 +468,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
         ? `history:${importFrom}`
         : "none";
 
-    const guestDefaults = getDefaultGuestLimits(db, config);
+    const guestDefaults = getDefaultGuestLimits(db);
 
     db.run(
       `INSERT INTO parties (id, slug, name, status, downvote_threshold, boost_cap, seed_playlist_id, rate_limits, sync_generation, created_at, updated_at)
@@ -1248,7 +1248,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
             db.query(`SELECT rate_limits FROM parties WHERE id = ?`).get(partyId) as
               | { rate_limits: string }
               | null
-          )?.rate_limits ?? JSON.stringify(getDefaultRateLimits(db, config)),
+          )?.rate_limits ?? JSON.stringify(getDefaultRateLimits(db)),
         ),
         "host",
       );
@@ -1283,7 +1283,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
             db.query(`SELECT rate_limits FROM parties WHERE id = ?`).get(partyId) as
               | { rate_limits: string }
               | null
-          )?.rate_limits ?? JSON.stringify(getDefaultRateLimits(db, config)),
+          )?.rate_limits ?? JSON.stringify(getDefaultRateLimits(db)),
         ),
         "host",
       );
