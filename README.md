@@ -1,5 +1,39 @@
 # Jukebox
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Docker](https://img.shields.io/badge/Deploy-Docker-2496ED?logo=docker&logoColor=white)](#setup)
+[![Bun](https://img.shields.io/badge/Bun-1.2-black?logo=bun&logoColor=white)](https://bun.sh)
+[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Hono](https://img.shields.io/badge/Hono-API-E36002?logo=hono&logoColor=white)](https://hono.dev)
+[![Spotify Web API](https://img.shields.io/badge/Spotify-Web%20API-1DB954?logo=spotify&logoColor=white)](https://developer.spotify.com/documentation/web-api)
+
+**Self-hosted party queue for Spotify Premium** — guests vote from their phones, you control playback.
+
+<p align="center">
+  <img src="images/Full_Screen.png" alt="Jukebox display view — QR code, now playing, and upcoming queue on a TV" width="100%">
+</p>
+<p align="center"><em>Display view — share the QR code on a TV while guests queue from their phones.</em></p>
+
+<p align="center">
+  <img src="images/Admin_Stats.png" alt="Admin stats overview — API budgets, sync status, and guest limits" width="49%">
+  &nbsp;
+  <img src="images/Admin_Stats_2.png" alt="Admin stats detail — Spotify API calls, search cache, and sync worker health" width="49%">
+</p>
+<p align="center"><em>Admin diagnostics — live API budget, rate-limit tracking, and sync worker health.</em></p>
+
+<p align="center">
+  <img src="images/User_Home.png" alt="Guest queue view — now playing, up next, and search bar" width="49%">
+  &nbsp;
+  <img src="images/User_Search.png" alt="Guest search view — artist filters and add-to-queue button" width="49%">
+</p>
+<p align="center">
+  <img src="images/User_My_Info.png" alt="Guest My Info view — remaining adds, upvotes, downvotes, and boosts" width="49%">
+  &nbsp;
+  <img src="images/User_My_Info2.png" alt="Guest My Info view — activity totals and songs added with boost/remove controls" width="49%">
+</p>
+<p align="center"><em>Guest view — search, queue, and track your own limits and songs from My Info.</em></p>
+
 ## Overview (This section written by a human)
 
 **Self-hosted party queue for Spotify Premium.**
@@ -31,7 +65,7 @@ Much of the hardening and feature building was done via github issues so I could
 
 
 
-## Requirements
+## Requirements (Below is AI generated, mostly...)
 
 
 
