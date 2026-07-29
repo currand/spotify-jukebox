@@ -15,7 +15,7 @@ x-jukebox-app: &jukebox-app
   build:
     context: .
     dockerfile: Dockerfile
-  image: ${JUKEBOX_IMAGE:-jukebox:local}
+  image: ${JUKEBOX_IMAGE:-spotify-jukebox:local}
   restart: unless-stopped
   security_opt:
     - no-new-privileges:true

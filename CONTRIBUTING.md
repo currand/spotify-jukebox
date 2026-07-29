@@ -157,7 +157,7 @@ Run the same checks locally before pushing:
 bun run typecheck
 bun run build
 bun test
-docker build -t jukebox:local .
+docker build -t spotify-jukebox:local .
 ```
 
 **Branch protection:** `main` requires all three jobs to pass before a pull request can merge, branches must be up to date with `main`, and force pushes/deletions are disabled. Branch protection is a GitHub feature that's free on public repositories but requires a paid plan on private ones, so this repository is public.
@@ -221,11 +221,11 @@ Build and run a pre-built image instead of building on the host:
 
 ```bash
 cp .env.example .env
-# Set JUKEBOX_IMAGE=your-registry/jukebox:latest
+# Set JUKEBOX_IMAGE=currand/spotify-jukebox:latest
 
 docker login your-registry.example.com
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -t your-registry/jukebox:latest --push .
+  -t your-registry/spotify-jukebox:latest --push .
 
 docker compose -f docker-compose-dev.yml --profile registry --env-file .env up -d
 ```
