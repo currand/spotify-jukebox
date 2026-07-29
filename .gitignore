@@ -8,6 +8,7 @@ docs/DOCKERHUB.md
 .env.development
 .env.production
 .env.cloudflared
+.env.prod.cloudflare
 .env.tailscale
 .env.docker
 *.db
