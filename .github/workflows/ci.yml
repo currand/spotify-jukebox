@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-test-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.2"          # match Dockerfile oven/bun:1.2
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck        # lint
+      - run: bun run build            # vite + server bundle
+      - run: bun test
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: jukebox:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose --profile local config --quiet
+      - run: docker compose --profile cloudflare config --quiet
+      - run: docker compose --profile tailscale config --quiet
+      - run: docker compose -f docker-compose-dev.yml --profile dev config --quiet
