@@ -2,6 +2,7 @@ node_modules/
 services/spotify-mock/node_modules/
 dist/
 data/
+docs/DOCKERHUB.md
 .env
 .env.local
 .env.development
