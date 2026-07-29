@@ -289,7 +289,7 @@ Return `429` with `{ error: "<action-specific message>", code: "RATE_LIMITED", r
 ### Party lifecycle
 
 - **Cardinality:** Exactly **one active party** at a time. Creating a new party ends/archives the previous one (status becomes historical; guests of the old party can no longer mutate).
-- **End party:** Soft-archives the party (`status = 'archived'`) without terminalizing queue items, so the host can **resume** the same party later (same slug, guest sessions, votes, and queue order).
+- **End party:** Soft-archives the party (`status = 'archived'`) without terminalizing queue items, so the host can **resume** the same party later (same slug, guest sessions, votes, and queue order). Removes the ephemeral bootstrap Spotify playlist from the host account.
 - **Resume party:** Reactivates an archived party as `off`. Only available when the archived party still has `pending`/`queued`/`playing` items. Legacy parties fully terminalized before this feature support seed import only.
 - **Previous parties:** Admin lists all archived parties; any can seed a new party’s track list, or be resumed when `canResume` is true.
 - **Binary switch:** Party is either `on` or `off` (admin toggle). No auto-expiry timer.
@@ -311,7 +311,7 @@ Return `429` with `{ error: "<action-specific message>", code: "RATE_LIMITED", r
 - Create party (name, seed playlist, slug) — ends any previous active party; rejects party names that collide with an existing Spotify playlist (`409 PLAYLIST_NAME_COLLISION`)
 - **Target player picker** — list Spotify Connect devices (`GET /host/spotify/devices`); save selection on the party (`PATCH` with `spotifyDeviceId`); Turn ON requires a compatible device (`400 DEVICE_REQUIRED`)
 - Resume archived party (same slug; preserves guests, queue, votes) or import any archived party’s track list as seed for a new party
-- **Delete archived party** — removes party data and deletes the bootstrap Spotify playlist if present
+- **Delete archived party** — removes party data from Jukebox history only (bootstrap playlist was already removed when the party ended)
 - Party on/off switch (Turn ON runs bootstrap playback on the selected device when needed)
 - Configure: downvote threshold, rate-limit windows
 - Display QR code + share link
@@ -545,9 +545,9 @@ Base path: `/api/v1`
 | GET | `/host/parties/archived` | List archived parties with resume/export summary |
 | GET | `/host/parties/last-ended` | Most recent archived party export (backward compat) |
 | GET | `/host/parties/:id/export` | Export track list for any archived party |
-| POST | `/host/parties/:id/end` | Soft-archive party (preserves queue for resume) |
+| POST | `/host/parties/:id/end` | Soft-archive party (preserves queue for resume; removes bootstrap Spotify playlist) |
 | POST | `/host/parties/:id/resume` | Reactivate archived party (same slug; guests/tokens/queue intact) |
-| DELETE | `/host/parties/:id` | Delete archived party and its bootstrap Spotify playlist |
+| DELETE | `/host/parties/:id` | Delete archived party from Jukebox history |
 | PATCH | `/host/parties/:id` | Update config, `spotifyDeviceId`, toggle on/off (`400 DEVICE_REQUIRED` without device on first Turn ON) |
 | GET | `/host/parties/:id/qr` | QR code PNG/SVG for join URL |
 | POST | `/host/parties/:id/queue` | Host add track `{ uri }` (no rate limit; attributed to Host) |
@@ -707,7 +707,7 @@ Both apps:
 - [ ] Party create rejects names that match an existing Spotify playlist (`PLAYLIST_NAME_COLLISION`).
 - [ ] Turn ON requires a selected compatible device; bootstrap playlist starts on that device.
 - [ ] Sync write calls target the party's selected device.
-- [ ] Delete archived party removes bootstrap Spotify playlist.
+- [ ] End party removes bootstrap Spotify playlist.
 - [ ] Creating a new party archives the previous one; only one non-archived party exists.
 - [ ] Guest cannot mutate until display name is set.
 - [ ] Guest joins via QR, adds a track, sees it in queue within one poll cycle.

@@ -297,7 +297,7 @@ export function createApp({ player, tracks, durationMs }: AppDeps) {
     return c.body(null, 201);
   });
 
-  app.delete("/v1/playlists/:id", (c) => {
+  app.delete("/v1/playlists/:id/followers", (c) => {
     userPlaylists.delete(c.req.param("id"));
     return c.body(null, 200);
   });

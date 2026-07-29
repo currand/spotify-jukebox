@@ -422,7 +422,7 @@ export function AdminPage() {
     if (!party) return;
       if (
       !confirm(
-        `End "${party.name}"?\n\nGuests will lose access until you resume or start a new party. Queue state is preserved for resume.`,
+        `End "${party.name}"?\n\nGuests will lose access until you resume or start a new party. Queue state is preserved for resume. The ephemeral Spotify playlist is removed from your account.`,
       )
     ) {
       return;
@@ -531,7 +531,7 @@ export function AdminPage() {
     if (!selectedArchivedId || !selectedArchivedParty) return;
     if (
       !confirm(
-        `Delete "${selectedArchivedParty.partyName}" permanently?\n\nThis removes the party record and deletes its bootstrap Spotify playlist if one exists.`,
+        `Delete "${selectedArchivedParty.partyName}" permanently?\n\nThis removes the party record from Jukebox history.`,
       )
     ) {
       return;

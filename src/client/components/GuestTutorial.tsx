@@ -21,6 +21,11 @@ const STEPS = [
     body: "Use your one boost to jump a song into the fast lane — higher upvotes play sooner there.",
     icon: <span className="boost-badge">Boost</span>,
   },
+  {
+    title: "See what you've played",
+    body: "Open My Info anytime to track your songs — what's queued, what's played, and your boosts and limits.",
+    icon: <span className="guest-tutorial-nav-pill">My Info</span>,
+  },
 ] as const;
 
 export function GuestTutorial({

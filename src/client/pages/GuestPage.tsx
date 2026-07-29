@@ -289,6 +289,23 @@ function GuestApp({ slug }: { slug: string }) {
         <div className="banner off">Party is paused — queue is view only.</div>
       )}
 
+      {!showingSearch && (queue?.nowPlaying || upNext) && (
+        <div className="queue-now-playing-hero">
+          {queue?.nowPlaying && (
+            <NowPlayingBanner
+              item={queue.nowPlaying}
+              highlightedItemId={highlightedItemId}
+            />
+          )}
+          {upNext && (
+            <UpNextLockedSection
+              item={upNext}
+              highlightedItemId={highlightedItemId}
+            />
+          )}
+        </div>
+      )}
+
       <div className="card guest-search-hero">
         <h2 className="guest-search-heading">Search</h2>
         <div className="row guest-search-row">
@@ -405,25 +422,11 @@ function GuestApp({ slug }: { slug: string }) {
         )}
       </div>
 
-      {queue?.nowPlaying && (
-        <NowPlayingBanner
-          item={queue.nowPlaying}
-          highlightedItemId={highlightedItemId}
-        />
-      )}
-
-      {upNext && !showingSearch && (
-        <UpNextLockedSection
-          item={upNext}
-          highlightedItemId={highlightedItemId}
-        />
-      )}
-
       {queue == null && !showingSearch && (
         <p className="small guest-queue-loading">Loading queue…</p>
       )}
 
-      {queue != null && !queue.nowPlaying && !upNext && (
+      {queue != null && !queue.nowPlaying && !upNext && !showingSearch && (
         <div className="banner warn">Add something!</div>
       )}
 
