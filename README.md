@@ -18,6 +18,9 @@ Jukebox provides a simple interface for queue management while respecting API li
 
 Much of the hardening and feature building was done via github issues so I could maintain traceability. You are welcome to contribute in any way you see fit. I've provided [SPEC.md](docs/SPEC.md), [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md) to help but I'm also happy to take good old fashioned human skills and contributions.
 
+## Known Issues
+- Sonos does not allow control of its queue via the Spotify app. A workaround is to use Airplay or Chromecast from your phone instead of native Sonos
+
 ---
 
 ## Architecture
