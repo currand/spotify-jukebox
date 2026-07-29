@@ -33,7 +33,7 @@ jobs:
           context: .
           push: false
           load: true
-          tags: jukebox:ci
+          tags: spotify-jukebox:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

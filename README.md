@@ -74,6 +74,8 @@ Much of the hardening and feature building was done via github issues so I could
 
 Jukebox ships as a Docker Compose stack. Install [Docker Desktop](https://docs.docker.com/get-docker/) or Docker Engine with the Compose v2 plugin (`docker compose`, not the old `docker-compose`).
 
+Pre-built images are published to [Docker Hub](https://hub.docker.com/r/currand/spotify-jukebox) (`currand/spotify-jukebox`) when a GitHub Release is published. To pull instead of building locally, set `JUKEBOX_IMAGE=currand/spotify-jukebox:latest` (or a pinned tag) in project `.env`, then run `docker compose pull` before `up`.
+
 ### Spotify Developers Account
 
 Jukebox uses Spotify's Web API to search, queue, and control playback on **your** Premium account, so you need a small free "app" registered with Spotify.
@@ -348,7 +350,7 @@ Every variable read by Jukebox, grouped by the file it belongs in. `*.example` f
 | ------------------ | -------------------------------------------------------------- | ---------------- |
 | `HOST_BIND`       | Host bind address for the `local` profile's published port (`0.0.0.0` for LAN) | `127.0.0.1`    |
 | `JUKEBOX_PORT`    | Host port published by the `local`/dev/mock/registry profiles  | `3000`         |
-| `JUKEBOX_IMAGE`   | Pre-built image tag to run instead of building locally (dev `registry` profile) | `jukebox:local` |
+| `JUKEBOX_IMAGE`   | Pre-built image tag to run instead of building locally (dev `registry` profile) | `spotify-jukebox:local` |
 | `JUKEBOX_PLATFORM`| Build platform for registry publish scripts                    | *(host arch)*  |
 
 ### `.env.production` / `.env.development`
