@@ -299,3 +299,62 @@ Under **Guest limits** on the party card (or **Advanced guest limits** when crea
 - [docs/SECURITY.md](docs/SECURITY.md) — pre-publish checklist, secret handling, hardening notes (Jukebox is built for a **private party**, not a public multi-tenant service)
 - [CONTRIBUTING.md](CONTRIBUTING.md) — local dev setup, tests, mock stack, endurance testing
 
+---
+
+
+
+## Environment variable reference
+
+Every variable read by Jukebox, grouped by the file it belongs in. `*.example` files in the repo root are templates — copy them (see [Setup](#setup)) and never commit the copies.
+
+### Project `.env` (optional, Compose interpolation only)
+
+| Variable          | Description                                                  | Default        |
+| ------------------ | -------------------------------------------------------------- | ---------------- |
+| `HOST_BIND`       | Host bind address for the `local` profile's published port (`0.0.0.0` for LAN) | `127.0.0.1`    |
+| `JUKEBOX_PORT`    | Host port published by the `local`/dev/mock/registry profiles  | `3000`         |
+| `JUKEBOX_IMAGE`   | Pre-built image tag to run instead of building locally (dev `registry` profile) | `jukebox:local` |
+| `JUKEBOX_PLATFORM`| Build platform for registry publish scripts                    | *(host arch)*  |
+
+### `.env.production` / `.env.development`
+
+App config used by the server. `.env.production` backs every Docker profile; `.env.development` backs `bun run dev` and the dev Docker profiles.
+
+| Variable                    | Description                                                                                  | Default                                              |
+| ---------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SPOTIFY_CLIENT_ID`         | Spotify app Client ID from the Developer Dashboard                                          | *(required; `mock-client` in `SPOTIFY_MODE=mock`)*   |
+| `SPOTIFY_CLIENT_SECRET`     | Spotify app Client Secret — never commit                                                     | *(required; `mock-secret` in `SPOTIFY_MODE=mock`)*   |
+| `SPOTIFY_REDIRECT_URI`      | OAuth callback URL; must match the Spotify app exactly (`127.0.0.1`, never `localhost`)      | *(required; `http://127.0.0.1:3000/api/v1/host/spotify/callback` in mock mode)* |
+| `BASE_URL`                  | Public URL guests/admin use in the browser; sets secure-cookie policy                        | *(required in production; `http://127.0.0.1:5173` in development)* |
+| `ENCRYPTION_KEY`            | Encrypts stored Spotify tokens at rest — generate with `openssl rand -hex 32`                | *(required in production; `dev-only-change-me` in development)* |
+| `HOST_SETUP_TOKEN`          | When set, required in Admin before **Connect Spotify**; unset disables the check             | *(unset — disabled)*                                 |
+| `ALLOW_INSECURE_HTTP`       | Set `1` to allow `http://` for `BASE_URL`/`SPOTIFY_REDIRECT_URI` in production (LAN parties) | `0` (unset)                                           |
+| `DATABASE_PATH`             | SQLite file path                                                                              | `/data/jukebox.db` (production) / `./data/jukebox-dev.db` (development) |
+| `PORT`                      | Port the Bun server listens on                                                               | `3000`                                                |
+| `BIND_HOST`                 | Server bind address; must be `127.0.0.1` or `0.0.0.0`                                        | `0.0.0.0` in production/mock, `127.0.0.1` in development |
+| `NODE_ENV` / `JUKEBOX_ENV`  | Selects `development` vs `production` config and validation rules                            | `development`                                         |
+| `SPOTIFY_MODE`              | `live` (real Spotify API) or `mock` (fake local API, dev only)                               | `live`                                                |
+| `SPOTIFY_API_BASE_URL`      | Spotify Web API base URL — override to point at the mock service                             | `https://api.spotify.com/v1`                          |
+| `SPOTIFY_ACCOUNTS_BASE_URL` | Spotify Accounts (OAuth) base URL — override to point at the mock service                    | `https://accounts.spotify.com`                        |
+| `SPOTIFY_API_BUDGET_COUNT`  | Max Spotify API calls allowed per budget window                                              | `90`                                                  |
+| `SPOTIFY_API_BUDGET_WINDOW_MS` | Length of the API budget window, in ms                                                    | `30000`                                               |
+| `SPOTIFY_DAILY_WARN_CALLS`  | Diagnostics warns when 24h Spotify API calls exceed this                                     | `8000`                                                |
+| `SYNC_FAST_POLL`            | `1` polls Spotify every 10s (legacy); unset uses adaptive polling                             | `0` (adaptive)                                        |
+| `SYNC_END_WINDOW_MS`        | Adaptive sync: how far before estimated track end to poll, in ms                              | `7000`                                                |
+| `SYNC_FALLBACK_INTERVAL_MS` | Adaptive sync: poll interval when playing but track timing is unknown, in ms                   | `30000`                                               |
+| `SYNC_IDLE_INTERVAL_MS`     | Adaptive sync: poll interval when idle/paused with no pending work, in ms                      | `60000`                                               |
+| `DEBUG`                     | Comma-separated debug namespaces to log (e.g. `spotify,sync`), or `1`/`*` for all             | *(unset — off)*                                       |
+| `JUKEBOX_SERVE_CLIENT`      | Dev only: `1` serves the built client from the API server instead of redirecting to Vite      | *(unset — off)*                                       |
+
+### `.env.cloudflared`
+
+| Variable       | Description                                                                | Default        |
+| -------------- | ----------------------------------------------------------------------------- | ---------------- |
+| `TUNNEL_TOKEN` | Cloudflare Tunnel connector token (Zero Trust → Networks → Tunnels)          | *(required for the `cloudflare` profile)* |
+
+### `.env.tailscale`
+
+| Variable     | Description                                                                     | Default        |
+| ------------ | ---------------------------------------------------------------------------------- | ---------------- |
+| `TS_AUTHKEY` | Tailscale auth key (Tailscale admin → Settings → Keys)                          | *(required for the `tailscale` profile)* |
+
