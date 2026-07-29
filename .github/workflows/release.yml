@@ -56,11 +56,16 @@ jobs:
     needs: docker
     steps:
       - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: "1.2"
+      - name: Prepare Docker Hub readme
+        run: bun scripts/generate-dockerhub-readme.ts
       - uses: peter-evans/dockerhub-description@v5
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: currand/spotify-jukebox
-          readme-filepath: ./README.md
+          readme-filepath: ./docs/DOCKERHUB.md
           enable-url-completion: true
           short-description: ${{ github.event.repository.description }}
