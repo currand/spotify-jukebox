@@ -17,6 +17,13 @@ x-jukebox-app: &jukebox-app
     dockerfile: Dockerfile
   image: ${JUKEBOX_IMAGE:-jukebox:local}
   restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+  tmpfs:
+    - /tmp
   volumes:
     - jukebox-data:/data
   env_file:
@@ -52,6 +59,13 @@ services:
     profiles: [cloudflare]
     restart: unless-stopped
     command: tunnel run
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
     env_file:
       - path: .env.cloudflared
         required: false
@@ -65,6 +79,16 @@ services:
     profiles: [tailscale]
     hostname: jukebox
     restart: unless-stopped
+    # NET_ADMIN + SYS_MODULE are required to configure the tun interface and
+    # give jukebox-tailscale (network_mode: service:tailscale) a routable
+    # Tailscale IP — see docs/SECURITY.md § Container hardening.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
     env_file:
       - path: .env.tailscale
         required: false
@@ -72,9 +96,6 @@ services:
       TS_STATE_DIR: /var/lib/tailscale
     volumes:
       - tailscale-state:/var/lib/tailscale
-    cap_add:
-      - NET_ADMIN
-      - SYS_MODULE
     devices:
       - /dev/net/tun:/dev/net/tun
 

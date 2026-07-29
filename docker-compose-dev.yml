@@ -17,6 +17,15 @@ x-jukebox-runtime: &jukebox-runtime
   HOST_IP: "127.0.0.1"
   DATABASE_PATH: /data/jukebox.db
 
+x-jukebox-hardening: &jukebox-hardening
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+  tmpfs:
+    - /tmp
+
 services:
   jukebox-dev:
     build:
@@ -24,6 +33,7 @@ services:
       dockerfile: Dockerfile
     image: ${JUKEBOX_IMAGE:-jukebox:local}
     restart: unless-stopped
+    <<: *jukebox-hardening
     ports: *jukebox-ports
     volumes:
       - jukebox-dev-data:/data
@@ -48,6 +58,7 @@ services:
       dockerfile: Dockerfile
     image: ${JUKEBOX_IMAGE:-jukebox:local}
     restart: unless-stopped
+    <<: *jukebox-hardening
     ports: *jukebox-ports
     volumes:
       - jukebox-mock-data:/data
@@ -75,6 +86,7 @@ services:
   jukebox-registry:
     image: ${JUKEBOX_IMAGE:-jukebox:local}
     restart: unless-stopped
+    <<: *jukebox-hardening
     ports: *jukebox-ports
     volumes:
       - jukebox-data:/data
