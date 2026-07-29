@@ -85,6 +85,27 @@ If the token leaks, generate a new one, update `.env.production`, restart, and u
 | OAuth state TTL | 10-minute expiry on Spotify OAuth state tokens. |
 | SQL | Parameterized queries throughout. |
 
+## Container hardening
+
+Defense-in-depth against a container-escape bug (e.g. a runc/kernel CVE) reaching the host:
+
+| Control | Where |
+|---|---|
+| Non-root runtime user (`bun`, uid 1000) | [Dockerfile](../Dockerfile) — no `USER` was set previously, so the app ran as root |
+| No `node_modules`/`package.json` in the final image | [Dockerfile](../Dockerfile) — `bun build --target bun` inlines every dependency into `dist/server/index.js`; nothing from `node_modules` is needed at runtime, so the whole npm dependency tree (and its CVEs) is absent from the image |
+| `cap_drop: [ALL]` | `jukebox`/`jukebox-internal`/`jukebox-tailscale` and `cloudflared` in every compose file — none of these need any Linux capability (no privileged ports, no raw sockets) |
+| `security_opt: [no-new-privileges:true]` | Every service, including `tailscale` — blocks privilege escalation via setuid binaries even where capabilities are granted |
+| `read_only: true` + `tmpfs: [/tmp]` | `jukebox*` and `cloudflared` — the app only writes to the `/data` volume; rootfs is otherwise immutable |
+| `cap_drop: [ALL]` + explicit `cap_add: [NET_ADMIN, SYS_MODULE]` | `tailscale` sidecar — required to configure the `tun` interface and give `jukebox-tailscale` (`network_mode: service:tailscale`) a routable Tailscale IP. These two capabilities are kept (not dropped) because Tailscale needs real kernel-level network configuration to work as a sidecar; there's no way to serve the admin/guest UI directly on the tailnet without it. This is the most privileged container in the stack — treat the Tailscale auth key accordingly. |
+
+**Upgrade note — existing deployments:** volumes created before this hardening shipped have `/data` contents owned by `root` (the old default user). After upgrading, run this once per profile so the new non-root `bun` user can read/write the existing database:
+
+```bash
+docker compose --profile local run --rm --user root --cap-add CHOWN --cap-add FOWNER jukebox chown -R bun:bun /data
+```
+
+(swap `jukebox` for `jukebox-internal` or `jukebox-tailscale` if you use the `cloudflare`/`tailscale` profile). The extra `--cap-add` flags are required because the service's `cap_drop: [ALL]` also applies to this one-off `run` — even as root, `chown` needs `CAP_CHOWN`/`CAP_FOWNER` explicitly.
+
 ## Recommended Cloudflare setup
 
 When the tunnel is **up**:
