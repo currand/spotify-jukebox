@@ -3,7 +3,6 @@
 [![CI](https://github.com/currand/spotify-jukebox/actions/workflows/ci.yml/badge.svg)](https://github.com/currand/spotify-jukebox/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/Deploy-Docker-2496ED?logo=docker&logoColor=white)](#setup)
-[![Bun](https://img.shields.io/badge/Bun-1.2-black?logo=bun&logoColor=white)](https://bun.sh)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Hono](https://img.shields.io/badge/Hono-API-E36002?logo=hono&logoColor=white)](https://hono.dev)
@@ -74,7 +73,7 @@ Much of the hardening and feature building was done via github issues so I could
 
 Jukebox ships as a Docker Compose stack. Install [Docker Desktop](https://docs.docker.com/get-docker/) or Docker Engine with the Compose v2 plugin (`docker compose`, not the old `docker-compose`).
 
-Pre-built images are published to [Docker Hub](https://hub.docker.com/r/currand/spotify-jukebox) (`currand/spotify-jukebox`) when a GitHub Release is published. To pull instead of building locally, set `JUKEBOX_IMAGE=currand/spotify-jukebox:latest` (or a pinned tag) in project `.env`, then run `docker compose pull` before `up`.
+Pre-built images are published to [Docker Hub](https://hub.docker.com/r/currand/spotify-jukebox) as `currand/spotify-jukebox` when a GitHub Release is published. Production compose pulls `:latest` by default — run `docker compose pull` before `up` to fetch updates, or pin a version with `JUKEBOX_IMAGE=currand/spotify-jukebox:0.1.0` in project `.env`.
 
 ### Spotify Developers Account
 
@@ -120,7 +119,7 @@ ENCRYPTION_KEY=...             # openssl rand -hex 32
 Register the same redirect URI in the Spotify app (**Settings → Redirect URIs → Add → Save**), then start:
 
 ```bash
-docker compose --profile local up --build -d
+docker compose --profile local up -d
 ```
 
 Open **[http://127.0.0.1:3000/admin](http://127.0.0.1:3000/admin)**.
@@ -139,23 +138,60 @@ docker compose --profile local down
 
 ### Tailscale
 
-Private access over your tailnet — no host ports are published.
+Private access over your tailnet via MagicDNS — no host ports are published. HTTPS is provided by **Tailscale Serve** on port 443 (required for Spotify OAuth; Spotify rejects non-HTTPS redirect URIs except `http://127.0.0.1`).
+
+**Prerequisites:** Tailscale account with [MagicDNS](https://tailscale.com/kb/1081/magicdns) enabled (admin → **DNS**), and a Spotify production app.
+
+1. **Copy env templates**
 
 ```bash
 cp .env.production.example .env.production
 cp .env.tailscale.example .env.tailscale
 ```
 
-- `.env.production`: Spotify credentials, `BASE_URL` = your Tailscale URL (e.g. `http://100.x.x.x:3000`)
-- `.env.tailscale`: `TS_AUTHKEY` from Tailscale admin → **Settings → Keys**
+2. **Fill `.env.production`** — Spotify credentials and secrets only (`BASE_URL` / `SPOTIFY_REDIRECT_URI` are set automatically by Compose for this profile):
 
-Register `BASE_URL` + `/api/v1/host/spotify/callback` as the Spotify redirect URI, then:
-
-```bash
-docker compose --profile tailscale up --build -d
+```env
+SPOTIFY_CLIENT_ID=...
+SPOTIFY_CLIENT_SECRET=...
+ENCRYPTION_KEY=...   # openssl rand -hex 32
 ```
 
-Open admin from any device on the tailnet. Logs and stop:
+3. **Fill `.env.tailscale`**
+
+| Variable | Where to find it |
+| --- | --- |
+| `TS_AUTHKEY` | Tailscale admin → **Settings → Keys** → Generate auth key (reusable recommended) |
+| `TS_HOSTNAME` | Pick a MagicDNS machine name (e.g. `jukebox`) |
+| `TAILNET_DNS_NAME` | Tailscale admin → **DNS** → copy **Tailnet DNS name** (e.g. `yak-bebop.ts.net`) |
+
+Your app URL will be `https://<TS_HOSTNAME>.<TAILNET_DNS_NAME>` (e.g. `https://jukebox.yak-bebop.ts.net`).
+
+4. **Register the Spotify redirect URI** — in the Spotify Developer Dashboard → your app → **Settings → Redirect URIs**, add:
+
+```text
+https://<TS_HOSTNAME>.<TAILNET_DNS_NAME>/api/v1/host/spotify/callback
+```
+
+Use the exact FQDN (not the short MagicDNS name). Click **Save**.
+
+5. **Start the stack** — Tailscale starts first; jukebox waits until the sidecar is connected:
+
+```bash
+docker compose --profile tailscale up -d
+```
+
+6. **Verify** — from any device on your tailnet:
+
+```bash
+curl -I https://jukebox.yak-bebop.ts.net   # use your hostname + tailnet name
+```
+
+Open `https://<TS_HOSTNAME>.<TAILNET_DNS_NAME>/admin` and click **Connect Spotify**.
+
+> **First boot:** Tailscale provisions a TLS cert for MagicDNS; allow ~30–60s after the `tailscale` container reports connected before HTTPS works.
+
+Logs and stop:
 
 ```bash
 docker compose --profile tailscale logs -f tailscale jukebox-tailscale
@@ -179,7 +215,7 @@ cp .env.cloudflared.example .env.cloudflared
 Point the tunnel at `http://jukebox:3000` and register the **https://** hostname as your Spotify redirect URI, then:
 
 ```bash
-docker compose --profile cloudflare up --build -d
+docker compose --profile cloudflare up -d
 ```
 
 Logs and stop:
@@ -199,9 +235,9 @@ docker compose --profile cloudflare down
 
 | File               | Purpose                                                                   |
 | ------------------ | ------------------------------------------------------------------------- |
-| `.env.production`  | Spotify credentials, secrets, `BASE_URL` — used by every profile          |
+| `.env.production`  | Spotify credentials, secrets, `BASE_URL` — used by `local` and `cloudflare` profiles |
 | `.env.cloudflared` | `TUNNEL_TOKEN` — `cloudflare` profile only                                |
-| `.env.tailscale`   | `TS_AUTHKEY` — `tailscale` profile only                                   |
+| `.env.tailscale`   | `TS_AUTHKEY`, `TS_HOSTNAME`, `TAILNET_DNS_NAME` — `tailscale` profile only |
 | `.env`             | Optional Compose overrides (`HOST_BIND`, `JUKEBOX_PORT`, `JUKEBOX_IMAGE`) |
 
 
@@ -349,28 +385,28 @@ Every variable read by Jukebox, grouped by the file it belongs in. `*.example` f
 | Variable          | Description                                                  | Default        |
 | ------------------ | -------------------------------------------------------------- | ---------------- |
 | `HOST_BIND`       | Host bind address for the `local` profile's published port (`0.0.0.0` for LAN) | `127.0.0.1`    |
-| `JUKEBOX_PORT`    | Host port published by the `local`/dev/mock/registry profiles  | `3000`         |
-| `JUKEBOX_IMAGE`   | Pre-built image tag to run instead of building locally (dev `registry` profile) | `spotify-jukebox:local` |
+| `JUKEBOX_PORT`    | Host port published by the `local` profile                     | `3000`         |
+| `JUKEBOX_IMAGE`   | Docker image to run (all production profiles) | `currand/spotify-jukebox:latest` |
 | `JUKEBOX_PLATFORM`| Build platform for registry publish scripts                    | *(host arch)*  |
 
-### `.env.production` / `.env.development`
+### `.env.production`
 
-App config used by the server. `.env.production` backs every Docker profile; `.env.development` backs `bun run dev` and the dev Docker profiles.
+App config used by the server for every Docker profile below. For local development (`.env.development`), see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 | Variable                    | Description                                                                                  | Default                                              |
 | ---------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
 | `SPOTIFY_CLIENT_ID`         | Spotify app Client ID from the Developer Dashboard                                          | *(required; `mock-client` in `SPOTIFY_MODE=mock`)*   |
 | `SPOTIFY_CLIENT_SECRET`     | Spotify app Client Secret — never commit                                                     | *(required; `mock-secret` in `SPOTIFY_MODE=mock`)*   |
-| `SPOTIFY_REDIRECT_URI`      | OAuth callback URL; must match the Spotify app exactly (`127.0.0.1`, never `localhost`)      | *(required; `http://127.0.0.1:3000/api/v1/host/spotify/callback` in mock mode)* |
-| `BASE_URL`                  | Public URL guests/admin use in the browser; sets secure-cookie policy                        | *(required in production; `http://127.0.0.1:5173` in development)* |
-| `ENCRYPTION_KEY`            | Encrypts stored Spotify tokens at rest — generate with `openssl rand -hex 32`                | *(required in production; `dev-only-change-me` in development)* |
+| `SPOTIFY_REDIRECT_URI`      | OAuth callback URL; must match the Spotify app exactly                                       | *(required; omitted for `tailscale` profile — derived from `.env.tailscale`)* |
+| `BASE_URL`                  | Public URL guests/admin use in the browser; sets secure-cookie policy                        | *(required; omitted for `tailscale` profile — derived from `.env.tailscale`)* |
+| `ENCRYPTION_KEY`            | Encrypts stored Spotify tokens at rest — generate with `openssl rand -hex 32`                | *(required)* |
 | `HOST_SETUP_TOKEN`          | When set, required in Admin before **Connect Spotify**; unset disables the check             | *(unset — disabled)*                                 |
 | `ALLOW_INSECURE_HTTP`       | Set `1` to allow `http://` for `BASE_URL`/`SPOTIFY_REDIRECT_URI` in production (LAN parties) | `0` (unset)                                           |
-| `DATABASE_PATH`             | SQLite file path                                                                              | `/data/jukebox.db` (production) / `./data/jukebox-dev.db` (development) |
-| `PORT`                      | Port the Bun server listens on                                                               | `3000`                                                |
-| `BIND_HOST`                 | Server bind address; must be `127.0.0.1` or `0.0.0.0`                                        | `0.0.0.0` in production/mock, `127.0.0.1` in development |
-| `NODE_ENV` / `JUKEBOX_ENV`  | Selects `development` vs `production` config and validation rules                            | `development`                                         |
-| `SPOTIFY_MODE`              | `live` (real Spotify API) or `mock` (fake local API, dev only)                               | `live`                                                |
+| `DATABASE_PATH`             | SQLite file path (set by Compose in Docker)                                                  | `/data/jukebox.db` |
+| `PORT`                      | Port the API server listens on inside the container                                          | `3000`                                                |
+| `BIND_HOST`                 | Server bind address inside the container; Compose sets `0.0.0.0` for Docker profiles         | `0.0.0.0` |
+| `NODE_ENV` / `JUKEBOX_ENV`  | Set to `production` by Compose for deployment profiles                                       | `production`                                         |
+| `SPOTIFY_MODE`              | `live` (real Spotify API) — mock mode is for development only                                | `live`                                                |
 | `SPOTIFY_API_BASE_URL`      | Spotify Web API base URL — override to point at the mock service                             | `https://api.spotify.com/v1`                          |
 | `SPOTIFY_ACCOUNTS_BASE_URL` | Spotify Accounts (OAuth) base URL — override to point at the mock service                    | `https://accounts.spotify.com`                        |
 | `SPOTIFY_API_BUDGET_COUNT`  | Max Spotify API calls allowed per budget window                                              | `90`                                                  |
@@ -381,7 +417,8 @@ App config used by the server. `.env.production` backs every Docker profile; `.e
 | `SYNC_FALLBACK_INTERVAL_MS` | Adaptive sync: poll interval when playing but track timing is unknown, in ms                   | `30000`                                               |
 | `SYNC_IDLE_INTERVAL_MS`     | Adaptive sync: poll interval when idle/paused with no pending work, in ms                      | `60000`                                               |
 | `DEBUG`                     | Comma-separated debug namespaces to log (e.g. `spotify,sync`), or `1`/`*` for all             | *(unset — off)*                                       |
-| `JUKEBOX_SERVE_CLIENT`      | Dev only: `1` serves the built client from the API server instead of redirecting to Vite      | *(unset — off)*                                       |
+
+Development-only variables (`JUKEBOX_SERVE_CLIENT`, mock Spotify URLs, etc.) are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### `.env.cloudflared`
 
@@ -391,7 +428,11 @@ App config used by the server. `.env.production` backs every Docker profile; `.e
 
 ### `.env.tailscale`
 
-| Variable     | Description                                                                     | Default        |
-| ------------ | ---------------------------------------------------------------------------------- | ---------------- |
-| `TS_AUTHKEY` | Tailscale auth key (Tailscale admin → Settings → Keys)                          | *(required for the `tailscale` profile)* |
+| Variable           | Description                                                                 | Default        |
+| ------------------ | --------------------------------------------------------------------------- | ---------------- |
+| `TS_AUTHKEY`       | Tailscale auth key (admin → Settings → Keys)                                | *(required)*     |
+| `TS_HOSTNAME`      | MagicDNS machine name; app URL is `https://<TS_HOSTNAME>.<TAILNET_DNS_NAME>` | `jukebox`        |
+| `TAILNET_DNS_NAME` | Tailnet DNS suffix from admin → DNS (e.g. `yak-bebop.ts.net`)               | *(required)*     |
+
+The app derives `BASE_URL` and `SPOTIFY_REDIRECT_URI` from `TS_HOSTNAME` + `TAILNET_DNS_NAME` when those are set. Start with `docker compose --profile tailscale up -d`.
 

@@ -195,9 +195,9 @@ These wrap `docker compose` for convenience during development:
 
 | Script | Underlying command |
 |---|---|
-| `bun run docker:up` | `docker compose --profile local up --build -d` (`.env.production`) |
-| `bun run docker:up:cloudflare` | `docker compose --profile cloudflare up --build -d` |
-| `bun run docker:up:tailscale` | `docker compose --profile tailscale up --build -d` |
+| `bun run docker:up` | `docker compose --profile local up -d` (`.env.production`) |
+| `bun run docker:up:cloudflare` | `docker compose --profile cloudflare up -d` |
+| Tailscale (private tailnet) | `docker compose --profile tailscale up -d` |
 | `bun run docker:up:dev` | `docker compose -f docker-compose-dev.yml --profile dev up --build -d` |
 | `bun run docker:up:mock` | `docker compose -f docker-compose-dev.yml --profile mock up --build -d` |
 | `bun run docker:up:registry` | `docker compose -f docker-compose-dev.yml --profile registry --env-file .env up -d` |

@@ -1,21 +1,20 @@
 # Jukebox — pick one profile:
 #
-#   docker compose --profile local up --build -d
+#   docker compose --profile local up -d
 #     Simplest: port on HOST_BIND (default 127.0.0.1). Use with Tailscale on the
 #     host, a reverse proxy, or LAN (set HOST_BIND=0.0.0.0 in project .env).
 #
-#   docker compose --profile cloudflare up --build -d
+#   docker compose --profile cloudflare up -d
 #     No host ports — Cloudflare Tunnel only (.env.cloudflared).
 #
-#   docker compose --profile tailscale up --build -d
-#     No host ports — Tailscale sidecar only (.env.tailscale).
+#   docker compose --profile tailscale up -d
+#     No host ports — Tailscale sidecar + MagicDNS HTTPS (.env.tailscale).
 #
+# Pulls currand/spotify-jukebox:latest from Docker Hub by default.
+# Override with JUKEBOX_IMAGE in project .env, or run `docker compose pull` to update.
 
 x-jukebox-app: &jukebox-app
-  build:
-    context: .
-    dockerfile: Dockerfile
-  image: ${JUKEBOX_IMAGE:-spotify-jukebox:local}
+  image: ${JUKEBOX_IMAGE:-currand/spotify-jukebox:latest}
   restart: unless-stopped
   security_opt:
     - no-new-privileges:true
@@ -77,7 +76,7 @@ services:
   tailscale:
     image: tailscale/tailscale:latest
     profiles: [tailscale]
-    hostname: jukebox
+    hostname: ${TS_HOSTNAME:-jukebox}
     restart: unless-stopped
     # NET_ADMIN + SYS_MODULE are required to configure the tun interface and
     # give jukebox-tailscale (network_mode: service:tailscale) a routable
@@ -94,17 +93,35 @@ services:
         required: false
     environment:
       TS_STATE_DIR: /var/lib/tailscale
+      TS_AUTH_ONCE: "true"
+      TS_USERSPACE: "false"
+      TS_SERVE_CONFIG: /config/serve.json
+      TS_ENABLE_HEALTH_CHECK: "true"
+      TS_LOCAL_ADDR_PORT: 127.0.0.1:9002
     volumes:
       - tailscale-state:/var/lib/tailscale
+      - ./config/tailscale-serve:/config:ro
     devices:
       - /dev/net/tun:/dev/net/tun
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:9002/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
   jukebox-tailscale:
     <<: *jukebox-app
     profiles: [tailscale]
     network_mode: service:tailscale
+    env_file:
+      - path: .env.production
+        required: false
+      - path: .env.tailscale
+        required: false
     depends_on:
-      - tailscale
+      tailscale:
+        condition: service_healthy
     environment:
       <<: *jukebox-env
 

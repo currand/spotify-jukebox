@@ -175,21 +175,50 @@ function parseHostSetupTokenPolicy(): {
   return { hostSetupToken: token, hostSetupTokenRequired: true };
 }
 
+const SPOTIFY_CALLBACK_PATH = "/api/v1/host/spotify/callback";
+
+function resolveProductionUrls(
+  env: AppEnv,
+  spotifyMode: SpotifyMode,
+): { baseUrl: string; spotifyRedirectUri: string } {
+  const tailnetDnsName = process.env.TAILNET_DNS_NAME?.trim();
+  if (tailnetDnsName) {
+    const hostname = process.env.TS_HOSTNAME?.trim() || "jukebox";
+    const baseUrl = `https://${hostname}.${tailnetDnsName}`;
+    const spotifyRedirectUri =
+      process.env.SPOTIFY_REDIRECT_URI?.trim() ||
+      `${baseUrl}${SPOTIFY_CALLBACK_PATH}`;
+    return { baseUrl, spotifyRedirectUri };
+  }
+
+  const baseUrl = requireEnv("BASE_URL", env);
+  const spotifyRedirectUri =
+    spotifyMode === "mock"
+      ? optionalEnv(
+          "SPOTIFY_REDIRECT_URI",
+          `http://127.0.0.1:3000${SPOTIFY_CALLBACK_PATH}`,
+        )
+      : requireEnv("SPOTIFY_REDIRECT_URI", env);
+  return { baseUrl, spotifyRedirectUri };
+}
+
 export function loadConfig(env: AppEnv): Config {
   const isProduction = env === "production";
   const spotifyMode = parseSpotifyMode(env);
   const port = Number(process.env.PORT ?? 3000);
+  const productionUrls = isProduction
+    ? resolveProductionUrls(env, spotifyMode)
+    : null;
   // Dev UI on Vite (:5173); API/oauth callback on :3000. Prod uses one HTTPS URL.
-  const baseUrl = isProduction
-    ? requireEnv("BASE_URL", env)
-    : (process.env.BASE_URL ?? "http://127.0.0.1:5173");
+  const baseUrl = productionUrls?.baseUrl ?? process.env.BASE_URL ?? "http://127.0.0.1:5173";
   const spotifyRedirectUri =
     spotifyMode === "mock"
       ? optionalEnv(
           "SPOTIFY_REDIRECT_URI",
           "http://127.0.0.1:3000/api/v1/host/spotify/callback",
         )
-      : requireEnv("SPOTIFY_REDIRECT_URI", env);
+      : productionUrls?.spotifyRedirectUri ??
+        requireEnv("SPOTIFY_REDIRECT_URI", env);
   const allowInsecureHttp =
     process.env.ALLOW_INSECURE_HTTP === "1" ||
     process.env.ALLOW_INSECURE_HTTP === "true";
