@@ -124,6 +124,51 @@ describe("loadConfig URL policy", () => {
     }
   });
 
+  test("derives tailnet HTTPS URLs from TAILNET_DNS_NAME and TS_HOSTNAME", () => {
+    const prev = { ...process.env };
+    try {
+      process.env.NODE_ENV = "production";
+      process.env.JUKEBOX_ENV = "production";
+      delete process.env.BASE_URL;
+      delete process.env.SPOTIFY_REDIRECT_URI;
+      process.env.TS_HOSTNAME = "jukebox";
+      process.env.TAILNET_DNS_NAME = "yak-bebop.ts.net";
+      for (const [key, value] of Object.entries(baseEnv)) {
+        process.env[key] = value;
+      }
+
+      const config = loadConfig("production");
+      expect(config.baseUrl).toBe("https://jukebox.yak-bebop.ts.net");
+      expect(config.spotifyRedirectUri).toBe(
+        "https://jukebox.yak-bebop.ts.net/api/v1/host/spotify/callback",
+      );
+      expect(config.secureCookies).toBe(true);
+    } finally {
+      process.env = prev;
+    }
+  });
+
+  test("prefers TAILNET_DNS_NAME over BASE_URL in .env.production", () => {
+    const prev = { ...process.env };
+    try {
+      process.env.NODE_ENV = "production";
+      process.env.JUKEBOX_ENV = "production";
+      process.env.BASE_URL = "https://jukebox.example.com";
+      process.env.SPOTIFY_REDIRECT_URI =
+        "https://jukebox.example.com/api/v1/host/spotify/callback";
+      process.env.TS_HOSTNAME = "jukebox";
+      process.env.TAILNET_DNS_NAME = "yak-bebop.ts.net";
+      for (const [key, value] of Object.entries(baseEnv)) {
+        process.env[key] = value;
+      }
+
+      const config = loadConfig("production");
+      expect(config.baseUrl).toBe("https://jukebox.yak-bebop.ts.net");
+    } finally {
+      process.env = prev;
+    }
+  });
+
   test("requires HOST_SETUP_TOKEN in development when env value is set", () => {
     const prev = { ...process.env };
     try {

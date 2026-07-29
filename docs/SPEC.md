@@ -61,11 +61,11 @@ cp .env.tailscale.example .env.tailscale       # tailscale profile only
 cp .env.example .env                           # optional HOST_BIND / port / registry
 
 # Local (default)
-docker compose --profile local up --build -d
+docker compose --profile local up -d
 
 # Cloudflare or Tailscale (no host ports)
-docker compose --profile cloudflare up --build -d
-docker compose --profile tailscale up --build -d
+docker compose --profile cloudflare up -d
+docker compose --profile tailscale up -d
 
 # Mock Spotify (docker-compose-dev.yml)
 docker compose -f docker-compose-dev.yml --profile mock up --build -d
@@ -374,9 +374,9 @@ Host actions bypass guest rate limits and ownership restrictions.
 | File | Use |
 |---|---|
 | `.env.development` | Local dev + mock stack — Spotify dev app or mock placeholders |
-| `.env.production` | Docker jukebox — Spotify app, `BASE_URL`, secrets (all profiles) |
+| `.env.production` | Docker jukebox — Spotify app, secrets; `BASE_URL` for `local` / `cloudflare` profiles |
 | `.env.cloudflared` | Optional — `cloudflare` profile only (`TUNNEL_TOKEN`) |
-| `.env.tailscale` | Optional — `tailscale` profile only (`TS_AUTHKEY`) |
+| `.env.tailscale` | Optional — `tailscale` profile (`TS_AUTHKEY`, `TS_HOSTNAME`, `TAILNET_DNS_NAME`; app derives jukebox URLs) |
 | `.env` | Optional — Compose interpolation (`JUKEBOX_IMAGE`, `JUKEBOX_PORT`) |
 | `.env.local` | Optional overrides (gitignored), loaded after the env file above |
 
@@ -394,9 +394,10 @@ openssl rand -hex 16   # HOST_SETUP_TOKEN (optional — set or remove the line)
 | Environment | `BASE_URL` | `SPOTIFY_REDIRECT_URI` |
 |---|---|---|
 | Development | `http://127.0.0.1:5173` | `http://127.0.0.1:3000/api/v1/host/spotify/callback` |
-| Production | `https://{tunnel-hostname}` | `https://{tunnel-hostname}/api/v1/host/spotify/callback` |
+| Production (`local` / `cloudflare`) | `https://{hostname}` or `http://127.0.0.1:3000` (local) | Same host + `/api/v1/host/spotify/callback` |
+| Production (`tailscale`) | `https://{TS_HOSTNAME}.{TAILNET_DNS_NAME}` (set by Compose) | Same + `/api/v1/host/spotify/callback` |
 
-Spotify rejects `http://localhost`. Config validation enforces these rules at startup.
+Tailscale profile uses HTTPS via Tailscale Serve on port 443. Spotify rejects non-HTTPS redirect URIs except loopback (`http://127.0.0.1`).
 
 ---
 
@@ -637,9 +638,9 @@ Guests poll `GET /parties/:slug/queue` every **3 seconds** when party is on. `ET
 
 | Profile | Services | Command |
 |---|---|---|
-| `local` | `jukebox` (port published) | `docker compose --profile local up --build -d` |
-| `cloudflare` | `jukebox-internal` + `cloudflared` (no host port) | `docker compose --profile cloudflare up --build -d` |
-| `tailscale` | `tailscale` + `jukebox-tailscale` (no host port) | `docker compose --profile tailscale up --build -d` |
+| `local` | `jukebox` (port published) | `docker compose --profile local up -d` |
+| `cloudflare` | `jukebox-internal` + `cloudflared` (no host port) | `docker compose --profile cloudflare up -d` |
+| `tailscale` | `tailscale` + `jukebox-tailscale` (no host port; MagicDNS HTTPS via Serve) | `docker compose --profile tailscale up -d` |
 
 Dev / mock stacks live in `docker-compose-dev.yml` (profiles `dev`, `mock`, `registry`).
 
@@ -662,10 +663,12 @@ services:
   tailscale:
     profiles: [tailscale]
     env_file: [.env.tailscale]
+    # TS_SERVE_CONFIG → HTTPS :443 → localhost:3000; healthcheck gates jukebox start
 
   jukebox-tailscale:
     profiles: [tailscale]
     network_mode: service:tailscale
+    # BASE_URL + SPOTIFY_REDIRECT_URI derived from TS_HOSTNAME + TAILNET_DNS_NAME in app config
 ```
 
 ---
@@ -681,9 +684,9 @@ Use **two Spotify apps** (recommended): one for development, one for production.
 
 ### Production app
 
-1. Redirect URI matches your deployment (`http://127.0.0.1:3000/...` for local profile, or your Cloudflare/Tailscale URL)
-2. Credentials go in `.env.production`
-3. Generate `ENCRYPTION_KEY`; set or remove `HOST_SETUP_TOKEN` as needed; add `TUNNEL_TOKEN` to `.env.cloudflared` or `TS_AUTHKEY` to `.env.tailscale` when using those profiles
+1. Redirect URI matches your deployment (`http://127.0.0.1:3000/...` for local profile, `https://…` for Cloudflare, or `https://<TS_HOSTNAME>.<TAILNET_DNS_NAME>/api/v1/host/spotify/callback` for Tailscale)
+2. Credentials go in `.env.production` (Tailscale profile: no `BASE_URL` in `.env.production` — Compose sets it from `.env.tailscale`)
+3. Generate `ENCRYPTION_KEY`; set or remove `HOST_SETUP_TOKEN` as needed; add `TUNNEL_TOKEN` to `.env.cloudflared` or fill `.env.tailscale` (`TS_AUTHKEY`, `TS_HOSTNAME`, `TAILNET_DNS_NAME`) for sidecar profiles
 
 Both apps:
 
@@ -692,7 +695,7 @@ Both apps:
 - Development mode; allowlist only the host account
 - Existing installs must **re-connect Spotify** once after upgrading to grant `playlist-modify-private`
 
-**Setup order (production):** Spotify prod app → `.env.production` → `docker compose --profile local up --build -d` (or `cloudflare` / `tailscale` profile + sidecar env) → Admin (enter `HOST_SETUP_TOKEN` if set) → Connect Spotify
+**Setup order (production):** Spotify prod app → `.env.production` → `docker compose --profile local up -d` (or `cloudflare` / `docker compose --profile tailscale up -d`) → Admin (enter `HOST_SETUP_TOKEN` if set) → Connect Spotify
 
 **Setup order (mock scale test):** `cp .env.development.example .env.development` → `docker compose -f docker-compose-dev.yml --profile mock up --build -d` → Admin → Connect Spotify (auto-connected in mock mode)
 
