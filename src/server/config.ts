@@ -1,4 +1,3 @@
-import type { PartyRateLimits } from "@/shared/types";
 import type { AppEnv } from "./load-env";
 
 export type SpotifyMode = "live" | "mock";
@@ -16,7 +15,7 @@ export interface Config {
   spotifyRedirectUri: string;
   encryptionKey: string;
   hostSetupToken: string | null;
-  /** When false, OAuth login skips HOST_SETUP_TOKEN (localhost-only or Cloudflare tunnel). */
+  /** When true, OAuth login requires HOST_SETUP_TOKEN (set in env). */
   hostSetupTokenRequired: boolean;
   /** Server bind address (127.0.0.1 = localhost only; 0.0.0.0 = all interfaces). */
   bindHost: string;
@@ -35,8 +34,6 @@ export interface Config {
   syncFallbackIntervalMs: number;
   /** Poll interval when idle or paused with no pending sync work. */
   syncIdleIntervalMs: number;
-  /** Optional env override for guest default rate limits (below DB-stored host settings). */
-  defaultRateLimits: PartyRateLimits | null;
 }
 
 function parseOptionalPositiveInt(name: string): number | null {
@@ -152,53 +149,6 @@ function optionalEnv(name: string, fallback: string): string {
   return value ? value : fallback;
 }
 
-const RATE_LIMIT_ACTION_KEYS = [
-  "add",
-  "upvote",
-  "downvote",
-  "boost",
-  "search",
-  "partySearch",
-] as const;
-
-function isValidRateLimitConfigShape(value: unknown): boolean {
-  if (!value || typeof value !== "object") return false;
-  const { count, windowMs } = value as { count?: unknown; windowMs?: unknown };
-  return (
-    Number.isInteger(count) &&
-    (count as number) >= 1 &&
-    Number.isInteger(windowMs) &&
-    (windowMs as number) >= 1000
-  );
-}
-
-function parseDefaultRateLimitsFromEnv(): PartyRateLimits | null {
-  const raw = process.env.JUKEBOX_DEFAULT_RATE_LIMITS?.trim();
-  if (!raw) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error("JUKEBOX_DEFAULT_RATE_LIMITS must be valid JSON");
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("JUKEBOX_DEFAULT_RATE_LIMITS must be a JSON object");
-  }
-  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-    if (!(RATE_LIMIT_ACTION_KEYS as readonly string[]).includes(key)) {
-      throw new Error(
-        `JUKEBOX_DEFAULT_RATE_LIMITS has unknown key "${key}" (expected one of: ${RATE_LIMIT_ACTION_KEYS.join(", ")})`,
-      );
-    }
-    if (!isValidRateLimitConfigShape(value)) {
-      throw new Error(
-        `JUKEBOX_DEFAULT_RATE_LIMITS.${key} must be { count: integer >= 1, windowMs: integer >= 1000 }`,
-      );
-    }
-  }
-  return parsed as PartyRateLimits;
-}
-
 function parseBindHost(
   env: AppEnv,
   isProduction: boolean,
@@ -214,55 +164,15 @@ function parseBindHost(
   return isProduction || spotifyMode === "mock" ? "0.0.0.0" : "127.0.0.1";
 }
 
-function isLocalHostHostname(hostname: string): boolean {
-  const normalized = hostname.toLowerCase();
-  return (
-    normalized === "127.0.0.1" ||
-    normalized === "localhost" ||
-    normalized === "::1"
-  );
-}
-
-function isLocalhostOnlyDeployment(
-  bindHost: string,
-  baseUrl: string,
-  hostIp: string | null,
-): boolean {
-  if (bindHost === "127.0.0.1") return true;
-  if (hostIp === "127.0.0.1") return true;
-  try {
-    return isLocalHostHostname(new URL(baseUrl).hostname);
-  } catch {
-    return false;
-  }
-}
-
-function parseHostSetupTokenPolicy(
-  env: AppEnv,
-  isProduction: boolean,
-  bindHost: string,
-  baseUrl: string,
-): { hostSetupToken: string | null; hostSetupTokenRequired: boolean } {
-  if (!isProduction) {
-    const token = process.env.HOST_SETUP_TOKEN?.trim() || null;
-    return { hostSetupToken: token, hostSetupTokenRequired: false };
-  }
-
-  const cloudflareTunnel =
-    parseBoolean("CLOUDFLARE_TUNNEL", false) ||
-    parseBoolean("JUKEBOX_CLOUDFLARE_TUNNEL", false);
-  const hostIp = process.env.HOST_IP?.trim() || null; // set by Docker Compose (127.0.0.1)
-  const localhostOnly = isLocalhostOnlyDeployment(bindHost, baseUrl, hostIp);
-  const explicitlyDisabled = parseBoolean("DISABLE_HOST_SETUP_TOKEN", false);
-
-  if (cloudflareTunnel || localhostOnly || explicitlyDisabled) {
+function parseHostSetupTokenPolicy(): {
+  hostSetupToken: string | null;
+  hostSetupTokenRequired: boolean;
+} {
+  const token = process.env.HOST_SETUP_TOKEN?.trim() || null;
+  if (!token) {
     return { hostSetupToken: null, hostSetupTokenRequired: false };
   }
-
-  return {
-    hostSetupToken: requireEnv("HOST_SETUP_TOKEN", env),
-    hostSetupTokenRequired: true,
-  };
+  return { hostSetupToken: token, hostSetupTokenRequired: true };
 }
 
 export function loadConfig(env: AppEnv): Config {
@@ -300,12 +210,7 @@ export function loadConfig(env: AppEnv): Config {
   }
 
   const bindHost = parseBindHost(env, isProduction, spotifyMode);
-  const { hostSetupToken, hostSetupTokenRequired } = parseHostSetupTokenPolicy(
-    env,
-    isProduction,
-    bindHost,
-    baseUrl,
-  );
+  const { hostSetupToken, hostSetupTokenRequired } = parseHostSetupTokenPolicy();
 
   const spotifyApiBaseUrl = optionalEnv(
     "SPOTIFY_API_BASE_URL",
@@ -348,7 +253,6 @@ export function loadConfig(env: AppEnv): Config {
     syncEndWindowMs: parsePositiveInt("SYNC_END_WINDOW_MS", 7000),
     syncFallbackIntervalMs: parsePositiveInt("SYNC_FALLBACK_INTERVAL_MS", 30_000),
     syncIdleIntervalMs: parsePositiveInt("SYNC_IDLE_INTERVAL_MS", 60_000),
-    defaultRateLimits: parseDefaultRateLimitsFromEnv(),
   };
 }
 

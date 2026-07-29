@@ -58,7 +58,7 @@ bun test                 # full unit/integration test suite — required before 
 
 2. **Spotify Web API** — Dev redirect URIs use `http://127.0.0.1`, never `localhost`. See `docs/SPEC.md` for auth, endpoints, 429/backoff, and redirect URIs.
 
-3. **Secrets** — Never commit `.env.production`, `.env.development`, `.env.cloudflared`, or `data/`. Use `*.example` templates only.
+3. **Secrets** — Never commit `.env.production`, `.env.development`, `.env.cloudflared`, `.env.tailscale`, or `data/`. Use `*.example` templates only.
 
 4. **Shared types first** — API or UI shape changes start in `src/shared/types.ts` (and often `src/shared/` helpers), then server routes/services, then client.
 

@@ -35,7 +35,7 @@ describe("normalizeRateLimits", () => {
       upvote: DEFAULT_RATE_LIMITS.upvote,
       downvote: DEFAULT_RATE_LIMITS.downvote,
     } as typeof DEFAULT_RATE_LIMITS);
-    expect(limits.search.count).toBe(6);
+    expect(limits.search.count).toBe(5);
     expect(limits.partySearch.count).toBe(24);
   });
 });

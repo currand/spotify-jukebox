@@ -8,8 +8,8 @@ Run this checklist locally:
 
 ```bash
 git status
-git check-ignore -v .env.production .env.development .env.cloudflared data/
-git log --all --oneline -- '.env.production' '.env.development' '.env.cloudflared'
+git check-ignore -v .env.production .env.development .env.cloudflared .env.tailscale data/
+git log --all --oneline -- '.env.production' '.env.development' '.env.cloudflared' '.env.tailscale'
 ```
 
 **Safe to commit:** source code, `.env*.example`, docs, Dockerfile, `docker-compose.yml`.
@@ -21,6 +21,7 @@ git log --all --oneline -- '.env.production' '.env.development' '.env.cloudflare
 | `.env.production` | Spotify client secret, encryption key, host setup token |
 | `.env.development` | Dev Spotify credentials |
 | `.env.cloudflared` | Cloudflare tunnel token |
+| `.env.tailscale` | Tailscale auth key |
 | `.env.local` | Optional overrides |
 | `data/` | SQLite DB with encrypted Spotify refresh tokens |
 | `.cursor/*.log` | Local agent debug traces — can contain real party/queue data from your own testing |
@@ -33,36 +34,34 @@ If any secret file was ever committed, **rotate all credentials** before making 
 - The client bundle has **no secrets** — it calls `/api/v1` with relative paths.
 - Docker builds use `.dockerignore` so local env files are not copied into image layers.
 - Split env files in production:
-  - `.env.production` → `jukebox` container
-  - `.env.cloudflared` → optional cloudflared overlay only
-- Default Docker exposes port 3000; Cloudflare overlay removes the host port
+  - `.env.production` → jukebox container (all profiles)
+  - `.env.cloudflared` → `cloudflare` profile only
+  - `.env.tailscale` → `tailscale` profile only
+- `local` profile publishes a host port; `cloudflare` and `tailscale` profiles do not
 
 Generate strong values:
 
 ```bash
 openssl rand -hex 32   # ENCRYPTION_KEY (required in production, ≥ 32 characters)
-openssl rand -hex 16   # HOST_SETUP_TOKEN (when required — see below)
+openssl rand -hex 16   # HOST_SETUP_TOKEN (optional — set a real value or remove the line)
 ```
 
 ## HOST_SETUP_TOKEN
 
-Gates **host Spotify OAuth** in production so visitors who find your public URL cannot connect their Spotify account and take over admin.
+Optional gate on **host Spotify OAuth** so visitors who find your URL cannot connect their Spotify account and take over admin.
 
-**Not required** when any of these apply:
+**Rule:** if `HOST_SETUP_TOKEN` is **unset or empty**, the token is off. If it is **set**, Connect Spotify requires the same value in admin (query param `?token=…` or `X-Host-Setup-Token` header on `/host/spotify/login`).
 
-- Server binds to **`127.0.0.1` only** (`BIND_HOST=127.0.0.1`) — localhost-only deployment
-- **`BASE_URL`** uses `http://127.0.0.1` — local production without network exposure
-- **`CLOUDFLARE_TUNNEL=1`** — Cloudflare Tunnel profile (`docker-compose.tunnel.yml` overlay); use Cloudflare Access or your own frontend for admin protection instead
-- **`DISABLE_HOST_SETUP_TOKEN=1`** — explicit opt-out
+The example `.env.production` ships with a placeholder value. For localhost-only use, **delete the line**. For exposed deployments, replace it with `openssl rand -hex 16`.
 
-When required:
+When enabled:
 
-1. Add to `.env.production`: `HOST_SETUP_TOKEN=<value from openssl rand -hex 16>`
-2. Restart: `docker compose up -d`
+1. Set in `.env.production`: `HOST_SETUP_TOKEN=<secret>`
+2. Restart the container
 3. Open `/admin` → paste the same value in **Host setup token**
 4. Click **Connect Spotify**
 
-Guests never need this token. Optional in local development — see [CONTRIBUTING.md](../CONTRIBUTING.md).
+Guests never need this token.
 
 ### Spotify OAuth scopes
 
@@ -76,7 +75,7 @@ If the token leaks, generate a new one, update `.env.production`, restart, and u
 
 | Control | What it does |
 |---|---|
-| `HOST_SETUP_TOKEN` | Required in production except localhost-only (`BIND_HOST=127.0.0.1`), `BASE_URL` on `127.0.0.1`, or Cloudflare tunnel. OAuth login URL must include `?token=…` or `X-Host-Setup-Token` header when enabled. |
+| `HOST_SETUP_TOKEN` | When set in env, required for Connect Spotify. Remove the line to disable. |
 | Host session cookie | `httpOnly`, `secure`, `SameSite=Lax`. Admin API requires valid session. |
 | Guest session cookie | Same cookie flags; per-party cookie name. |
 | CORS | Production API only accepts credentialed requests from `BASE_URL`. |
@@ -98,7 +97,7 @@ When the tunnel is **up**:
 ## Known trade-offs
 
 - **Guest sessions in production** no longer return `sessionToken` in JSON (cookie-only). Safari/in-app browser users should use “Open in Safari” so the httpOnly cookie persists.
-- **Host OAuth** is protected by `HOST_SETUP_TOKEN` when enabled (public deployments). Localhost-only and Cloudflare tunnel modes skip it — use network isolation or Cloudflare Access instead.
+- **Host OAuth** is protected by `HOST_SETUP_TOKEN` when that env var is set. Remove it to disable the gate (e.g. localhost-only or when Cloudflare Access / tailnet ACLs cover admin).
 - **No IP limits on guest party APIs** — 50+ guests on the same Wi‑Fi share one public IP; per-guest action quotas still apply.
 - **IP rate limits** on probe guard are in-memory per container; they reset on restart.
 

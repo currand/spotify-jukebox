@@ -56,23 +56,24 @@ Jukebox is a self-hosted web application that lets party guests control the host
 ```bash
 # Setup
 cp .env.production.example .env.production
-cp .env.cloudflared.example .env.cloudflared   # tunnel only
-cp .env.example .env                           # optional registry/port
+cp .env.cloudflared.example .env.cloudflared   # cloudflare profile only
+cp .env.tailscale.example .env.tailscale       # tailscale profile only
+cp .env.example .env                           # optional HOST_BIND / port / registry
 
-# Production
-docker compose --profile default up --build -d
+# Local (default)
+docker compose --profile local up --build -d
 
-# Production + Cloudflare Tunnel
-docker compose --profile default --profile tunnel \
-  -f docker-compose.yml -f docker-compose.tunnel.yml up --build -d
+# Cloudflare or Tailscale (no host ports)
+docker compose --profile cloudflare up --build -d
+docker compose --profile tailscale up --build -d
 
-# Mock Spotify (no real credentials)
-docker compose --profile mock up --build -d
+# Mock Spotify (docker-compose-dev.yml)
+docker compose -f docker-compose-dev.yml --profile mock up --build -d
 
 # Logs
-docker compose --profile default logs -f jukebox
-docker compose --profile default --profile tunnel logs -f cloudflared
-docker compose --profile mock logs -f jukebox-mock spotify-mock
+docker compose --profile local logs -f jukebox
+docker compose --profile cloudflare logs -f cloudflared
+docker compose -f docker-compose-dev.yml --profile mock logs -f jukebox-mock spotify-mock
 ```
 
 **Local development and tests** — see [CONTRIBUTING.md](../CONTRIBUTING.md) (requires Bun).
@@ -171,7 +172,7 @@ function compareQueueItems(a: QueueItem, b: QueueItem): number {
 - Any feature not listed in this spec.
 
 ### Never
-- Commit `.env.development`, `.env.production`, `.env.cloudflared`, `.env.local`, Spotify client secrets, or refresh tokens.
+- Commit `.env.development`, `.env.production`, `.env.cloudflared`, `.env.tailscale`, `.env.local`, Spotify client secrets, or refresh tokens.
 - Expose host Spotify credentials to guests.
 - Build audio playback or stream Spotify content in the browser.
 - Synchronize or broadcast Spotify audio (Spotify Developer Policy).
@@ -300,8 +301,7 @@ Return `429` with `{ error: "<action-specific message>", code: "RATE_LIMITED", r
 ### Host authentication
 
 - Host admin (`/admin`) session is established via **Spotify OAuth** (Authorization Code flow for the host Premium account); successful OAuth sets a host session cookie.
-- **Production** may require `HOST_SETUP_TOKEN` (`openssl rand -hex 16`) as a query param or `X-Host-Setup-Token` header on `/host/spotify/login`, so a leaked public URL alone cannot be used to connect a stranger's Spotify account and take over admin. **Not required** when binding to `127.0.0.1` only (`BIND_HOST=127.0.0.1`), when Docker publishes on localhost only (default `127.0.0.1:JUKEBOX_PORT`), when `BASE_URL` uses `127.0.0.1`, when using Cloudflare Tunnel (`CLOUDFLARE_TUNNEL=1`, set automatically by `docker-compose.tunnel.yml`), or when `DISABLE_HOST_SETUP_TOKEN=1`. Never required in development (`JUKEBOX_ENV=development`).
-- When the setup token is disabled, admin UI hides the **Host setup token** field; `/host/spotify/status` returns `hostSetupTokenRequired: false`.
+- Optionally require `HOST_SETUP_TOKEN` on `/host/spotify/login` (query param or `X-Host-Setup-Token` header) when the env var is set — so a leaked public URL alone cannot be used to connect a stranger's Spotify account. **Unset or empty env disables the gate** (admin hides the field; `/host/spotify/status` returns `hostSetupTokenRequired: false`).
 - No separate host password/PIN beyond the setup token (when enabled) — see `docs/SECURITY.md`.
 - Spotify Developer Dashboard should keep the app in **Development mode** with only the host's account allowlisted.
 
@@ -356,16 +356,15 @@ Host actions bypass guest rate limits and ownership restrictions.
 
 ### Cloudflare
 
-- **Optional.** Use compose profile `tunnel` with `docker-compose.tunnel.yml` (see README).
+- **Optional.** Use compose profile `cloudflare` (see README).
 - Default production compose exposes port 3000 for your own reverse proxy or LAN access.
-- **cloudflared** provides public HTTPS when using the tunnel profile; set tunnel hostname → `http://jukebox:3000`.
-- The tunnel overlay sets `CLOUDFLARE_TUNNEL=1` on the jukebox container, which **disables `HOST_SETUP_TOKEN`** — protect admin with Cloudflare Access, a custom frontend, or by turning the tunnel off when not hosting.
+- **cloudflared** provides public HTTPS when using the `cloudflare` profile; set tunnel hostname → `http://jukebox:3000`. Remove `HOST_SETUP_TOKEN` from `.env.production` if you rely on Cloudflare Access for admin protection.
 - Set up the tunnel (if used) before registering the **production** Spotify app redirect URI.
 - No Cloudflare Access, Workers, or other Cloudflare features in v1.
 
 ### Mock Spotify (development only)
 
-- **Optional.** `docker compose --profile mock up --build -d` runs `jukebox-mock` + `spotify-mock` sidecar.
+- **Optional.** `docker compose -f docker-compose-dev.yml --profile mock up --build -d` runs `jukebox-mock` + `spotify-mock` sidecar.
 - Set `SPOTIFY_MODE=mock` (dev only) to point at `SPOTIFY_API_BASE_URL` / `SPOTIFY_ACCOUNTS_BASE_URL`.
 - No OAuth, encryption requirements, or real Spotify credentials needed for scale testing.
 - Mock service implements search, player, queue, playlist seed, device list, playlist create/delete, context playback, and token refresh stubs.
@@ -375,8 +374,9 @@ Host actions bypass guest rate limits and ownership restrictions.
 | File | Use |
 |---|---|
 | `.env.development` | Local dev + mock stack — Spotify dev app or mock placeholders |
-| `.env.production` | Docker **jukebox** service — Spotify prod app, public `BASE_URL`, secrets |
-| `.env.cloudflared` | Optional — tunnel profile only (`TUNNEL_TOKEN`) |
+| `.env.production` | Docker jukebox — Spotify app, `BASE_URL`, secrets (all profiles) |
+| `.env.cloudflared` | Optional — `cloudflare` profile only (`TUNNEL_TOKEN`) |
+| `.env.tailscale` | Optional — `tailscale` profile only (`TS_AUTHKEY`) |
 | `.env` | Optional — Compose interpolation (`JUKEBOX_IMAGE`, `JUKEBOX_PORT`) |
 | `.env.local` | Optional overrides (gitignored), loaded after the env file above |
 
@@ -384,10 +384,10 @@ Host actions bypass guest rate limits and ownership restrictions.
 
 ```bash
 openssl rand -hex 32   # ENCRYPTION_KEY (≥ 32 characters)
-openssl rand -hex 16   # HOST_SETUP_TOKEN — only when required (see docs/SECURITY.md)
+openssl rand -hex 16   # HOST_SETUP_TOKEN (optional — set or remove the line)
 ```
 
-`HOST_SETUP_TOKEN` is optional in development. Required in production for public deployments only — not for localhost-only (`BIND_HOST=127.0.0.1`) or Cloudflare tunnel (`CLOUDFLARE_TUNNEL=1`).
+`HOST_SETUP_TOKEN` is enabled when the env var is non-empty, in any environment.
 
 **Allowed URL patterns:**
 
@@ -518,7 +518,7 @@ Invariant: at most one party with `status IN ('on', 'off')`; others are `archive
 | value | JSON | |
 | updated_at | DATETIME | |
 
-Party-independent defaults (rate limits, downvote threshold, boost cap) applied to newly created parties; falls back to `JUKEBOX_DEFAULT_RATE_LIMITS` env, then code defaults.
+Party-independent defaults (rate limits, downvote threshold, boost cap) applied to newly created parties; overridable in admin and stored in `host_settings`.
 
 ### `metrics_sessions` / `metrics_snapshots`
 
@@ -568,7 +568,7 @@ Base path: `/api/v1`
 | POST | `/host/parties/:id/guests/purge-stale` | Remove guests inactive beyond a threshold |
 | POST | `/host/parties/:id/guests/:guestId/reset-limits` | Reset a guest's rate-limit usage |
 | POST | `/host/parties/:id/history/:itemId/unblock` | Un-terminalize a history item back into the queue |
-| GET / PATCH | `/host/settings/default-rate-limits` | Party-independent default guest limits (`JUKEBOX_DEFAULT_RATE_LIMITS` override) |
+| GET / PATCH | `/host/settings/default-rate-limits` | Party-independent default guest limits |
 | GET | `/host/diagnostics` | Live API/search/cache metrics (current process session) |
 | GET | `/host/metrics/sessions` | List persisted metrics sessions (one per app start) |
 | GET | `/host/metrics/sessions/:id/snapshots` | Snapshot timeline for a session (`?reason=rate_limit`) |
@@ -637,35 +637,35 @@ Guests poll `GET /parties/:slug/queue` every **3 seconds** when party is on. `ET
 
 | Profile | Services | Command |
 |---|---|---|
-| `default` | `jukebox` (port published) | `docker compose --profile default up --build -d` |
-| `tunnel` | `jukebox` (no host port) + `cloudflared` | `docker compose --profile default --profile tunnel -f docker-compose.yml -f docker-compose.tunnel.yml up --build -d` |
-| `mock` | `jukebox-mock` + `spotify-mock` | `docker compose --profile mock up --build -d` |
+| `local` | `jukebox` (port published) | `docker compose --profile local up --build -d` |
+| `cloudflare` | `jukebox-internal` + `cloudflared` (no host port) | `docker compose --profile cloudflare up --build -d` |
+| `tailscale` | `tailscale` + `jukebox-tailscale` (no host port) | `docker compose --profile tailscale up --build -d` |
+
+Dev / mock stacks live in `docker-compose-dev.yml` (profiles `dev`, `mock`, `registry`).
 
 ```yaml
 # Simplified — see docker-compose.yml for full config
 services:
   jukebox:
-    profiles: [default, tunnel]
+    profiles: [local]
     env_file: [.env.production]
-    ports: ["127.0.0.1:${JUKEBOX_PORT:-3000}:3000"]
-    environment:
-      BIND_HOST: "0.0.0.0"
-      PORT: "3000"
+    ports: ["${HOST_BIND:-127.0.0.1}:${JUKEBOX_PORT:-3000}:3000"]
 
-  jukebox-mock:
-    profiles: [mock]
-    env_file: [.env.development]
-    environment:
-      SPOTIFY_MODE: mock
-      SPOTIFY_API_BASE_URL: http://spotify-mock:8080/v1
-
-  spotify-mock:
-    profiles: [mock]
-    build: ./services/spotify-mock
+  jukebox-internal:
+    profiles: [cloudflare]
+    env_file: [.env.production]
 
   cloudflared:
-    profiles: [tunnel]
+    profiles: [cloudflare]
     env_file: [.env.cloudflared]
+
+  tailscale:
+    profiles: [tailscale]
+    env_file: [.env.tailscale]
+
+  jukebox-tailscale:
+    profiles: [tailscale]
+    network_mode: service:tailscale
 ```
 
 ---
@@ -681,10 +681,9 @@ Use **two Spotify apps** (recommended): one for development, one for production.
 
 ### Production app
 
-1. Redirect URI: `https://{tunnel-hostname}/api/v1/host/spotify/callback`
+1. Redirect URI matches your deployment (`http://127.0.0.1:3000/...` for local profile, or your Cloudflare/Tailscale URL)
 2. Credentials go in `.env.production`
-3. Set up Cloudflare Tunnel **before** registering this redirect URI
-4. Generate `ENCRYPTION_KEY`; add `HOST_SETUP_TOKEN` only for public (non-tunnel, non-localhost) deployments; add `TUNNEL_TOKEN` to `.env.cloudflared` (not `.env.production`)
+3. Generate `ENCRYPTION_KEY`; set or remove `HOST_SETUP_TOKEN` as needed; add `TUNNEL_TOKEN` to `.env.cloudflared` or `TS_AUTHKEY` to `.env.tailscale` when using those profiles
 
 Both apps:
 
@@ -693,9 +692,9 @@ Both apps:
 - Development mode; allowlist only the host account
 - Existing installs must **re-connect Spotify** once after upgrading to grant `playlist-modify-private`
 
-**Setup order (production):** Spotify prod app → `.env.production` → `docker compose --profile default up --build -d` (or tunnel overlay + `.env.cloudflared`) → Admin (enter `HOST_SETUP_TOKEN` if required) → Connect Spotify
+**Setup order (production):** Spotify prod app → `.env.production` → `docker compose --profile local up --build -d` (or `cloudflare` / `tailscale` profile + sidecar env) → Admin (enter `HOST_SETUP_TOKEN` if set) → Connect Spotify
 
-**Setup order (mock scale test):** `cp .env.development.example .env.development` → `docker compose --profile mock up --build -d` → Admin → Connect Spotify (auto-connected in mock mode)
+**Setup order (mock scale test):** `cp .env.development.example .env.development` → `docker compose -f docker-compose-dev.yml --profile mock up --build -d` → Admin → Connect Spotify (auto-connected in mock mode)
 
 **Policy note:** Jukebox is for personal, non-commercial home use. Spotify prohibits commercial use and broadcasting synchronized content.
 
