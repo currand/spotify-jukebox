@@ -802,17 +802,18 @@ describe("API Integration: Boost mechanics", () => {
     party = makeParty(db);
   });
 
-  test("guest boosts a track; rate limit blocks a second boost in the window", async () => {
+  test("guest boosts tracks; rate limit blocks a third boost in the window", async () => {
     const joinAdder = await joinParty(app, party.slug, "Adder");
     const adderToken = joinAdder.body.sessionToken ?? joinAdder.body.id;
     const joinBooster = await joinParty(app, party.slug, "Booster");
     const boosterToken = joinBooster.body.sessionToken ?? joinBooster.body.id;
 
-    // Insert filler + 2 targets directly
+    // Insert filler + 3 targets directly
     const now = new Date().toISOString();
     const fillerId = crypto.randomUUID();
     const targetId = crypto.randomUUID();
     const target2Id = crypto.randomUUID();
+    const target3Id = crypto.randomUUID();
     db.run(
       `INSERT INTO queue_items (id, party_id, spotify_uri, track_name, artist_name, status, added_at, from_seed) VALUES (?, ?, 'spotify:track:bfiller', 'Filler', 'Band', 'pending', ?, 0)`,
       [fillerId, party.id, now],
@@ -825,18 +826,22 @@ describe("API Integration: Boost mechanics", () => {
       `INSERT INTO queue_items (id, party_id, spotify_uri, track_name, artist_name, status, added_at, added_by_guest_id, from_seed) VALUES (?, ?, 'spotify:track:bt2', 'Boost2', 'Band', 'pending', ?, ?, 0)`,
       [target2Id, party.id, now, joinAdder.body.id],
     );
+    db.run(
+      `INSERT INTO queue_items (id, party_id, spotify_uri, track_name, artist_name, status, added_at, added_by_guest_id, from_seed) VALUES (?, ?, 'spotify:track:bt3', 'Boost3', 'Band', 'pending', ?, ?, 0)`,
+      [target3Id, party.id, now, joinAdder.body.id],
+    );
 
     // Boost the first target (not the buffer slot — filler is buffer)
     const boostRes = await boostTrack(app, party.slug, targetId, boosterToken);
     expect(boostRes.status).toBe(200);
 
-    // Verify guest's boost_used is now true
+    // Verify guest still has boosts left (2 per 10 min default; one used)
     const meRes = await app.request(`/api/v1/parties/${party.slug}/me`, {
       headers: { Cookie: `guest_session_${party.slug}=${boosterToken}` },
     });
     const me = await meRes.json();
-    expect(me.boostUsed).toBe(true);
-    expect(me.quota.boost).toBe(0);
+    expect(me.boostUsed).toBe(false);
+    expect(me.quota.boost).toBe(1);
 
     const queueRes = await app.request(`/api/v1/parties/${party.slug}/queue`, {
       headers: { Cookie: `guest_session_${party.slug}=${boosterToken}` },
@@ -850,12 +855,16 @@ describe("API Integration: Boost mechanics", () => {
     expect(boostedItem?.isBoosted).toBe(true);
     expect(boostedItem?.boostedBy).toBe("Booster");
 
-    // Second boost should fail (rate limited — default 1 per 10 min)
+    // Second boost (of a different track) still within the 2-per-window budget
     const boostRes2 = await boostTrack(app, party.slug, target2Id, boosterToken);
-    expect(boostRes2.status).toBe(429);
-    const boostBody = await boostRes2.json();
+    expect(boostRes2.status).toBe(200);
+
+    // Third boost should fail — the 2-per-10-min budget is exhausted
+    const boostRes3 = await boostTrack(app, party.slug, target3Id, boosterToken);
+    expect(boostRes3.status).toBe(429);
+    const boostBody = await boostRes3.json();
     expect(boostBody.code).toBe("RATE_LIMITED");
-    expect(boostBody.error).toContain("used your boost");
+    expect(boostBody.error).toContain("used all 2 boosts");
   });
 
   test("cannot boost already-boosted track (returns NEXT_LOCKED or ALREADY_BOOSTED)", async () => {

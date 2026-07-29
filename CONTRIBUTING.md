@@ -137,6 +137,33 @@ Tests use in-memory SQLite and mock Spotify clients — no running containers re
 
 ---
 
+## Continuous integration
+
+[![CI](https://github.com/currand/spotify-jukebox/actions/workflows/ci.yml/badge.svg)](https://github.com/currand/spotify-jukebox/actions/workflows/ci.yml)
+
+Every push and pull request to `main` runs [.github/workflows/ci.yml](.github/workflows/ci.yml), three jobs in parallel:
+
+| Job | Checks |
+|---|---|
+| `lint-test-build` | `bun run typecheck`, `bun run build`, `bun test` |
+| `docker` | Builds the production image from [Dockerfile](Dockerfile) (no push) |
+| `compose` | Validates every [docker-compose.yml](docker-compose.yml) profile and [docker-compose-dev.yml](docker-compose-dev.yml) |
+
+No secrets are required — tests run against in-memory SQLite and a mocked Spotify client, and the Docker build needs no `.env` files.
+
+Run the same checks locally before pushing:
+
+```bash
+bun run typecheck
+bun run build
+bun test
+docker build -t jukebox:local .
+```
+
+**Branch protection:** `main` requires all three jobs to pass before a pull request can merge, branches must be up to date with `main`, and force pushes/deletions are disabled. Branch protection is a GitHub feature that's free on public repositories but requires a paid plan on private ones, so this repository is public.
+
+---
+
 ## Load / endurance testing
 
 Prefer the **Docker mock stack** to avoid Spotify rate limits. Use production + real Spotify only for occasional integration checks.
