@@ -3,14 +3,11 @@ services/spotify-mock/node_modules/
 dist/
 data/
 docs/DOCKERHUB.md
-.env
-.env.local
-.env.development
-.env.production
-.env.cloudflared
-.env.prod.cloudflare
-.env.tailscale
-.env.docker
+# Ignore all .env files (deny-all pattern)
+.env*
+# Whitelist example templates only
+!.env.example
+!.env.*.example
 *.db
 .DS_Store
 .cursor/*.log
