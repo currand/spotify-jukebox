@@ -48,7 +48,6 @@ import {
   resumePartyPlayback,
   pausePartyPlayback,
   markBootstrapPlaybackStarted,
-  refreshSyncPlayerSnapshot,
 } from "../services/sync";
 import { getPartyTargetDeviceId } from "../services/party";
 import {
@@ -62,9 +61,14 @@ import {
   listArchivedParties,
   ResumePartyError,
   resumeParty,
+  softArchiveActiveParties,
   PARTY_OFF_RESPONSE,
 } from "../services/party";
-import { bootstrapSpotifyPlayback } from "../services/playback-bootstrap";
+import {
+  bootstrapSpotifyPlayback,
+  cleanupBootstrapForActiveParties,
+  cleanupBootstrapPlaylist,
+} from "../services/playback-bootstrap";
 import {
   cacheSpotifyTracksMetadata,
   getPartyArtistTracks,
@@ -453,10 +457,8 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
       );
     }
 
-    db.run(
-      `UPDATE parties SET status = 'archived', updated_at = ? WHERE status IN ('on', 'off')`,
-      [new Date().toISOString()],
-    );
+    await cleanupBootstrapForActiveParties(db, spotify);
+    softArchiveActiveParties(db, new Date().toISOString());
 
     const partyId = newId();
     const now = new Date().toISOString();
@@ -632,27 +634,6 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
       );
     }
 
-    const bootstrapId = (
-      db.query(`SELECT bootstrap_playlist_id FROM parties WHERE id = ?`).get(partyId) as
-        | { bootstrap_playlist_id: string | null }
-        | null
-    )?.bootstrap_playlist_id;
-
-    if (bootstrapId) {
-      try {
-        await spotify.deletePlaylist(bootstrapId);
-      } catch (e) {
-        console.error("Failed to delete bootstrap playlist:", e);
-        return c.json(
-          {
-            error: "Could not delete Spotify playlist — try again or remove it manually",
-            code: "PLAYLIST_DELETE_FAILED",
-          },
-          502,
-        );
-      }
-    }
-
     deletePartyCascade(db, partyId);
     return c.json({ ok: true });
   });
@@ -665,6 +646,8 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
     if (!party) {
       return c.json({ error: "Not found", code: "NOT_FOUND" }, 404);
     }
+
+    await cleanupBootstrapPlaylist(db, spotify, partyId);
 
     const now = new Date().toISOString();
     db.run(
@@ -684,6 +667,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
   authed.post("/parties/:id/resume", async (c) => {
     const partyId = c.req.param("id");
     try {
+      await cleanupBootstrapForActiveParties(db, spotify);
       const party = resumeParty(db, partyId);
       requestPartySync(db, partyId);
       const guestCount = countNamedPartyGuests(db, partyId);
@@ -842,16 +826,14 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
             /* best-effort label */
           }
           markBootstrapPlaybackStarted(targetDeviceId, deviceName);
-          try {
-            await refreshSyncPlayerSnapshot(spotify);
-          } catch {
-            /* keep optimistic state until next sync tick */
-          }
         }
-        requestPartySync(db, id);
-      } else if ("skipped" in bootstrap) {
-        requestPartySync(db, id);
-      } else if ("ok" in bootstrap && !bootstrap.ok) {
+      }
+      try {
+        await forcePartySync(db, spotify, id);
+      } catch (e) {
+        console.error("Turn ON sync failed:", e);
+      }
+      if ("ok" in bootstrap && !bootstrap.ok) {
         return c.json({
           ok: true,
           bootstrapNotice: bootstrap.message,

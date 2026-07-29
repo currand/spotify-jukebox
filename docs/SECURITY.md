@@ -68,7 +68,7 @@ Guests never need this token. Optional in local development — see [CONTRIBUTIN
 
 Jukebox requests: `user-modify-playback-state`, `user-read-playback-state`, `playlist-read-private`, `playlist-modify-private`.
 
-The host account may contain **private ephemeral playlists** named after parties — Jukebox creates them on Turn ON and deletes them when you delete an archived party. Re-connect Spotify after upgrading from older builds that lacked `playlist-modify-private`.
+The host account may contain **private ephemeral playlists** named after parties — Jukebox creates them on Turn ON and removes them when you end (or replace) the party. Re-connect Spotify after upgrading from older builds that lacked `playlist-modify-private`.
 
 If the token leaks, generate a new one, update `.env.production`, restart, and use the new value in admin.
 

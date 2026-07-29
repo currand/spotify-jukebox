@@ -1207,9 +1207,11 @@ describe("host playback bootstrap", () => {
     expect(spotify._apiCalls.some((call) => call.startsWith("startPlaylistPlayback:"))).toBe(
       true,
     );
+    expect(spotify._apiCalls.filter((call) => call === "getPlayerSnapshot").length).toBeGreaterThanOrEqual(1);
+    expect(spotify._apiCalls).toContain("getQueue");
   });
 
-  test("DELETE /host/parties/:id removes archived party and bootstrap playlist", async () => {
+  test("DELETE /host/parties/:id removes archived party without touching Spotify", async () => {
     const db = testDb();
     const spotify = createMockSpotify();
     const app = createTestApp(db, spotify);
@@ -1224,8 +1226,35 @@ describe("host playback bootstrap", () => {
       headers: { Cookie: hostSessionCookie(db) },
     });
     expect(res.status).toBe(200);
-    expect(spotify._deletedPlaylists).toEqual(["bootstrap-123"]);
+    expect(spotify._deletedPlaylists).toEqual([]);
     const row = db.query(`SELECT id FROM parties WHERE id = ?`).get(partyId);
     expect(row).toBeNull();
+  });
+
+  test("POST /host/parties/:id/end removes bootstrap playlist", async () => {
+    const db = testDb();
+    const spotify = createMockSpotify();
+    const app = createTestApp(db, spotify);
+    const partyId = makeParty(db, { status: "on" }).id;
+    db.run(`UPDATE parties SET bootstrap_playlist_id = ? WHERE id = ?`, [
+      "bootstrap-456",
+      partyId,
+    ]);
+
+    const res = await app.request(`/api/v1/host/parties/${partyId}/end`, {
+      method: "POST",
+      headers: {
+        Cookie: hostSessionCookie(db),
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    });
+    expect(res.status).toBe(200);
+    expect(spotify._deletedPlaylists).toEqual(["bootstrap-456"]);
+    const row = db
+      .query(`SELECT status, bootstrap_playlist_id FROM parties WHERE id = ?`)
+      .get(partyId) as { status: string; bootstrap_playlist_id: string | null };
+    expect(row.status).toBe("archived");
+    expect(row.bootstrap_playlist_id).toBeNull();
   });
 });

@@ -101,7 +101,11 @@ export function AdminDisplayPage() {
 
           {error && <p className="error">{error}</p>}
 
-          {queue?.nowPlaying && <NowPlayingBanner item={queue.nowPlaying} />}
+          {queue?.nowPlaying && (
+            <div className="queue-now-playing-hero">
+              <NowPlayingBanner item={queue.nowPlaying} />
+            </div>
+          )}
 
           {upNext && <UpNextLockedSection item={upNext} />}
 

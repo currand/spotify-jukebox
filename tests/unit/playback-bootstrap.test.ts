@@ -1,6 +1,9 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test, beforeEach } from "bun:test";
-import { bootstrapSpotifyPlayback } from "../../src/server/services/playback-bootstrap";
+import {
+  bootstrapSpotifyPlayback,
+  cleanupBootstrapPlaylist,
+} from "../../src/server/services/playback-bootstrap";
 import type { SpotifyClient, PlayerSnapshot } from "../../src/server/services/spotify";
 import type { SpotifyConnectDevice, SpotifyTrack } from "../../src/shared/types";
 import { DEFAULT_RATE_LIMITS } from "../../src/shared/types";
@@ -272,5 +275,30 @@ describe("bootstrapSpotifyPlayback", () => {
 
     const result = await bootstrapSpotifyPlayback(db, spotify, partyId);
     expect(result).toMatchObject({ ok: false, code: "DEVICE_REQUIRED" });
+  });
+});
+
+describe("cleanupBootstrapPlaylist", () => {
+  let db: Database;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    db.run(SCHEMA);
+  });
+
+  test("unfollows playlist and clears bootstrap_playlist_id", async () => {
+    const spotify = createMockSpotify();
+    const partyId = seedParty(db, {
+      bootstrapPlaylistId: "pl-old",
+      targetDeviceId: "speaker-1",
+    });
+
+    await cleanupBootstrapPlaylist(db, spotify, partyId);
+
+    expect(spotify.deletedPlaylists).toEqual(["pl-old"]);
+    const row = db
+      .query(`SELECT bootstrap_playlist_id FROM parties WHERE id = ?`)
+      .get(partyId) as { bootstrap_playlist_id: string | null };
+    expect(row.bootstrap_playlist_id).toBeNull();
   });
 });

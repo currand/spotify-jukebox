@@ -184,6 +184,18 @@ input[type="checkbox"] {
   padding: 0.35rem 0.75rem;
 }
 
+.guest-tutorial-nav-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.45rem 0.9rem;
+  border-radius: 10px;
+  background: #1a2e1f;
+  border: 1px solid #1db954;
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
 .guest-tutorial-body {
   color: #d0d0d8;
   margin: 0 0 1.25rem;
@@ -1769,25 +1781,29 @@ button.danger:hover {
   }
 }
 
-/* Display screen: hero-sized now playing vs compact upcoming rows */
-.admin-display-queue .banner.playing.now-playing {
-  padding: clamp(1rem, 2vw, 1.5rem) clamp(1.1rem, 2.5vw, 1.75rem);
-  margin-bottom: 1.25rem;
+/* Hero-sized now playing (guest queue + display screen) */
+.queue-now-playing-hero {
+  margin-bottom: 1rem;
 }
 
-.admin-display-queue .now-playing-inner {
+.queue-now-playing-hero .banner.playing.now-playing {
+  padding: clamp(1rem, 2vw, 1.5rem) clamp(1.1rem, 2.5vw, 1.75rem);
+  margin-bottom: 1rem;
+}
+
+.queue-now-playing-hero .now-playing-inner {
   gap: clamp(1rem, 2.5vw, 1.5rem);
   align-items: center;
 }
 
-.admin-display-queue .now-playing-art {
-  width: clamp(6.5rem, 16vw, 10rem);
-  height: clamp(6.5rem, 16vw, 10rem);
+.queue-now-playing-hero .now-playing-art {
+  width: clamp(5.5rem, 22vw, 10rem);
+  height: clamp(5.5rem, 22vw, 10rem);
   border-radius: 12px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
 }
 
-.admin-display-queue .now-playing-meta strong {
+.queue-now-playing-hero .now-playing-meta strong {
   display: block;
   font-size: 0.8125rem;
   font-weight: 700;
@@ -1796,38 +1812,38 @@ button.danger:hover {
   color: #1db954;
 }
 
-.admin-display-queue .now-playing-title {
-  font-size: clamp(1.35rem, 3.2vw, 2.1rem);
+.queue-now-playing-hero .now-playing-title {
+  font-size: clamp(1.25rem, 4.5vw, 2.1rem);
   line-height: 1.2;
   margin-top: 0.35rem;
 }
 
-.admin-display-queue .now-playing-sub {
-  font-size: clamp(0.9375rem, 1.8vw, 1.2rem);
+.queue-now-playing-hero .now-playing-sub {
+  font-size: clamp(0.9375rem, 2.5vw, 1.2rem);
   margin-top: 0.45rem;
   color: #c8c8d0;
 }
 
-.admin-display-page--kiosk .admin-display-queue .now-playing-art {
+.admin-display-page--kiosk .queue-now-playing-hero .now-playing-art {
   width: clamp(8rem, 18vw, 14rem);
   height: clamp(8rem, 18vw, 14rem);
 }
 
-.admin-display-page--kiosk .admin-display-queue .now-playing-title {
+.admin-display-page--kiosk .queue-now-playing-hero .now-playing-title {
   font-size: clamp(1.5rem, 3.5vw, 2.5rem);
 }
 
 @media (min-width: 768px) {
-  .admin-display-queue .banner.playing.now-playing {
+  .queue-now-playing-hero .banner.playing.now-playing {
     padding: clamp(1.15rem, 2vw, 1.75rem) clamp(1.25rem, 2.5vw, 2rem);
   }
 
-  .admin-display-queue .now-playing-art {
+  .queue-now-playing-hero .now-playing-art {
     width: clamp(7.5rem, 14vw, 11rem);
     height: clamp(7.5rem, 14vw, 11rem);
   }
 
-  .admin-display-page--kiosk .admin-display-queue .now-playing-art {
+  .admin-display-page--kiosk .queue-now-playing-hero .now-playing-art {
     width: clamp(9rem, 16vw, 15rem);
     height: clamp(9rem, 16vw, 15rem);
   }

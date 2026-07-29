@@ -111,3 +111,41 @@ export async function bootstrapSpotifyPlayback(
     };
   }
 }
+
+/** Remove ephemeral bootstrap playlist when a party is archived. Best-effort on Spotify. */
+export async function cleanupBootstrapPlaylist(
+  db: Db,
+  spotify: SpotifyClient,
+  partyId: string,
+): Promise<void> {
+  const row = db
+    .query(`SELECT bootstrap_playlist_id FROM parties WHERE id = ?`)
+    .get(partyId) as { bootstrap_playlist_id: string | null } | null;
+  const bootstrapId = row?.bootstrap_playlist_id;
+  if (!bootstrapId) return;
+
+  try {
+    await spotify.deletePlaylist(bootstrapId);
+  } catch (e) {
+    console.error(
+      `Failed to delete bootstrap playlist for party ${partyId}:`,
+      e,
+    );
+  }
+  db.run(`UPDATE parties SET bootstrap_playlist_id = NULL WHERE id = ?`, [
+    partyId,
+  ]);
+}
+
+/** Clean up bootstrap playlists for all active parties before archiving them. */
+export async function cleanupBootstrapForActiveParties(
+  db: Db,
+  spotify: SpotifyClient,
+): Promise<void> {
+  const parties = db
+    .query(`SELECT id FROM parties WHERE status IN ('on', 'off')`)
+    .all() as { id: string }[];
+  for (const { id } of parties) {
+    await cleanupBootstrapPlaylist(db, spotify, id);
+  }
+}

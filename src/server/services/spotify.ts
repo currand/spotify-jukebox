@@ -837,9 +837,11 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
     },
 
     async deletePlaylist(playlistId) {
-      await apiVoid(`/playlists/${encodeURIComponent(playlistId)}`, {
-        method: "DELETE",
-      });
+      // Spotify has no DELETE /playlists/{id}; unfollow removes owned playlists from the library.
+      await apiVoid(
+        `/playlists/${encodeURIComponent(playlistId)}/followers`,
+        { method: "DELETE" },
+      );
     },
   };
 }

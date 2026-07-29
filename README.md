@@ -126,7 +126,7 @@ For personal home use, leave the app in **Development mode** and add your Spotif
 
 **Required OAuth scopes** (requested automatically when you click Connect Spotify): `user-modify-playback-state`, `user-read-playback-state`, `playlist-read-private`, `playlist-modify-private`.
 
-**After upgrading** from an older Jukebox version, click **Connect Spotify** once in admin so the host account grants the new playlist scope. Jukebox creates a private ephemeral playlist named after each party when you Turn ON, and deletes it when you delete an archived party.
+**After upgrading** from an older Jukebox version, click **Connect Spotify** once in admin so the host account grants the new playlist scope. Jukebox creates a private ephemeral playlist named after each party when you Turn ON, and removes it when you end the party.
 
 ### 5. Policy reminder
 
@@ -278,7 +278,7 @@ docker compose --profile default --profile tunnel \
 4. **Turn party ON** — Jukebox creates a short bootstrap playlist on the selected device and starts playback, then sync keeps the virtual queue aligned.
 5. **Share the party** — Show the QR code or copy the guest link. Guests set a display name, then search and interact.
 6. **During the party** — Toggle **off** to freeze guest actions; use admin controls to skip, shuffle, or recover from a bad streak of adds.
-7. **Afterward** — End the party to archive it (resume later) or delete archived parties from **Previous parties** (removes the bootstrap Spotify playlist too).
+7. **Afterward** — End the party to archive it (resume later; removes the bootstrap Spotify playlist) or delete archived parties from **Previous parties** to clear Jukebox history.
 
 If bootstrap fails (device offline, name collision), admin shows a notice — refresh devices, fix the party name, or start playback manually in Spotify as a fallback.
 
