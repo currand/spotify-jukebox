@@ -21,7 +21,7 @@ git log --all --oneline -- '.env.production' '.env.development' '.env.cloudflare
 | `.env.production` | Spotify client secret, encryption key, host setup token |
 | `.env.development` | Dev Spotify credentials |
 | `.env.cloudflared` | Cloudflare tunnel token |
-| `.env.tailscale` | Tailscale auth key |
+| `.env.tailscale` | Tailscale auth key, MagicDNS hostname, tailnet DNS suffix |
 | `.env.local` | Optional overrides |
 | `data/` | SQLite DB with encrypted Spotify refresh tokens |
 | `.cursor/*.log` | Local agent debug traces — can contain real party/queue data from your own testing |

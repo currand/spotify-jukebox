@@ -185,10 +185,10 @@ function resolveProductionUrls(
   if (tailnetDnsName) {
     const hostname = process.env.TS_HOSTNAME?.trim() || "jukebox";
     const baseUrl = `https://${hostname}.${tailnetDnsName}`;
-    const spotifyRedirectUri =
-      process.env.SPOTIFY_REDIRECT_URI?.trim() ||
-      `${baseUrl}${SPOTIFY_CALLBACK_PATH}`;
-    return { baseUrl, spotifyRedirectUri };
+    return {
+      baseUrl,
+      spotifyRedirectUri: `${baseUrl}${SPOTIFY_CALLBACK_PATH}`,
+    };
   }
 
   const baseUrl = requireEnv("BASE_URL", env);

@@ -73,6 +73,7 @@ docker compose -f docker-compose-dev.yml --profile mock up --build -d
 # Logs
 docker compose --profile local logs -f jukebox
 docker compose --profile cloudflare logs -f cloudflared
+docker compose --profile tailscale logs -f tailscale jukebox-tailscale
 docker compose -f docker-compose-dev.yml --profile mock logs -f jukebox-mock spotify-mock
 ```
 
@@ -395,7 +396,7 @@ openssl rand -hex 16   # HOST_SETUP_TOKEN (optional — set or remove the line)
 |---|---|---|
 | Development | `http://127.0.0.1:5173` | `http://127.0.0.1:3000/api/v1/host/spotify/callback` |
 | Production (`local` / `cloudflare`) | `https://{hostname}` or `http://127.0.0.1:3000` (local) | Same host + `/api/v1/host/spotify/callback` |
-| Production (`tailscale`) | `https://{TS_HOSTNAME}.{TAILNET_DNS_NAME}` (set by Compose) | Same + `/api/v1/host/spotify/callback` |
+| Production (`tailscale`) | `https://{TS_HOSTNAME}.{TAILNET_DNS_NAME}` (derived in app when `TAILNET_DNS_NAME` is set) | Same + `/api/v1/host/spotify/callback` |
 
 Tailscale profile uses HTTPS via Tailscale Serve on port 443. Spotify rejects non-HTTPS redirect URIs except loopback (`http://127.0.0.1`).
 
@@ -685,7 +686,7 @@ Use **two Spotify apps** (recommended): one for development, one for production.
 ### Production app
 
 1. Redirect URI matches your deployment (`http://127.0.0.1:3000/...` for local profile, `https://…` for Cloudflare, or `https://<TS_HOSTNAME>.<TAILNET_DNS_NAME>/api/v1/host/spotify/callback` for Tailscale)
-2. Credentials go in `.env.production` (Tailscale profile: no `BASE_URL` in `.env.production` — Compose sets it from `.env.tailscale`)
+2. Credentials go in `.env.production` (Tailscale profile: omit or ignore `BASE_URL` / `SPOTIFY_REDIRECT_URI` — app derives them from `.env.tailscale`)
 3. Generate `ENCRYPTION_KEY`; set or remove `HOST_SETUP_TOKEN` as needed; add `TUNNEL_TOKEN` to `.env.cloudflared` or fill `.env.tailscale` (`TS_AUTHKEY`, `TS_HOSTNAME`, `TAILNET_DNS_NAME`) for sidecar profiles
 
 Both apps:

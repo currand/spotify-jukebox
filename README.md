@@ -138,18 +138,20 @@ docker compose --profile local down
 
 ### Tailscale
 
-Private access over your tailnet via MagicDNS — no host ports are published. HTTPS is provided by **Tailscale Serve** on port 443 (required for Spotify OAuth; Spotify rejects non-HTTPS redirect URIs except `http://127.0.0.1`).
+Private access over your tailnet via MagicDNS — no host ports are published. HTTPS is provided by **Tailscale Serve** on port 443 (required for Spotify OAuth).
 
 **Prerequisites:** Tailscale account with [MagicDNS](https://tailscale.com/kb/1081/magicdns) enabled (admin → **DNS**), and a Spotify production app.
 
-1. **Copy env templates**
+**Quick start**
 
 ```bash
 cp .env.production.example .env.production
 cp .env.tailscale.example .env.tailscale
+# Edit both files (see below), register the Spotify redirect URI, then:
+docker compose --profile tailscale up -d
 ```
 
-2. **Fill `.env.production`** — Spotify credentials and secrets only (`BASE_URL` / `SPOTIFY_REDIRECT_URI` are set automatically by Compose for this profile):
+**1. `.env.production`** — Spotify credentials and secrets only. You do **not** need `BASE_URL` or `SPOTIFY_REDIRECT_URI` for this profile (the app builds them from `.env.tailscale`).
 
 ```env
 SPOTIFY_CLIENT_ID=...
@@ -157,44 +159,37 @@ SPOTIFY_CLIENT_SECRET=...
 ENCRYPTION_KEY=...   # openssl rand -hex 32
 ```
 
-3. **Fill `.env.tailscale`**
+**2. `.env.tailscale`**
 
 | Variable | Where to find it |
 | --- | --- |
 | `TS_AUTHKEY` | Tailscale admin → **Settings → Keys** → Generate auth key (reusable recommended) |
-| `TS_HOSTNAME` | Pick a MagicDNS machine name (e.g. `jukebox`) |
-| `TAILNET_DNS_NAME` | Tailscale admin → **DNS** → copy **Tailnet DNS name** (e.g. `yak-bebop.ts.net`) |
+| `TS_HOSTNAME` | MagicDNS machine name you choose (default `jukebox`) |
+| `TAILNET_DNS_NAME` | Tailscale admin → **DNS** → **Tailnet DNS name** (e.g. `yak-bebop.ts.net`) |
 
-Your app URL will be `https://<TS_HOSTNAME>.<TAILNET_DNS_NAME>` (e.g. `https://jukebox.yak-bebop.ts.net`).
+Your app URL: `https://<TS_HOSTNAME>.<TAILNET_DNS_NAME>` (example: `https://jukebox.yak-bebop.ts.net`).
 
-4. **Register the Spotify redirect URI** — in the Spotify Developer Dashboard → your app → **Settings → Redirect URIs**, add:
+**3. Spotify redirect URI** — Developer Dashboard → your app → **Settings → Redirect URIs**, add exactly:
 
 ```text
 https://<TS_HOSTNAME>.<TAILNET_DNS_NAME>/api/v1/host/spotify/callback
 ```
 
-Use the exact FQDN (not the short MagicDNS name). Click **Save**.
-
-5. **Start the stack** — Tailscale starts first; jukebox waits until the sidecar is connected:
+**4. Start and verify**
 
 ```bash
 docker compose --profile tailscale up -d
+docker compose --profile tailscale logs -f tailscale    # wait for connected + Serve
+curl -I https://jukebox.yak-bebop.ts.net                # from a tailnet device; use your URL
 ```
 
-6. **Verify** — from any device on your tailnet:
+Open `https://<TS_HOSTNAME>.<TAILNET_DNS_NAME>/admin` → **Connect Spotify**.
+
+> **First boot:** Tailscale provisions a TLS cert for MagicDNS; allow ~30–60s after the sidecar connects before HTTPS works.
+
+**Stop**
 
 ```bash
-curl -I https://jukebox.yak-bebop.ts.net   # use your hostname + tailnet name
-```
-
-Open `https://<TS_HOSTNAME>.<TAILNET_DNS_NAME>/admin` and click **Connect Spotify**.
-
-> **First boot:** Tailscale provisions a TLS cert for MagicDNS; allow ~30–60s after the `tailscale` container reports connected before HTTPS works.
-
-Logs and stop:
-
-```bash
-docker compose --profile tailscale logs -f tailscale jukebox-tailscale
 docker compose --profile tailscale down
 ```
 
@@ -241,17 +236,17 @@ docker compose --profile cloudflare down
 | `.env`             | Optional Compose overrides (`HOST_BIND`, `JUKEBOX_PORT`, `JUKEBOX_IMAGE`) |
 
 
-Key variables in `.env.production`:
+Key variables in `.env.production` (for **local** and **cloudflare** profiles; the **tailscale** profile derives `BASE_URL` / `SPOTIFY_REDIRECT_URI` from `.env.tailscale` instead):
 
 
 | Variable                                      | Required | Notes                                                                                             |
 | --------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------- |
 | `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` | yes      | From the Spotify Developer Dashboard; never commit the secret                                     |
-| `SPOTIFY_REDIRECT_URI`                        | yes      | Must match the Spotify app and `BASE_URL` hostname exactly                                        |
-| `BASE_URL`                                    | yes      | URL guests and admin use in the browser                                                           |
+| `SPOTIFY_REDIRECT_URI`                        | local/cloudflare | Must match the Spotify app and `BASE_URL` hostname exactly                              |
+| `BASE_URL`                                    | local/cloudflare | URL guests and admin use in the browser                                               |
 | `ENCRYPTION_KEY`                              | yes      | `openssl rand -hex 32`; encrypts Spotify tokens at rest                                           |
 | `HOST_SETUP_TOKEN`                            | no       | When set, required before Connect Spotify (`openssl rand -hex 16`); remove the line to disable    |
-| `ALLOW_INSECURE_HTTP`                         | no       | Set `1` for `http://` LAN deployments                                                             |
+| `ALLOW_INSECURE_HTTP`                         | no       | Set `1` for `http://` LAN deployments (local profile)                                             |
 | `HOST_BIND` / `JUKEBOX_PORT`                  | no       | Project `.env`; `local` profile bind address (default `127.0.0.1`) and host port (default `3000`) |
 
 

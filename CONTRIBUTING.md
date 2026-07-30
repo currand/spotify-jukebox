@@ -66,8 +66,7 @@ Local container using **`.env.development`**. OAuth redirects stay on `127.0.0.1
 ```bash
 cp -n .env.development.example .env.development
 # Fill SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET (dev app, redirect http://127.0.0.1:3000/...)
-bun run docker:up:dev
-# or: docker compose -f docker-compose-dev.yml --profile dev up --build -d
+docker compose -f docker-compose-dev.yml --profile dev up --build -d
 ```
 
 Open http://127.0.0.1:3000/admin (or `http://127.0.0.1:$JUKEBOX_PORT/admin` if set in project `.env`).
@@ -189,29 +188,39 @@ See the endurance-testing skill for troubleshooting and diagnostics.
 
 ---
 
-## Docker helpers (package.json)
+## Docker Compose (deployment and dev stacks)
 
-These wrap `docker compose` for convenience during development:
-
-| Script | Underlying command |
-|---|---|
-| `bun run docker:up` | `docker compose --profile local up -d` (`.env.production`) |
-| `bun run docker:up:cloudflare` | `docker compose --profile cloudflare up -d` |
-| Tailscale (private tailnet) | `docker compose --profile tailscale up -d` |
-| `bun run docker:up:dev` | `docker compose -f docker-compose-dev.yml --profile dev up --build -d` |
-| `bun run docker:up:mock` | `docker compose -f docker-compose-dev.yml --profile mock up --build -d` |
-| `bun run docker:up:registry` | `docker compose -f docker-compose-dev.yml --profile registry --env-file .env up -d` |
-| `bun run docker:publish` | Multi-arch build and push (see README) |
-| `bun run docker:down` | Stops local/cloudflare/tailscale and dev/mock/registry stacks |
-
-Setup shortcuts:
+Production profiles — see [README.md](README.md#setup):
 
 ```bash
-bun run setup:dev    # cp .env.development.example → .env.development
-bun run setup:prod   # cp production/cloudflared/tailscale/example env templates
+docker compose --profile local up -d
+docker compose --profile cloudflare up -d
+docker compose --profile tailscale up -d
+docker compose --profile local down
+docker compose --profile cloudflare down
+docker compose --profile tailscale down
 ```
 
-Or copy env templates manually — see [README.md](README.md#environment-files).
+Dev / mock (`docker-compose-dev.yml`):
+
+```bash
+docker compose -f docker-compose-dev.yml --profile dev up --build -d
+docker compose -f docker-compose-dev.yml --profile mock up --build -d
+docker compose -f docker-compose-dev.yml --profile registry --env-file .env up -d
+docker compose -f docker-compose-dev.yml --profile dev --profile mock --profile registry down
+```
+
+Copy env templates:
+
+```bash
+cp -n .env.production.example .env.production
+cp -n .env.cloudflared.example .env.cloudflared
+cp -n .env.tailscale.example .env.tailscale
+cp -n .env.development.example .env.development
+cp -n .env.example .env
+```
+
+Or see [README.md](README.md#setup) (Tailscale: [README § Tailscale](README.md#tailscale)).
 
 ---
 
