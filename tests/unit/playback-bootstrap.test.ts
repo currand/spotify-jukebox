@@ -185,6 +185,7 @@ function createMockSpotify() {
     async startPlaylistPlayback(playlistId, deviceId) {
       state.playbackCalls.push({ playlistId, deviceId });
     },
+    async transferPlayback() {},
     async deletePlaylist(id) {
       state.deletedPlaylists.push(id);
     },

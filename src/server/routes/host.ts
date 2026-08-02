@@ -42,12 +42,15 @@ import {
 } from "../services/metrics-recorder";
 import {
   getSyncState,
+  getDeviceTransferRetryAfterMs,
   requestPartySync,
   forcePartySync,
   PartySyncError,
   resumePartyPlayback,
   pausePartyPlayback,
   markBootstrapPlaybackStarted,
+  setPartyTargetDevice,
+  clearPartyTargetDevice,
 } from "../services/sync";
 import { getPartyTargetDeviceId } from "../services/party";
 import {
@@ -294,6 +297,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
       sync.rateLimitedUntil != null
         ? Math.max(0, sync.rateLimitedUntil - Date.now())
         : null;
+    const deviceTransferRetryAfterMs = getDeviceTransferRetryAfterMs();
     return c.json({
       connected: Boolean(creds),
       authenticated,
@@ -304,8 +308,12 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
       spotifyReachable: sync.spotifyReachable,
       deviceRestricted: sync.deviceRestricted,
       deviceName: sync.deviceName,
+      deviceMismatch: sync.deviceMismatch,
+      deviceTransferPending: sync.deviceTransferPending,
+      targetDeviceName: sync.targetDeviceName,
       lastError: sanitizeErrorForPublicStatus(sync.lastError),
       retryAfterMs,
+      deviceTransferRetryAfterMs,
       lastSyncedAt: sync.lastSyncedAt,
     });
   });
@@ -713,6 +721,7 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
           `UPDATE parties SET target_spotify_device_id = NULL, updated_at = ? WHERE id = ?`,
           [new Date().toISOString(), id],
         );
+        clearPartyTargetDevice();
       } else {
         try {
           const devices = await spotify.getAvailableDevices();
@@ -726,21 +735,12 @@ export function createHostRoutes(db: Db, config: Config, spotify: SpotifyClient)
               400,
             );
           }
-          if (!selected.compatible) {
-            return c.json(
-              {
-                error:
-                  selected.incompatibleReason ??
-                  "This device cannot be used for remote playback control",
-                code: "DEVICE_INCOMPATIBLE",
-              },
-              400,
-            );
-          }
           db.run(
             `UPDATE parties SET target_spotify_device_id = ?, updated_at = ? WHERE id = ?`,
             [body.spotifyDeviceId, new Date().toISOString(), id],
           );
+          setPartyTargetDevice(selected.id, selected.name);
+          requestPartySync(db, id);
         } catch (e) {
           console.error("Failed to validate Spotify device:", e);
           return c.json(

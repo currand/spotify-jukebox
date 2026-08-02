@@ -231,6 +231,14 @@ export interface HostSpotifyStatus {
   lastError: string | null;
   /** Milliseconds until Spotify rate-limit backoff ends; null when not rate limited. */
   retryAfterMs: number | null;
+  /** True when playback device differs from the party target device. */
+  deviceMismatch: boolean;
+  /** True while sync is transferring playback to the target device. */
+  deviceTransferPending: boolean;
+  /** Party target Connect device name (for transfer status). */
+  targetDeviceName: string | null;
+  /** Milliseconds until the next device-transfer retry; null when not backing off. */
+  deviceTransferRetryAfterMs: number | null;
   lastSyncedAt: number | null;
 }
 
@@ -410,6 +418,10 @@ export interface HostDiagnostics {
     lastError: string | null;
     retryAfterMs: number | null;
     lastSyncedAt: number | null;
+    deviceMismatch: boolean;
+    deviceTransferPending: boolean;
+    targetDeviceName: string | null;
+    deviceTransferRetryAfterMs: number | null;
   };
   partySearchBudget: {
     used: number;

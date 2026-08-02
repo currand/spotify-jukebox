@@ -1578,9 +1578,12 @@ button.danger:hover {
   margin-top: 0.2rem;
 }
 
-.admin-device-option--disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
+.admin-device-option--restricted {
+  opacity: 0.85;
+}
+
+.admin-device-option--restricted span {
+  color: var(--muted, #888);
 }
 
 .admin-checkbox-label {

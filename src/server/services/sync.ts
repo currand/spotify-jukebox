@@ -65,6 +65,11 @@ export interface SyncState {
   /** When the sync worker last refreshed player state from Spotify. */
   lastSyncedAt: number | null;
   playbackTiming: PlaybackTiming | null;
+  deviceMismatch: boolean;
+  deviceTransferPending: boolean;
+  targetDeviceId: string | null;
+  targetDeviceName: string | null;
+  deviceTransferRetryUntil: number | null;
 }
 
 export interface SpotifyQueueSnapshot {
@@ -84,6 +89,11 @@ let syncState: SyncState = {
   rateLimitedUntil: null,
   lastSyncedAt: null,
   playbackTiming: null,
+  deviceMismatch: false,
+  deviceTransferPending: false,
+  targetDeviceId: null,
+  targetDeviceName: null,
+  deviceTransferRetryUntil: null,
 };
 
 const partySyncInFlight = new Map<string, Promise<void>>();
@@ -94,6 +104,9 @@ let syncWorkerTick: (() => void) | null = null;
 let activeDeviceId: string | null = null;
 let bootstrapGraceUntil = 0;
 const BOOTSTRAP_GRACE_MS = 45_000;
+const DEVICE_TRANSFER_BACKOFF_MS = 10_000;
+const DEVICE_TRANSFER_MAX_BACKOFF_MS = 60_000;
+let deviceTransferBackoffHits = 0;
 
 let syncPollingConfig: SyncPollingConfig = {
   syncFastPoll: false,
@@ -179,6 +192,11 @@ export function markBootstrapPlaybackStarted(
     spotifyReachable: true,
     lastError: null,
     rateLimitedUntil: null,
+    targetDeviceId: deviceId,
+    targetDeviceName: deviceName,
+    deviceMismatch: false,
+    deviceTransferPending: false,
+    deviceTransferRetryUntil: null,
   };
 }
 
@@ -550,6 +568,165 @@ export function getSyncState(): SyncState {
   return syncState;
 }
 
+export function getDeviceTransferRetryAfterMs(): number | null {
+  if (
+    syncState.deviceTransferRetryUntil == null ||
+    Date.now() >= syncState.deviceTransferRetryUntil
+  ) {
+    return null;
+  }
+  return syncState.deviceTransferRetryUntil - Date.now();
+}
+
+export function setPartyTargetDevice(id: string, name: string): void {
+  deviceTransferBackoffHits = 0;
+  syncState = {
+    ...syncState,
+    targetDeviceId: id,
+    targetDeviceName: name,
+    deviceTransferRetryUntil: null,
+  };
+}
+
+export function clearPartyTargetDevice(): void {
+  deviceTransferBackoffHits = 0;
+  syncState = {
+    ...syncState,
+    targetDeviceId: null,
+    targetDeviceName: null,
+    deviceMismatch: false,
+    deviceTransferPending: false,
+    deviceTransferRetryUntil: null,
+  };
+}
+
+function deviceTransferMessage(
+  playingName: string | null,
+  targetName: string | null,
+): string {
+  const playing = playingName ?? "another device";
+  const target = targetName ?? "the selected player";
+  return `Moving playback from ${playing} to ${target}…`;
+}
+
+function deviceTransferRetryMessage(targetName: string | null, retryAfterMs: number): string {
+  const target = targetName ?? "target device";
+  return `Could not move playback to ${target} — retrying in ${Math.ceil(retryAfterMs / 1000)}s`;
+}
+
+function clearDeviceTransferBackoff(): void {
+  deviceTransferBackoffHits = 0;
+  syncState = {
+    ...syncState,
+    deviceTransferRetryUntil: null,
+  };
+}
+
+function markDeviceTransferBackoff(): void {
+  deviceTransferBackoffHits++;
+  const delay = Math.min(
+    DEVICE_TRANSFER_BACKOFF_MS * 2 ** (deviceTransferBackoffHits - 1),
+    DEVICE_TRANSFER_MAX_BACKOFF_MS,
+  );
+  syncState = {
+    ...syncState,
+    deviceTransferRetryUntil: Date.now() + delay,
+    lastError: deviceTransferRetryMessage(syncState.targetDeviceName, delay),
+  };
+}
+
+async function seedTargetDeviceNameIfNeeded(
+  spotify: SpotifyClient,
+  targetDeviceId: string,
+): Promise<void> {
+  if (syncState.targetDeviceName) return;
+  try {
+    const devices = await spotify.getAvailableDevices();
+    const match = devices.find((device) => device.id === targetDeviceId);
+    if (match) {
+      syncState = { ...syncState, targetDeviceName: match.name };
+    }
+  } catch {
+    /* best-effort label for status banners */
+  }
+}
+
+async function handleDeviceTransferError(error: unknown): Promise<void> {
+  if (isSpotifyRateLimitError(error)) {
+    markRateLimited(error);
+    return;
+  }
+  if (isPlaybackRestrictionError(error)) {
+    markDeviceRestricted(syncState.deviceName);
+    return;
+  }
+  markDeviceTransferBackoff();
+}
+
+async function attemptDeviceTransferIfNeeded(
+  db: Db,
+  spotify: SpotifyClient,
+  party: { id: string; sync_generation: number },
+  snapshot: PlayerSnapshot,
+  targetDeviceId: string,
+): Promise<boolean> {
+  const playingDeviceId = snapshot.deviceId;
+  const deviceMismatch = Boolean(
+    playingDeviceId && targetDeviceId !== playingDeviceId,
+  );
+
+  if (!deviceMismatch) {
+    syncState = {
+      ...syncState,
+      deviceMismatch: false,
+      deviceTransferPending: false,
+      targetDeviceId,
+    };
+    clearDeviceTransferBackoff();
+    return false;
+  }
+
+  await seedTargetDeviceNameIfNeeded(spotify, targetDeviceId);
+
+  syncState = {
+    ...syncState,
+    deviceMismatch: true,
+    deviceTransferPending: true,
+    targetDeviceId,
+    lastError: deviceTransferMessage(snapshot.deviceName, syncState.targetDeviceName),
+  };
+
+  const retryAfterMs = getDeviceTransferRetryAfterMs();
+  if (retryAfterMs != null && retryAfterMs > 0) {
+    partyLastSyncedGeneration.set(party.id, party.sync_generation);
+    return true;
+  }
+
+  try {
+    await spotify.transferPlayback(targetDeviceId, snapshot.isPlaying);
+    clearDeviceTransferBackoff();
+    syncState = {
+      ...syncState,
+      deviceTransferPending: true,
+      lastError: deviceTransferMessage(snapshot.deviceName, syncState.targetDeviceName),
+    };
+  } catch (e) {
+    if (isNoActiveDeviceError(e)) {
+      try {
+        await spotify.play(targetDeviceId);
+        clearDeviceTransferBackoff();
+      } catch (playError) {
+        await handleDeviceTransferError(playError);
+      }
+    } else {
+      await handleDeviceTransferError(e);
+    }
+  }
+
+  partyLastSyncedGeneration.set(party.id, party.sync_generation);
+  return true;
+}
+
 function restrictedMessage(deviceName: string | null): string {
   if (deviceName) {
     return `${deviceName} doesn't support remote playback control — use the Spotify app on your phone or computer.`;
@@ -672,7 +849,9 @@ function applyPlayerSnapshot(snapshot: PlayerSnapshot): void {
       ? restrictedMessage(snapshot.deviceName)
       : isRateLimited()
         ? syncState.lastError
-        : null,
+        : syncState.deviceMismatch
+          ? syncState.lastError
+          : null,
   };
 }
 
@@ -1099,6 +1278,16 @@ async function runPartySync(
   const targetDeviceId = getPartyTargetDeviceId(db, party.id);
   if (targetDeviceId) {
     activeDeviceId = targetDeviceId;
+    if (await attemptDeviceTransferIfNeeded(db, spotify, party, snapshot, targetDeviceId)) {
+      return;
+    }
+  } else {
+    syncState = {
+      ...syncState,
+      deviceMismatch: false,
+      deviceTransferPending: false,
+      targetDeviceId: null,
+    };
   }
 
   const items = getQueueItems(db, party.id);
@@ -1312,6 +1501,22 @@ async function fillSpotifyBufferIfEmpty(
 }
 
 /** @internal test helper */
+export async function runPartySyncForTests(
+  db: Db,
+  spotify: SpotifyClient,
+  partyId: string,
+  snapshot: PlayerSnapshot,
+): Promise<void> {
+  const party = db
+    .query(`SELECT id, sync_generation FROM parties WHERE id = ?`)
+    .get(partyId) as { id: string; sync_generation: number } | null;
+  if (!party) {
+    throw new Error("Party not found");
+  }
+  return runPartySync(db, spotify, party, snapshot);
+}
+
+/** @internal test helper */
 export async function runSyncTickForTests(
   db: Db,
   spotify: SpotifyClient,
@@ -1339,7 +1544,13 @@ export function resetSyncStateForTests(): void {
     rateLimitedUntil: null,
     lastSyncedAt: null,
     playbackTiming: null,
+    deviceMismatch: false,
+    deviceTransferPending: false,
+    targetDeviceId: null,
+    targetDeviceName: null,
+    deviceTransferRetryUntil: null,
   };
+  deviceTransferBackoffHits = 0;
   consecutiveRateLimitHits = 0;
   partySyncInFlight.clear();
   partyLastSyncedGeneration.clear();

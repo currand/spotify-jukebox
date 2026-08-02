@@ -173,6 +173,13 @@ function createMockSpotify(): SpotifyClient & {
     async pause(deviceId?: string | null) {
       state._apiCalls.push(deviceId ? `pause:${deviceId}` : "pause");
     },
+    async transferPlayback(deviceId: string, play?: boolean) {
+      state._apiCalls.push(`transferPlayback:${deviceId}:${String(play)}`);
+      state._snapshot = {
+        ...state._snapshot,
+        deviceId,
+      };
+    },
     async getPlaybackState() {
       return { deviceActive: state._snapshot.deviceActive, isPlaying: state._snapshot.isPlaying, deviceRestricted: state._snapshot.deviceRestricted, deviceName: state._snapshot.deviceName };
     },
@@ -1162,6 +1169,33 @@ describe("host playback bootstrap", () => {
     });
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("PLAYLIST_NAME_COLLISION");
+  });
+
+  test("PATCH spotifyDeviceId accepts restricted devices", async () => {
+    const db = testDb();
+    const spotify = createMockSpotify();
+    spotify._devices.push({
+      id: "tv-device",
+      name: "Living Room TV",
+      type: "TV",
+      is_active: false,
+      is_restricted: true,
+    });
+    const app = createTestApp(db, spotify);
+    const partyId = makeParty(db, { status: "off" }).id;
+    const res = await app.request(`/api/v1/host/parties/${partyId}`, {
+      method: "PATCH",
+      headers: {
+        Cookie: hostSessionCookie(db),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ spotifyDeviceId: "tv-device" }),
+    });
+    expect(res.status).toBe(200);
+    const row = db
+      .query(`SELECT target_spotify_device_id FROM parties WHERE id = ?`)
+      .get(partyId) as { target_spotify_device_id: string | null };
+    expect(row.target_spotify_device_id).toBe("tv-device");
   });
 
   test("PATCH status=on requires target device", async () => {

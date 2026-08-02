@@ -74,6 +74,8 @@ export interface SpotifyClient {
   skipNext(deviceId?: string | null): Promise<void>;
   play(deviceId?: string | null): Promise<void>;
   pause(deviceId?: string | null): Promise<void>;
+  /** Transfer the active playback session (including queue) to another device. */
+  transferPlayback(deviceId: string, play?: boolean): Promise<void>;
   getAvailableDevices(): Promise<SpotifyConnectDevice[]>;
   findUserPlaylistByName(name: string): Promise<{ id: string; name: string } | null>;
   createPrivatePlaylist(name: string): Promise<{ id: string; uri: string }>;
@@ -761,6 +763,19 @@ export function createSpotifyClient(db: Db, config: Config): SpotifyClient {
 
     async pause(deviceId) {
       await apiVoid(playerControlPath("/me/player/pause", deviceId), { method: "PUT" });
+    },
+
+    async transferPlayback(deviceId, play) {
+      const body: { device_ids: string[]; play?: boolean } = {
+        device_ids: [deviceId],
+      };
+      if (play !== undefined) {
+        body.play = play;
+      }
+      await apiVoid("/me/player", {
+        method: "PUT",
+        body: JSON.stringify(body),
+      });
     },
 
     async getPlaybackState() {

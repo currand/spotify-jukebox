@@ -246,7 +246,7 @@ When a party is **on**, a background worker keeps the virtual queue aligned with
 
 **Host playback controls:** Admin can Start/Stop Spotify playback (`PUT /me/player/play` / `pause`) and Skip the current track.
 
-**Device targeting:** While a party is active, all Spotify **write** calls (`play`, `pause`, `queue`, `skip`, bootstrap start) use the party's selected `target_spotify_device_id`. Player **read** calls stay unscoped (`GET /me/player`) so sync can observe whichever device is playing after transfer.
+**Device targeting:** While a party is active, all Spotify **write** calls (`play`, `pause`, `queue`, `skip`, bootstrap start) use the party's selected `target_spotify_device_id`. Player **read** calls stay unscoped (`GET /me/player`) so sync can observe whichever device is playing after transfer. When the host changes the target device mid-party, the sync worker calls **Transfer Playback** (`PUT /me/player` with `device_ids`) to move the session (including Spotify's queue) to the new device; reconcile is paused until the playing device matches the target.
 
 **Bootstrap on first Turn ON:** When `bootstrap_playlist_id` is null and the virtual queue is all `pending`, Jukebox creates a private playlist named exactly **`party.name`**, adds the first 1–2 upcoming tracks, and starts it on the selected device via `PUT /me/player/play?device_id=…` with `context_uri`. Resume skips bootstrap when a bootstrap playlist already exists and the queue has `playing`/`queued` items.
 
@@ -310,7 +310,7 @@ Return `429` with `{ error: "<action-specific message>", code: "RATE_LIMITED", r
 
 - Spotify OAuth connect / disconnect
 - Create party (name, seed playlist, slug) — ends any previous active party; rejects party names that collide with an existing Spotify playlist (`409 PLAYLIST_NAME_COLLISION`)
-- **Target player picker** — list Spotify Connect devices (`GET /host/spotify/devices`); save selection on the party (`PATCH` with `spotifyDeviceId`); Turn ON requires a compatible device (`400 DEVICE_REQUIRED`)
+- **Target player picker** — list Spotify Connect devices (`GET /host/spotify/devices`); save selection on the party (`PATCH` with `spotifyDeviceId`); Turn ON requires a selected device (`400 DEVICE_REQUIRED`); restricted/incompatible devices may be selected but can fail at runtime with `deviceRestricted` status
 - Resume archived party (same slug; preserves guests, queue, votes) or import any archived party’s track list as seed for a new party
 - **Delete archived party** — removes party data from Jukebox history only (bootstrap playlist was already removed when the party ended)
 - Party on/off switch (Turn ON runs bootstrap playback on the selected device when needed)
@@ -708,7 +708,7 @@ Both apps:
 
 - [ ] Host completes OAuth, picks a target Spotify Connect device, and creates a party with seed playlist import on create.
 - [ ] Party create rejects names that match an existing Spotify playlist (`PLAYLIST_NAME_COLLISION`).
-- [ ] Turn ON requires a selected compatible device; bootstrap playlist starts on that device.
+- [ ] Turn ON requires a selected device; bootstrap playlist starts on that device. Restricted devices may be selected; runtime control failures surface as `deviceRestricted`.
 - [ ] Sync write calls target the party's selected device.
 - [ ] End party removes bootstrap Spotify playlist.
 - [ ] Creating a new party archives the previous one; only one non-archived party exists.

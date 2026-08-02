@@ -295,12 +295,16 @@ export function DiagnosticsSummaryPanels({
             meta={
               syncRateLimited
                 ? `Rate limited · ${diagnostics.sync.lastError ?? "backing off"}`
-                : diagnostics.sync.deviceRestricted
-                  ? diagnostics.sync.lastError ?? "Restricted device"
-                  : diagnostics.sync.lastError ?? "Spotify reachable"
+                : diagnostics.sync.deviceMismatch
+                  ? diagnostics.sync.lastError ?? "Transferring playback"
+                  : diagnostics.sync.deviceRestricted
+                    ? diagnostics.sync.lastError ?? "Restricted device"
+                    : diagnostics.sync.lastError ?? "Spotify reachable"
             }
             tone={
-              syncRateLimited || diagnostics.sync.deviceRestricted
+              syncRateLimited ||
+              diagnostics.sync.deviceRestricted ||
+              diagnostics.sync.deviceMismatch
                 ? "warn"
                 : diagnostics.sync.deviceActive
                   ? "ok"

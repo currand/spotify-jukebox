@@ -240,11 +240,16 @@ function DiagnosticsPanels({ diagnostics }: { diagnostics: HostDiagnostics }) {
         <p className="small">
           Device {diagnostics.sync.deviceActive ? "active" : "inactive"}
           {diagnostics.sync.deviceRestricted ? " · restricted device" : ""}
+          {diagnostics.sync.deviceMismatch ? " · transferring device" : ""}
         </p>
         <p className="small">
           Last sync {formatTime(diagnostics.sync.lastSyncedAt)}
           {diagnostics.sync.retryAfterMs != null && diagnostics.sync.retryAfterMs > 0
             ? ` · rate limited ${formatDuration(diagnostics.sync.retryAfterMs)}`
+            : ""}
+          {diagnostics.sync.deviceTransferRetryAfterMs != null &&
+          diagnostics.sync.deviceTransferRetryAfterMs > 0
+            ? ` · transfer retry ${formatDuration(diagnostics.sync.deviceTransferRetryAfterMs)}`
             : ""}
         </p>
         {diagnostics.sync.lastError && (

@@ -773,7 +773,23 @@ export function AdminPage() {
                   )}
                 </div>
               )}
-              {!status.spotifyReachable && !status.deviceRestricted && (
+              {status.deviceMismatch && (
+                <div className="banner warn">
+                  {status.deviceTransferRetryAfterMs != null &&
+                  status.deviceTransferRetryAfterMs > 0
+                    ? status.lastError
+                    : status.lastError ??
+                      (status.targetDeviceName
+                        ? `Moving playback to ${status.targetDeviceName}…`
+                        : "Moving playback to the selected player…")}
+                  {status.deviceName && status.targetDeviceName && (
+                    <p className="small" style={{ margin: "0.35rem 0 0" }}>
+                      Currently on {status.deviceName} → target {status.targetDeviceName}
+                    </p>
+                  )}
+                </div>
+              )}
+              {!status.spotifyReachable && !status.deviceRestricted && !status.deviceMismatch && (
                 <div className="banner warn">
                   Spotify unreachable: {status.lastError}
                 </div>
@@ -1109,7 +1125,7 @@ export function AdminPage() {
                   {spotifyDevices.map((device) => (
                     <label
                       key={device.id}
-                      className={`admin-device-option${device.compatible ? "" : " admin-device-option--disabled"}`}
+                      className={`admin-device-option${device.compatible ? "" : " admin-device-option--restricted"}`}
                       title={device.incompatibleReason}
                     >
                       <input
@@ -1117,7 +1133,6 @@ export function AdminPage() {
                         name="target-device"
                         value={device.id}
                         checked={party.spotifyDeviceId === device.id}
-                        disabled={!device.compatible}
                         onChange={() => void saveTargetDevice(device.id)}
                       />
                       <span>
@@ -1133,7 +1148,7 @@ export function AdminPage() {
               )}
               {!party.spotifyDeviceId && (
                 <p className="small seed-playlist-status">
-                  Select a compatible player before turning the party ON.
+                  Select a player before turning the party ON.
                 </p>
               )}
             </div>

@@ -12,7 +12,9 @@ import {
   getSyncState,
   markBootstrapPlaybackStarted,
   resetSyncStateForTests,
+  runPartySyncForTests,
   runSyncTickForTests,
+  setPartyTargetDevice,
   getVirtualNextToBuffer,
   inferPaddedSpotifyQueueLength,
   isSpotifyBufferOccupied,
@@ -863,5 +865,184 @@ describe("runSyncTick without active party", () => {
     expect(state.isPlaying).toBe(true);
     expect(state.deviceName).toBe("MacBook");
     expect(state.spotifyReachable).toBe(true);
+  });
+});
+
+describe("device transfer on target mismatch", () => {
+  function partyDb(targetDeviceId = "target-device"): Db {
+    const db = new Database(":memory:") as Db;
+    db.run(`
+      CREATE TABLE parties (
+        id TEXT PRIMARY KEY,
+        slug TEXT NOT NULL,
+        name TEXT NOT NULL,
+        status TEXT NOT NULL,
+        downvote_threshold INTEGER NOT NULL DEFAULT 3,
+        seed_playlist_id TEXT NOT NULL,
+        rate_limits TEXT NOT NULL,
+        sync_generation INTEGER NOT NULL DEFAULT 0,
+        bootstrap_playlist_id TEXT,
+        target_spotify_device_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+    db.run(`
+      CREATE TABLE guests (
+        id TEXT PRIMARY KEY,
+        party_id TEXT NOT NULL,
+        session_token TEXT NOT NULL UNIQUE,
+        display_name TEXT,
+        boost_used INTEGER NOT NULL DEFAULT 0,
+        tutorial_seen INTEGER NOT NULL DEFAULT 0,
+        disabled INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        last_seen_at TEXT,
+        last_ip TEXT
+      )
+    `);
+    db.run(`
+      CREATE TABLE queue_items (
+        id TEXT PRIMARY KEY,
+        party_id TEXT NOT NULL,
+        spotify_uri TEXT NOT NULL,
+        track_name TEXT NOT NULL,
+        artist_name TEXT NOT NULL,
+        album_art_url TEXT,
+        upvote_count INTEGER NOT NULL DEFAULT 0,
+        downvote_count INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'pending',
+        is_boosted INTEGER NOT NULL DEFAULT 0,
+        boost_position INTEGER,
+        boosted_by_guest_id TEXT,
+        manual_order INTEGER,
+        added_by_guest_id TEXT,
+        from_seed INTEGER NOT NULL DEFAULT 0,
+        from_spotify INTEGER NOT NULL DEFAULT 0,
+        added_at TEXT NOT NULL,
+        finished_at TEXT,
+        duration_ms INTEGER
+      )
+    `);
+    db.run(
+      `INSERT INTO parties (id, slug, name, status, downvote_threshold, seed_playlist_id, rate_limits, target_spotify_device_id, created_at, updated_at)
+       VALUES ('party-1', 'party', 'Party', 'on', 3, 'seed', '{}', ?, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+      [targetDeviceId],
+    );
+    return db;
+  }
+
+  const playingSnapshot = {
+    deviceActive: true,
+    isPlaying: true,
+    deviceRestricted: false,
+    deviceId: "old-device",
+    deviceName: "Old Speaker",
+    currentUri: "spotify:track:live",
+    progressMs: 1000,
+    durationMs: 180_000,
+  };
+
+  test("calls transferPlayback when playing device differs from target", async () => {
+    resetSyncStateForTests();
+    const db = partyDb("target-device");
+    setPartyTargetDevice("target-device", "Target Speaker");
+    const apiCalls: string[] = [];
+    const spotify = {
+      transferPlayback: async (deviceId: string, play?: boolean) => {
+        apiCalls.push(`transferPlayback:${deviceId}:${String(play)}`);
+      },
+      getQueue: async () => ({
+        currentlyPlaying: spotifyTrack("spotify:track:live"),
+        queue: [],
+      }),
+      getAvailableDevices: async () => [],
+      skipNext: async () => {},
+      addToQueue: async () => {},
+    } as unknown as SpotifyClient;
+
+    await runPartySyncForTests(db, spotify, "party-1", playingSnapshot);
+
+    expect(apiCalls).toEqual(["transferPlayback:target-device:true"]);
+    const state = getSyncState();
+    expect(state.deviceMismatch).toBe(true);
+    expect(state.deviceTransferPending).toBe(true);
+  });
+
+  test("skips reconcile when devices mismatch", async () => {
+    resetSyncStateForTests();
+    const db = partyDb("target-device");
+    setPartyTargetDevice("target-device", "Target Speaker");
+    db.run(
+      `INSERT INTO queue_items (id, party_id, spotify_uri, track_name, artist_name, status, from_seed, added_at)
+       VALUES ('playing', 'party-1', 'spotify:track:live', 'Live', 'Artist', 'playing', 0, '2026-01-01T00:00:00.000Z')`,
+    );
+    const spotify = {
+      transferPlayback: async () => {},
+      getQueue: async () => {
+        throw new Error("getQueue should not run during mismatch");
+      },
+      getAvailableDevices: async () => [],
+    } as unknown as SpotifyClient;
+
+    await runPartySyncForTests(db, spotify, "party-1", playingSnapshot);
+
+    const row = db
+      .query(`SELECT status FROM queue_items WHERE id = 'playing'`)
+      .get() as { status: string };
+    expect(row.status).toBe("playing");
+  });
+
+  test("clears mismatch and reconciles when devices match", async () => {
+    resetSyncStateForTests();
+    const db = partyDb("target-device");
+    setPartyTargetDevice("target-device", "Target Speaker");
+    db.run(
+      `INSERT INTO queue_items (id, party_id, spotify_uri, track_name, artist_name, status, from_seed, added_at)
+       VALUES ('playing', 'party-1', 'spotify:track:live', 'Live', 'Artist', 'playing', 0, '2026-01-01T00:00:00.000Z')`,
+    );
+    const apiCalls: string[] = [];
+    const spotify = {
+      transferPlayback: async () => {
+        apiCalls.push("transferPlayback");
+      },
+      getQueue: async () => ({
+        currentlyPlaying: spotifyTrack("spotify:track:live"),
+        queue: [],
+      }),
+      getAvailableDevices: async () => [],
+      skipNext: async () => {},
+      addToQueue: async () => {},
+    } as unknown as SpotifyClient;
+
+    await runPartySyncForTests(db, spotify, "party-1", {
+      ...playingSnapshot,
+      deviceId: "target-device",
+      deviceName: "Target Speaker",
+    });
+
+    expect(apiCalls).toEqual([]);
+    const state = getSyncState();
+    expect(state.deviceMismatch).toBe(false);
+    expect(state.deviceTransferPending).toBe(false);
+  });
+
+  test("sets backoff when transfer fails", async () => {
+    resetSyncStateForTests();
+    const db = partyDb("target-device");
+    setPartyTargetDevice("target-device", "Target Speaker");
+    const spotify = {
+      transferPlayback: async () => {
+        throw new Error("SPOTIFY_500:Server error");
+      },
+      getAvailableDevices: async () => [],
+    } as unknown as SpotifyClient;
+
+    await runPartySyncForTests(db, spotify, "party-1", playingSnapshot);
+
+    const state = getSyncState();
+    expect(state.deviceMismatch).toBe(true);
+    expect(state.deviceTransferRetryUntil).not.toBeNull();
+    expect(state.lastError).toContain("retrying in");
   });
 });

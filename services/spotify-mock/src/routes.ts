@@ -339,6 +339,30 @@ export function createApp({ player, tracks, durationMs }: AppDeps) {
     return c.body(null, 204);
   });
 
+  app.put("/v1/me/player", async (c) => {
+    const body = (await c.req.json().catch(() => null)) as
+      | { device_ids?: string[]; play?: boolean }
+      | null;
+    const deviceId = body?.device_ids?.[0];
+    if (deviceId) {
+      const device = mockDevices.find((entry) => entry.id === deviceId);
+      if (device) {
+        player.setDevice({
+          id: device.id,
+          name: device.name,
+          type: device.type,
+          is_restricted: device.is_restricted,
+        });
+      }
+    }
+    if (body?.play === true) {
+      player.play();
+    } else if (body?.play === false) {
+      player.pause();
+    }
+    return c.body(null, 204);
+  });
+
   app.put("/v1/me/player/play", async (c) => {
     const deviceId = c.req.query("device_id");
     if (deviceId) {

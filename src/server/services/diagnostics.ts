@@ -8,7 +8,7 @@ import {
 } from "./spotify-metrics";
 import { getSpotifyApiBudgetSnapshot } from "./spotify-api-budget";
 import { getSearchCacheSnapshot, getPartySearchBudgetSnapshot, normalizeRateLimits } from "./spotify-search";
-import { getSyncState } from "./sync";
+import { getDeviceTransferRetryAfterMs, getSyncState } from "./sync";
 import { getLimitHitMetricsSnapshot } from "./limit-metrics";
 import { getCurrentMetricsSessionId } from "./metrics-recorder";
 
@@ -66,6 +66,10 @@ export function buildHostDiagnostics(
       lastError: sync.lastError,
       retryAfterMs,
       lastSyncedAt: sync.lastSyncedAt,
+      deviceMismatch: sync.deviceMismatch,
+      deviceTransferPending: sync.deviceTransferPending,
+      targetDeviceName: sync.targetDeviceName,
+      deviceTransferRetryAfterMs: getDeviceTransferRetryAfterMs(),
     },
     partySearchBudget: partyId
       ? getPartySearchBudgetSnapshot(partyId, partySearchLimit)
