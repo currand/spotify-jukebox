@@ -58,7 +58,7 @@ describe("getPlayOrder", () => {
     expect(getNextUpcomingItem(items)?.id).toBe("queued");
   });
 
-  test("keeps sole pending normal ahead of boosts (Sending to Spotify)", () => {
+  test("boost lane leads when sole normal remains", () => {
     const normal = base({ id: "normal" });
     const boosted = base({
       id: "boost",
@@ -67,8 +67,49 @@ describe("getPlayOrder", () => {
       added_at: "2026-01-02T00:00:00.000Z",
     });
     expect(getUpcomingPlayOrder([normal, boosted]).map((i) => i.id)).toEqual([
-      "normal",
       "boost",
+      "normal",
+    ]);
+  });
+
+  test("two boosts and one normal — boosts play before normal", () => {
+    const boost1 = base({
+      id: "boost1",
+      is_boosted: 1,
+      boost_position: 1,
+      added_at: "2026-01-01T00:00:00.000Z",
+    });
+    const boost2 = base({
+      id: "boost2",
+      is_boosted: 1,
+      boost_position: 2,
+      added_at: "2026-01-02T00:00:00.000Z",
+    });
+    const normal = base({
+      id: "normal",
+      added_at: "2026-01-03T00:00:00.000Z",
+    });
+    expect(
+      getUpcomingPlayOrder([boost1, boost2, normal]).map((i) => i.id),
+    ).toEqual(["boost1", "boost2", "normal"]);
+  });
+
+  test("earlier boost plays before later boost at equal upvotes", () => {
+    const boostA = base({
+      id: "a",
+      is_boosted: 1,
+      boost_position: 1,
+      added_at: "2026-01-01T00:00:00.000Z",
+    });
+    const boostB = base({
+      id: "b",
+      is_boosted: 1,
+      boost_position: 2,
+      added_at: "2026-01-02T00:00:00.000Z",
+    });
+    expect(getUpcomingPlayOrder([boostB, boostA]).map((i) => i.id)).toEqual([
+      "a",
+      "b",
     ]);
   });
 
@@ -111,7 +152,7 @@ describe("getPlayOrder", () => {
     ).toEqual(["high", "low"]);
   });
 
-  test("boost lane leads over multiple normals when not pinned", () => {
+  test("boost lane leads over multiple normals", () => {
     const normalA = base({ id: "a", upvote_count: 5 });
     const normalB = base({
       id: "b",

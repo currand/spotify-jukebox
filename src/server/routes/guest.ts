@@ -723,11 +723,13 @@ export function createGuestRoutes(db: Db, config: Config, spotify: SpotifyClient
       );
     }
 
-    const pos = nextBoostPosition(db, party.id);
-    db.run(
-      `UPDATE queue_items SET is_boosted = 1, boost_position = ?, boosted_by_guest_id = ?, status = 'pending' WHERE id = ?`,
-      [pos, guest.id, itemId],
-    );
+    db.transaction(() => {
+      const position = nextBoostPosition(db, party.id);
+      db.run(
+        `UPDATE queue_items SET is_boosted = 1, boost_position = ?, boosted_by_guest_id = ?, status = 'pending' WHERE id = ?`,
+        [position, guest.id, itemId],
+      );
+    })();
     recordAction(db, guest.id, "boost");
     requestPartySync(db, party.id);
     return c.json({ ok: true });

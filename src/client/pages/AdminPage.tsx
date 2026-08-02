@@ -732,6 +732,9 @@ export function AdminPage() {
     });
   }, [showSearchResults]);
 
+  const partyOn = party?.status === "on";
+  const partySyncIdle = !partyOn;
+
   return (
     <div className="app admin-page">
       <h1>Jukebox Admin</h1>
@@ -743,26 +746,33 @@ export function AdminPage() {
 
       <div className="admin-grid">
       <div>
-        <div className="card">
+        <div className={`card${partySyncIdle ? " admin-section--idle" : ""}`}>
           <h2>Spotify</h2>
           {status?.connected && status.authenticated ? (
             <>
               <p>Connected · expires {status.expiresAt}</p>
+              {partySyncIdle && (
+                <div className="banner info">
+                  {party
+                    ? "Party is off — device status is not updated until you turn the party on."
+                    : "No active party — device status is not updated until you create and turn on a party."}
+                </div>
+              )}
               {status.retryAfterMs != null && status.retryAfterMs > 0 && (
                 <div className="banner warn">
                   {status.lastError ??
                     `Spotify rate limited — retrying in ${Math.ceil(status.retryAfterMs / 1000)}s`}
                 </div>
               )}
-              {!status.deviceActive &&
+              {partyOn &&
+                !status.deviceActive &&
                 !(status.retryAfterMs != null && status.retryAfterMs > 0) && (
                 <div className="banner warn">
-                  No active playback on the target device — if the party is off,
-                  select a player below and Turn ON. If the party is already on,
-                  refresh devices or open Spotify on that speaker.
+                  No active playback on the target device — refresh devices or open
+                  Spotify on that speaker.
                 </div>
               )}
-              {status.deviceRestricted && (
+              {partyOn && status.deviceRestricted && (
                 <div className="banner warn">
                   {status.lastError ??
                     "This device doesn't support remote playback control — use the Spotify app on your phone or computer."}
@@ -773,7 +783,7 @@ export function AdminPage() {
                   )}
                 </div>
               )}
-              {status.deviceMismatch && (
+              {partyOn && status.deviceMismatch && (
                 <div className="banner warn">
                   {status.deviceTransferRetryAfterMs != null &&
                   status.deviceTransferRetryAfterMs > 0
@@ -789,7 +799,10 @@ export function AdminPage() {
                   )}
                 </div>
               )}
-              {!status.spotifyReachable && !status.deviceRestricted && !status.deviceMismatch && (
+              {partyOn &&
+                !status.spotifyReachable &&
+                !status.deviceRestricted &&
+                !status.deviceMismatch && (
                 <div className="banner warn">
                   Spotify unreachable: {status.lastError}
                 </div>

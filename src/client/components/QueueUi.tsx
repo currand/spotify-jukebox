@@ -84,6 +84,25 @@ export function BoostButton({
   );
 }
 
+export function TrackVoteStats({
+  upvoteCount,
+  downvoteCount,
+  showDownvotes = true,
+}: {
+  upvoteCount: number;
+  downvoteCount?: number;
+  showDownvotes?: boolean;
+}) {
+  return (
+    <div className="track-vote-stats">
+      <UpvoteCount count={upvoteCount} />
+      {showDownvotes && downvoteCount != null ? (
+        <DownvoteCount count={downvoteCount} />
+      ) : null}
+    </div>
+  );
+}
+
 export function TrackTitle({
   name,
   boosted,
@@ -164,11 +183,14 @@ export function UpNextLockedSection({
             boosted={item.isBoosted}
             boostedBy={item.boostedBy}
           />
-          <p>
-            {item.artistName} · {item.addedBy} · <UpvoteCount count={item.upvoteCount} /> ·{" "}
-            <DownvoteCount count={item.downvoteCount} />
+          <p className="track-meta-sub">
+            {item.artistName} · {item.addedBy}
           </p>
         </div>
+        <TrackVoteStats
+          upvoteCount={item.upvoteCount}
+          downvoteCount={item.downvoteCount}
+        />
       </div>
     </section>
   );
@@ -247,17 +269,17 @@ export function ReadOnlyQueueRow({ item }: { item: QueueItemView }) {
           boosted={item.isBoosted}
           boostedBy={item.boostedBy}
         />
-        <p>
+        <p className="track-meta-sub">
           {item.artistName} · {item.addedBy}
           {item.spotifyLocked ? " · Locked in Spotify" : ""}
-          {!item.spotifyLocked && (
-            <>
-              {" "}
-              · <UpvoteCount count={item.upvoteCount} /> · <DownvoteCount count={item.downvoteCount} />
-            </>
-          )}
         </p>
       </div>
+      {!item.spotifyLocked && (
+        <TrackVoteStats
+          upvoteCount={item.upvoteCount}
+          downvoteCount={item.downvoteCount}
+        />
+      )}
     </div>
   );
 }
@@ -291,13 +313,14 @@ export function AdminQueueRow({
           boosted={item.isBoosted}
           boostedBy={item.boostedBy}
         />
-        <p>
-          {item.artistName} · {item.addedBy} · <UpvoteCount count={item.upvoteCount} />
+        <p className="track-meta-sub">
+          {item.artistName} · {item.addedBy}
           {locked ? " · Locked in Spotify" : ""}
         </p>
       </div>
-      {!locked && (
+      {!locked ? (
         <div className="actions">
+          <TrackVoteStats upvoteCount={item.upvoteCount} showDownvotes={false} />
           <button
             className="secondary"
             onClick={() =>
@@ -360,6 +383,8 @@ export function AdminQueueRow({
             Remove
           </button>
         </div>
+      ) : (
+        <TrackVoteStats upvoteCount={item.upvoteCount} showDownvotes={false} />
       )}
     </div>
   );

@@ -12,8 +12,7 @@ import {
   ThumbsUpIcon,
   TrackTitle,
   UpNextLockedSection,
-  UpvoteCount,
-  DownvoteCount,
+  TrackVoteStats,
   ThumbsDownIcon,
 } from "../components/QueueUi";
 import { GuestNav } from "../components/GuestNav";
@@ -604,12 +603,15 @@ function QueueRow({
           boosted={item.isBoosted}
           boostedBy={item.boostedBy}
         />
-        <p>
-          {item.artistName} · {item.addedBy} · <UpvoteCount count={item.upvoteCount} /> ·{" "}
-          <DownvoteCount count={item.downvoteCount} />
+        <p className="track-meta-sub">
+          {item.artistName} · {item.addedBy}
         </p>
       </div>
       <div className="actions">
+        <TrackVoteStats
+          upvoteCount={item.upvoteCount}
+          downvoteCount={item.downvoteCount}
+        />
         <QueueRowActions
           item={item}
           guestId={guestId}

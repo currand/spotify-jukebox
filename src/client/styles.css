@@ -376,10 +376,32 @@ button.boost-badge:disabled {
   text-overflow: ellipsis;
 }
 
+.track-meta-sub {
+  color: #aaa;
+  font-size: 0.875rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.track-vote-stats {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-shrink: 0;
+}
+
+.track.card > .track-vote-stats,
+.up-next-locked-track > .track-vote-stats {
+  flex: 1 1 100%;
+  padding-top: 0.1rem;
+}
+
 .actions {
   display: flex;
   gap: 0.35rem;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 .track.card > .actions,
@@ -396,6 +418,12 @@ button.boost-badge:disabled {
 .banner.warn {
   background: #3a2a00;
   border: 1px solid #7a5a00;
+}
+
+.banner.info {
+  background: #1a2433;
+  border: 1px solid #2f4a66;
+  color: #9ec5e8;
 }
 
 .banner.playing {
@@ -1285,6 +1313,10 @@ button.danger:hover {
   margin-top: 1rem;
 }
 
+.admin-section--idle {
+  opacity: 0.72;
+}
+
 .admin-section:first-child {
   margin-top: 0;
 }
@@ -1480,6 +1512,32 @@ button.danger:hover {
 @media (max-width: 640px) {
   .queue-controls-divider {
     display: none;
+  }
+
+  .track.card > .track-meta,
+  .up-next-locked-track > .track-meta {
+    flex: 1 1 calc(100% - 48px - 0.75rem);
+  }
+
+  .track-title-name {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+  }
+
+  .track-meta-sub,
+  .track-meta p {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+    line-height: 1.35;
+  }
+
+  .track.card > .actions,
+  .track.card > .track-vote-stats,
+  .up-next-locked-track > .track-vote-stats {
+    justify-content: flex-start;
+    gap: 0.5rem;
   }
 }
 

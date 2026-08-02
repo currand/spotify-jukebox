@@ -136,19 +136,6 @@ export function getPlayOrder(items: QueueItemRow[]): QueueItemRow[] {
       ...boost.filter((i) => i.id !== queued.id),
       ...normal.filter((i) => i.id !== queued.id),
     ];
-  } else if (
-    !playing &&
-    normal.length === 1 &&
-    normal[0]!.status === "pending" &&
-    boost.length > 0
-  ) {
-    // Sole pending normal is already "Sending to Spotify…" — boosts queue behind it.
-    const pin = normal[0]!;
-    upcoming = [
-      pin,
-      ...boost.filter((i) => i.id !== pin.id),
-      ...normal.filter((i) => i.id !== pin.id),
-    ];
   } else {
     upcoming = [...boost, ...normal];
   }
@@ -312,7 +299,8 @@ export function nextBoostPosition(db: Db, partyId: string): number {
   const row = db
     .query(
       `SELECT MAX(boost_position) as maxPos FROM queue_items
-       WHERE party_id = ? AND is_boosted = 1`,
+       WHERE party_id = ? AND is_boosted = 1
+         AND status IN ('pending', 'queued', 'playing')`,
     )
     .get(partyId) as { maxPos: number | null };
   return (row.maxPos ?? -1) + 1;

@@ -134,9 +134,12 @@ jukebox/
 - **Comments:** Only for non-obvious sync logic and rate-limit windows.
 
 ```typescript
-// Example: queue sort comparator
-function compareQueueItems(a: QueueItem, b: QueueItem): number {
+// Example: normal-queue sort comparator (simplified)
+function compareNormalQueue(a: QueueItem, b: QueueItem): number {
   if (a.upvoteCount !== b.upvoteCount) return b.upvoteCount - a.upvoteCount;
+  const aIdleSeed = a.fromSeed && a.upvoteCount === 0 && !a.isBoosted;
+  const bIdleSeed = b.fromSeed && b.upvoteCount === 0 && !b.isBoosted;
+  if (aIdleSeed !== bIdleSeed) return aIdleSeed ? 1 : -1;
   return a.addedAt.getTime() - b.addedAt.getTime();
 }
 ```
@@ -147,7 +150,7 @@ function compareQueueItems(a: QueueItem, b: QueueItem): number {
 
 | Level | Tool | Scope |
 |---|---|---|
-| Unit | `bun:test` | Queue sorting, dedup fuzzy match, rate-limit windows, boost lane FIFO |
+| Unit | `bun:test` | Queue sorting, dedup fuzzy match, rate-limit windows, boost lane ordering |
 | Integration | `bun:test` + in-memory SQLite | API routes with mocked Spotify client |
 | Manual | Host checklist | End-to-end against real Spotify account in dev |
 
@@ -213,9 +216,9 @@ Jukebox maintains a **virtual queue** as the source of truth. A background sync 
 
 ### Virtual queue
 
-**Normal queue:** Sorted by upvote count (desc), then `addedAt` (asc).
+**Normal queue:** Sorted by upvote count (desc), then **idle seed deprioritization**, then `addedAt` (asc). An *idle seed* is a track imported from the seed playlist (`from_seed = 1`) with zero upvotes and not boosted. Guest-added tracks (and host manual adds) rank above idle seeds at equal upvote counts, so guests are not stuck behind the full seed playlist. Seed tracks that receive upvotes compete normally on vote count.
 
-**Boost lane:** Separate priority lane. Within the lane, tracks sort by upvote count (desc), then `boost_position` (asc) as tie-breaker. When the current track ends, the next track is taken from the boost lane if non-empty; otherwise from the normal queue head.
+**Boost lane:** Separate priority lane. Within the lane, tracks sort by upvote count (desc), then `boost_position` (asc) as FIFO tie-breaker when upvotes are equal. When the current track ends, the next track is taken from the boost lane if non-empty; otherwise from the normal queue head. The Spotify buffer slot (`queued` status) is always pinned first in play order.
 
 **Track lifecycle:** `pending` → `queued` (sent to Spotify) → `playing` → `played` | `skipped` | `downvoted`
 
@@ -327,7 +330,7 @@ Return `429` with `{ error: "<action-specific message>", code: "RATE_LIMITED", r
   - Skip currently playing track (`POST /me/player/next` + mark virtual item `skipped`)
   - Ban/disable a guest session (blocks further mutations; existing queue items stay unless host removes them)
   - Reset upvote counts on a song (to 0; clears vote rows for that item)
-  - **Start from here:** Host selects an upcoming song; every upcoming track that would play **before** it (in play order: boost lane FIFO, then normal by votes/`addedAt`) is removed (`skipped`); the selected song and everything after it remain. Effectively “start the queue from here.” Rebuild Spotify buffer; never skip now-playing unless the host separately skips.
+  - **Start from here:** Host selects an upcoming song; every upcoming track that would play **before** it (in play order: boost lane by votes/`boost_position`, then normal by votes/idle-seed/`addedAt`) is removed (`skipped`); the selected song and everything after it remain. Effectively “start the queue from here.” Rebuild Spotify buffer; never skip now-playing unless the host separately skips.
 - **History:**
   - View song history for the active party (`played`, `skipped`, `downvoted`) for audit and recovery visibility
   - Queue recovery is primarily via durable SQLite + **Start from here**, not bulk history replay
@@ -453,7 +456,7 @@ Invariant: at most one party with `status IN ('on', 'off')`; others are `archive
 | downvote_count | INTEGER | Denormalized counter |
 | status | TEXT | `pending` \| `queued` \| `playing` \| `played` \| `skipped` \| `downvoted` \| `unblocked` |
 | is_boosted | BOOLEAN | In boost lane |
-| boost_position | INTEGER NULL | FIFO order within boost lane |
+| boost_position | INTEGER NULL | Boost order tie-breaker (asc) when upvote counts are equal |
 | boosted_by_guest_id | TEXT NULL FK | Guest who boosted (may differ from `added_by_guest_id`) |
 | manual_order | INTEGER NULL | Host shuffle/reorder override |
 | from_seed | BOOLEAN | Imported from the party's seed playlist |
@@ -716,7 +719,7 @@ Both apps:
 - [ ] Guest joins via QR, adds a track, sees it in queue within one poll cycle.
 - [ ] Guest cannot upvote their own song; can upvote others once each.
 - [ ] Upvoting reorders pending tracks in the virtual queue.
-- [ ] Boost places any eligible pending track in FIFO boost lane (including own); one boost per guest.
+- [ ] Boost places any eligible pending track in the boost lane (including own); one boost per guest; earlier boosts play before later boosts when upvotes are tied.
 - [ ] Downvote of own song shows a confirmation warning; currently playing cannot be downvoted.
 - [ ] Downvote at threshold immediately hides the song from the queue; if already buffered in Spotify, it is skipped and never plays.
 - [ ] Duplicate title (fuzzy) against active + last 20 terminal tracks is rejected.

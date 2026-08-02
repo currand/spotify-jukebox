@@ -510,7 +510,7 @@ describe("getVirtualNextToBuffer", () => {
       currentlyPlaying: spotifyTrack("spotify:track:now"),
       queue: [],
     });
-    expect(next?.id).toBe("normal");
+    expect(next?.id).toBe("boost");
   });
 
   test("returns null when jukebox queued buffer is not visible in Spotify API", () => {
@@ -725,8 +725,14 @@ describe("sync pacing helpers", () => {
     expect(partyNeedsSpotifyQueueSync({} as Db, "party-a", 2)).toBe(true);
   });
 
-  test("uses long interval when party is null", () => {
-    expect(getSyncIntervalMs({} as Db, null)).toBe(15_000);
+  test("uses idle interval when party is null", () => {
+    configureSyncPolling({
+      syncFastPoll: false,
+      syncEndWindowMs: 7000,
+      syncFallbackIntervalMs: 30_000,
+      syncIdleIntervalMs: 60_000,
+    });
+    expect(getSyncIntervalMs({} as Db, null)).toBe(60_000);
   });
 
   test("uses 10s interval when fast poll is enabled", () => {
@@ -841,30 +847,80 @@ describe("sync pacing helpers", () => {
 });
 
 describe("runSyncTick without active party", () => {
-  test("refreshes player snapshot for admin status", async () => {
+  test("skips Spotify API calls when no party is active", async () => {
     resetSyncStateForTests();
+    const initial = getSyncState();
     const db = {
       query: () => ({ get: () => null }),
     } as unknown as Db;
+    let tokenCalls = 0;
+    let snapshotCalls = 0;
     const spotify = {
-      getAccessToken: async () => "token",
-      getPlayerSnapshot: async () => ({
-        deviceActive: true,
-        isPlaying: true,
-        deviceRestricted: false,
-        deviceId: "device-1",
-        deviceName: "MacBook",
-        currentUri: "spotify:track:1",
-        progressMs: 1000,
-        durationMs: 180_000,
-      }),
+      getAccessToken: async () => {
+        tokenCalls++;
+        return "token";
+      },
+      getPlayerSnapshot: async () => {
+        snapshotCalls++;
+        return {
+          deviceActive: true,
+          isPlaying: true,
+          deviceRestricted: false,
+          deviceId: "device-1",
+          deviceName: "MacBook",
+          currentUri: "spotify:track:1",
+          progressMs: 1000,
+          durationMs: 180_000,
+        };
+      },
     };
     await runSyncTickForTests(db, spotify as SpotifyClient);
-    const state = getSyncState();
-    expect(state.deviceActive).toBe(true);
-    expect(state.isPlaying).toBe(true);
-    expect(state.deviceName).toBe("MacBook");
-    expect(state.spotifyReachable).toBe(true);
+    expect(tokenCalls).toBe(0);
+    expect(snapshotCalls).toBe(0);
+    expect(getSyncState()).toEqual(initial);
+  });
+
+  test("calls Spotify when a party is active", async () => {
+    resetSyncStateForTests();
+    const db = {
+      query: (sql: string) => ({
+        get: () => {
+          if (sql.includes("FROM parties")) {
+            return {
+              id: "party-1",
+              slug: "test",
+              name: "Test",
+              status: "on",
+              sync_generation: 0,
+              target_spotify_device_id: "device-1",
+            };
+          }
+          return null;
+        },
+        all: () => [],
+      }),
+    } as unknown as Db;
+    let snapshotCalls = 0;
+    const spotify = {
+      getAccessToken: async () => "token",
+      getPlayerSnapshot: async () => {
+        snapshotCalls++;
+        return {
+          deviceActive: true,
+          isPlaying: true,
+          deviceRestricted: false,
+          deviceId: "device-1",
+          deviceName: "MacBook",
+          currentUri: "spotify:track:1",
+          progressMs: 1000,
+          durationMs: 180_000,
+        };
+      },
+      getQueue: async () => ({ currentlyPlaying: null, queue: [] }),
+    };
+    await runSyncTickForTests(db, spotify as unknown as SpotifyClient);
+    expect(snapshotCalls).toBe(1);
+    expect(getSyncState().deviceActive).toBe(true);
   });
 });
 

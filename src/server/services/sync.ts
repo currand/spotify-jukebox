@@ -32,7 +32,6 @@ import {
 import { withSpotifyCallerAsync } from "./spotify-caller";
 
 const SYNC_INTERVAL_MS = 10_000;
-const SYNC_INTERVAL_NO_PARTY_MS = 15_000;
 const SYNC_MAX_SLEEP_MS = 5 * 60_000;
 const SYNC_NEAR_END_MIN_MS = 1_000;
 
@@ -163,7 +162,7 @@ export function getSyncIntervalMs(
   db: Db,
   party: { id: string; sync_generation: number } | null,
 ): number {
-  if (!party) return SYNC_INTERVAL_NO_PARTY_MS;
+  if (!party) return syncPollingConfig.syncIdleIntervalMs;
   if (syncPollingConfig.syncFastPoll) return SYNC_INTERVAL_MS;
   if (partyNeedsSpotifyQueueSync(db, party.id, party.sync_generation)) {
     // Pending queue work — sync ASAP only when playback is already visible.
@@ -1211,6 +1210,10 @@ async function runSyncTick(db: Db, spotify: SpotifyClient): Promise<void> {
 
   const party = getActiveParty(db);
 
+  if (!party) {
+    return;
+  }
+
   try {
     const token = await spotify.getAccessToken();
     if (!token) {
@@ -1247,10 +1250,6 @@ async function runSyncTick(db: Db, spotify: SpotifyClient): Promise<void> {
     }
 
     if (isRateLimited()) {
-      return;
-    }
-
-    if (!party) {
       return;
     }
 
